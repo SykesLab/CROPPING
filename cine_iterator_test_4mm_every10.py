@@ -9,9 +9,10 @@
 
 from pathlib import Path
 import csv
-import re
 import os
+import re
 
+import cv2
 import matplotlib.pyplot as plt
 import numpy as np
 
@@ -62,7 +63,9 @@ def save_darkness_plot(out_path, info, cine_name):
 
     plt.figure(figsize=(10, 4))
     plt.plot(x, curve, label="Darkness fraction")
-    plt.axvline(best, color="r", linestyle="--", label=f"Best frame {best}")
+    plt.axvline(
+        best, color="r", linestyle="--", label=f"Best frame {best}"
+    )
     plt.xlabel("Frame index")
     plt.ylabel("Dark fraction")
     plt.title(f"Darkness Curve\n{cine_name}")
@@ -78,7 +81,6 @@ def save_best_frame_overlay(out_path, info):
 
     norm = cv2_normalise_to_8bit(frame)
 
-    import cv2
     rgb = cv2.cvtColor(norm, cv2.COLOR_GRAY2RGB)
 
     red = np.zeros_like(rgb)
@@ -97,7 +99,6 @@ def save_best_frame_overlay(out_path, info):
 
 
 def cv2_normalise_to_8bit(arr):
-    import cv2
     arr = arr.astype(np.float32)
     norm = cv2.normalize(arr, None, 0, 255, cv2.NORM_MINMAX)
     return norm.astype(np.uint8)
@@ -133,14 +134,19 @@ def process_every_10(folder, csv_output="cine_summary_4mm_every10.csv"):
             for cam in ("g", "v"):
                 path = cams.get(cam)
                 if path is None:
-                    print(f"  [SKIP] No {cam}-camera file for droplet {droplet_id}")
+                    print(
+                        f"  [SKIP] No {cam}-camera file for droplet "
+                        f"{droplet_id}"
+                    )
                     continue
 
                 print(f"  Processing {cam}-camera: {path}")
 
                 c = cine.Cine.from_filepath(str(path))
                 if c is None:
-                    print(f"    [ERROR] Could not load cine: {path}")
+                    print(
+                        f"    [ERROR] Could not load cine: {path}"
+                    )
                     continue
 
                 info = analyze_cine(c)
@@ -162,28 +168,27 @@ def process_every_10(folder, csv_output="cine_summary_4mm_every10.csv"):
                     f"{info['best_dark_fraction']:.4f}",
                 ])
 
-                # -----------------------------
                 # FLAT OUTPUT
-                # -----------------------------
                 darkness_png = OUTPUT_ROOT / f"{cine_prefix}_darkness.png"
-                overlay_png  = OUTPUT_ROOT / f"{cine_prefix}_overlay.png"
+                overlay_png = OUTPUT_ROOT / f"{cine_prefix}_overlay.png"
 
                 save_darkness_plot(darkness_png, info, cine_name)
                 save_best_frame_overlay(overlay_png, info)
 
-                # -----------------------------
                 # CROPPING STEP
-                # -----------------------------
-                crop_result = crop_below_dark_sphere(info["best_frame_image"])
+                crop_result = crop_below_dark_sphere(
+                    info["best_frame_image"]
+                )
 
                 cropped_png = OUTPUT_ROOT / f"{cine_prefix}_cropped.png"
-                
+                plt.imsave(
+                    cropped_png, crop_result["cropped"], cmap="gray"
+                )
 
-                plt.imsave(cropped_png, crop_result["cropped"], cmap="gray")
-                
-
-                print(f"    Saved: {darkness_png.name}, {overlay_png.name}, "
-                      f"{cropped_png.name}")
+                print(
+                    f"    Saved: {darkness_png.name}, {overlay_png.name}, "
+                    f"{cropped_png.name}"
+                )
 
     print(f"\nCSV saved to: {csv_path}")
     return results

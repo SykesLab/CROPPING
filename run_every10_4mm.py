@@ -11,5 +11,7 @@ results = process_every_10(folder, csv_output=csv_name)
 
 print("\n=== DONE ===")
 for path_str, info in results.items():
-    print(f"{path_str}: best_frame={info['best_frame']} "
-          f"dark={info['best_dark_fraction']:.4f}")
+    print(
+        f"{path_str}: best_frame={info['best_frame']} "
+        f"dark={info['best_dark_fraction']:.4f}"
+    )

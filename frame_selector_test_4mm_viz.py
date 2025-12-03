@@ -7,6 +7,7 @@
 
 import numpy as np
 import cv2
+from scipy.signal import savgol_filter
 from pyphantom import utils  # for FrameRange
 
 
@@ -20,7 +21,7 @@ def _get_frame_and_mask(c, frame_index):
         dark_frac   : float, fraction of dark pixels
     """
     fr = utils.FrameRange(frame_index, frame_index)
-    frame = c.get_images(fr, Option=1)   # shape (1, H, W) or (H, W, ...)
+    frame = c.get_images(fr, Option=1)  # shape (1, H, W) or (H, W, ...)
     arr = np.squeeze(frame)
 
     # Ensure 2D grayscale
@@ -31,7 +32,9 @@ def _get_frame_and_mask(c, frame_index):
     frame_raw = arr.astype(np.float32)
 
     # Normalise to 0–255 for Otsu
-    norm = cv2.normalize(frame_raw, None, 0, 255, cv2.NORM_MINMAX)
+    norm = cv2.normalize(
+        frame_raw, None, 0, 255, cv2.NORM_MINMAX
+    )
     norm_u8 = norm.astype(np.uint8)
 
     # Otsu: returns threshold + binary mask (255 = bright, 0 = dark)
@@ -46,9 +49,6 @@ def _get_frame_and_mask(c, frame_index):
 
     return frame_raw, mask_dark, dark_frac
 
-
-from scipy.signal import savgol_filter
-import numpy as np
 
 def analyze_cine(c):
     """
@@ -72,7 +72,7 @@ def analyze_cine(c):
 
     # ---- Smooth the curve (parameter free) ----
     # Window = min(total, 11)
-    win = min(total if total % 2 == 1 else total-1, 11)
+    win = min(total if total % 2 == 1 else total - 1, 11)
     smooth = savgol_filter(darkness, window_length=win, polyorder=2)
 
     # ---- First derivative ----

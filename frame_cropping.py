@@ -21,7 +21,9 @@ def crop_below_dark_sphere(frame_raw):
     """
 
     # --- 1. Normalise to 0–255 ---
-    img_u8 = cv2.normalize(frame_raw, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    img_u8 = cv2.normalize(
+        frame_raw, None, 0, 255, cv2.NORM_MINMAX
+    ).astype(np.uint8)
 
     # --- 2. Blur ---
     blur = cv2.GaussianBlur(img_u8, (5, 5), 0)
@@ -30,18 +32,20 @@ def crop_below_dark_sphere(frame_raw):
     thresh_val, mask_dark = cv2.threshold(
         blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
     )
-    mask_dark = (mask_dark == 255)   # boolean
+    mask_dark = (mask_dark == 255)  # boolean
 
     H, W = mask_dark.shape
 
     # --- 4. Remove objects near the top (droplet) ---
-    #     DROPLET is always near top → mask out top ~30% region
+    # DROPLET is always near top → mask out top ~30% region
     top_cut = int(H * 0.30)
     mask_bottom_region = np.zeros_like(mask_dark, dtype=bool)
     mask_bottom_region[top_cut:, :] = mask_dark[top_cut:, :]
 
     # --- 5. Find connected components in the lower region ---
-    num_labels, labels = cv2.connectedComponents(mask_bottom_region.astype(np.uint8))
+    num_labels, labels = cv2.connectedComponents(
+        mask_bottom_region.astype(np.uint8)
+    )
 
     if num_labels <= 1:
         # fallback: nothing detected
