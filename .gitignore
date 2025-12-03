@@ -8,7 +8,7 @@ __pycache__/
 *.mp4
 *.avi
 *.cine
-OUTPUT/
+
 
 # IDE + editor
 .vscode/
