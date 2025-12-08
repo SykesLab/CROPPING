@@ -36,16 +36,10 @@ def _otsu_mask(gray):
 # ------------------------------------------------------------
 # Geometric analysis using width-masked connected components
 # ------------------------------------------------------------
-def analyze_frame_geometric(c, frame_idx,
-                            min_area=50,
-                            center_frac=0.20):
+def analyze_frame_geometric(c, frame_idx, min_area=50):
     """
-    Critical change:
-    We apply width-mask BEFORE connected components, meaning
-    the side wall noise can NEVER influence the blob geometry.
-
-    Sphere = lowest connected component
-    Droplet = highest connected component above sphere
+    Droplet must NOT touch left/right borders.
+    Sphere CAN touch borders.
     """
 
     gray = _load_frame_gray(c, frame_idx)
@@ -54,24 +48,10 @@ def analyze_frame_geometric(c, frame_idx,
     gray, dark_mask = _otsu_mask(gray)
 
     # ================================
-    # 1. Width mask (remove all side noise)
-    # ================================
-    cx = W // 2
-    half_w = int(W * center_frac / 2)
-
-    x0 = max(0, cx - half_w)
-    x1 = min(W, cx + half_w)
-
-    width_mask = np.zeros_like(dark_mask, dtype=bool)
-    width_mask[:, x0:x1] = True
-
-    filt_mask = dark_mask & width_mask
-
-    # ================================
-    # 2. Connected components (on filtered mask only!)
+    # 1. Connected components on FULL mask
     # ================================
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
-        filt_mask.astype(np.uint8), connectivity=8
+        dark_mask.astype(np.uint8), connectivity=8
     )
 
     comps = []
@@ -79,8 +59,11 @@ def analyze_frame_geometric(c, frame_idx,
         x, y, w, h, area = stats[lab]
         if area < min_area:
             continue
+
         comps.append({
             "label": lab,
+            "x": x,
+            "w": w,
             "y_top": y,
             "y_bottom": y + h - 1,
             "cx": centroids[lab][0],
@@ -98,18 +81,46 @@ def analyze_frame_geometric(c, frame_idx,
         }
 
     # ================================
-    # 3. Sphere = lowest-top component
+    # Find sphere (large, near bottom, central-ish)
     # ================================
-    sphere = max(comps, key=lambda c: c["y_top"])
+    sphere_cands = []
+
+    for c in comps:
+        area = c["area"]
+        cx   = c["cx"]
+        width_ratio = c["w"] / W  # you already extracted w above
+
+        # sphere is wide and large
+        if area > min_area * 5 and width_ratio > 0.30:
+            # sphere should be somewhat central
+            if abs(cx - W/2) < W * 0.35:
+                sphere_cands.append(c)
+
+    # fallback if none matched filters
+    if len(sphere_cands) == 0:
+        sphere = max(comps, key=lambda c: c["y_top"])
+    else:
+        # pick the lowest-top among sphere-like components
+        sphere = max(sphere_cands, key=lambda c: c["y_top"])
+
     y_sphere = int(sphere["y_top"])
 
     # ================================
-    # 4. Droplet = highest comp above sphere
+    # 3. Droplet candidates:
+    #    - above sphere
+    #    - NOT touching left/right borders
     # ================================
-    droplet_cands = [c for c in comps if c["y_bottom"] < y_sphere]
+    droplet_cands = []
+    for c in comps:
+        if c["y_bottom"] < y_sphere:
+            touches_left  = (c["x"] == 0)
+            touches_right = (c["x"] + c["w"] == W)
+
+            if not touches_left and not touches_right:
+                droplet_cands.append(c)
 
     if len(droplet_cands) == 0:
-        # Already touching sphere → not valid frame
+        # touching or merged with sphere — invalid frame
         return {
             "frame": gray,
             "mask": dark_mask,
@@ -119,6 +130,7 @@ def analyze_frame_geometric(c, frame_idx,
             "cx": W/2
         }
 
+    # Droplet = highest comp above sphere
     droplet = min(droplet_cands, key=lambda c: c["y_top"])
 
     return {
@@ -131,22 +143,34 @@ def analyze_frame_geometric(c, frame_idx,
     }
 
 
+
 # ------------------------------------------------------------
 # Cropping based on droplet centre
 # ------------------------------------------------------------
 def crop_autocenter_simple(frame, y_top, y_bottom, cx,
-                           target_w=320, target_h=240):
+                           target_w=320, target_h=320):
+    """
+    Droplet-centred, fixed-size crop.
+
+    - Droplet vertical centre is placed at crop vertical centre.
+    - Droplet horizontal centre = cx from geometry.
+    - No resizing or warping: pure crop.
+    - Returns exactly (target_h, target_w).
+    """
 
     H, W = frame.shape
-    cy = (y_top + y_bottom) / 2
 
-    x0 = int(cx - target_w/2)
+    # Vertical centre of droplet
+    cy = 0.5 * (y_top + y_bottom)
+
+    # --- raw crop window around (cx, cy) ---
+    x0 = int(cx - target_w / 2)
     x1 = x0 + target_w
 
-    y0 = int(cy - target_h/2)
+    y0 = int(cy - target_h / 2)
     y1 = y0 + target_h
 
-    # Clamp
+    # --- clamp horizontally ---
     if x0 < 0:
         x0 = 0
         x1 = target_w
@@ -154,6 +178,7 @@ def crop_autocenter_simple(frame, y_top, y_bottom, cx,
         x1 = W
         x0 = W - target_w
 
+    # --- clamp vertically ---
     if y0 < 0:
         y0 = 0
         y1 = target_h
@@ -161,4 +186,6 @@ def crop_autocenter_simple(frame, y_top, y_bottom, cx,
         y1 = H
         y0 = H - target_h
 
+    # Final crop
     return frame[y0:y1, x0:x1]
+
