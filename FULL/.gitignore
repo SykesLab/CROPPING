@@ -3,14 +3,10 @@ __pycache__/
 *.pyc
 
 # Output files
-*.png
-*.jpg
-*.jpeg
 *.csv
 *.mp4
 *.avi
 *.cine
-OUTPUT/
 
 # IDE + editor
 .vscode/
