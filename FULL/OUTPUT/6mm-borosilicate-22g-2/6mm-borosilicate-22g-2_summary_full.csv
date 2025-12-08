@@ -1,0 +1,13 @@
+droplet_id,camera,cine_file,first_frame,last_frame,best_frame,dark_fraction,y_top,y_bottom,y_sphere,crop_path
+1351,g,sphere1351g.cine,-1770,-1650,-1745,0.1741083264350891,102,205,311,C:\Users\justi\Downloads\coursework\testing_4mm\FULL\OUTPUT\6mm-borosilicate-22g-2\sphere1351g_crop.png
+1351,v,sphere1351v.cine,-4785,-4525,-4741,0.33299925923347473,68,292,362,C:\Users\justi\Downloads\coursework\testing_4mm\FULL\OUTPUT\6mm-borosilicate-22g-2\sphere1351v_crop.png
+1361,g,sphere1361g.cine,-2630,-2480,-2608,0.17527084052562714,101,203,311,C:\Users\justi\Downloads\coursework\testing_4mm\FULL\OUTPUT\6mm-borosilicate-22g-2\sphere1361g_crop.png
+1361,v,sphere1361v.cine,-7135,-6835,-7093,0.33415892720222473,73,293,360,C:\Users\justi\Downloads\coursework\testing_4mm\FULL\OUTPUT\6mm-borosilicate-22g-2\sphere1361v_crop.png
+1371,g,sphere1371g.cine,-2575,-2455,-2550,0.17396458983421326,102,206,312,C:\Users\justi\Downloads\coursework\testing_4mm\FULL\OUTPUT\6mm-borosilicate-22g-2\sphere1371g_crop.png
+1371,v,sphere1371v.cine,-6975,-6705,-6935,0.33292603492736816,66,290,362,C:\Users\justi\Downloads\coursework\testing_4mm\FULL\OUTPUT\6mm-borosilicate-22g-2\sphere1371v_crop.png
+1381,g,sphere1381g.cine,-2825,-2695,-2803,0.1693708300590515,111,207,311,C:\Users\justi\Downloads\coursework\testing_4mm\FULL\OUTPUT\6mm-borosilicate-22g-2\sphere1381g_crop.png
+1381,v,sphere1381v.cine,-7665,-7415,-7626,0.3250964283943176,81,288,362,C:\Users\justi\Downloads\coursework\testing_4mm\FULL\OUTPUT\6mm-borosilicate-22g-2\sphere1381v_crop.png
+1391,g,sphere1391g.cine,-2190,-2070,-2169,0.17015625536441803,106,201,311,C:\Users\justi\Downloads\coursework\testing_4mm\FULL\OUTPUT\6mm-borosilicate-22g-2\sphere1391g_crop.png
+1391,v,sphere1391v.cine,-5935,-5665,-5897,0.3247729539871216,75,280,362,C:\Users\justi\Downloads\coursework\testing_4mm\FULL\OUTPUT\6mm-borosilicate-22g-2\sphere1391v_crop.png
+1401,g,sphere1401g.cine,-10765,-10645,-10742,0.17090833187103271,108,203,311,C:\Users\justi\Downloads\coursework\testing_4mm\FULL\OUTPUT\6mm-borosilicate-22g-2\sphere1401g_crop.png
+1401,v,sphere1401v.cine,-29320,-29020,-29282,0.3247436583042145,81,285,362,C:\Users\justi\Downloads\coursework\testing_4mm\FULL\OUTPUT\6mm-borosilicate-22g-2\sphere1401v_crop.png
