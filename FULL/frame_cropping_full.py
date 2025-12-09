@@ -1,8 +1,14 @@
 # frame_cropping_full.py
 #
 # Full geometric analysis for sphere + droplet detection.
-# Critical fix: CC done on width-masked dark mask so that
-# selection and overlay use EXACT SAME GEOMETRY.
+#
+# Rules:
+#   - Droplet must NOT touch left/right borders.
+#   - Sphere CAN touch borders.
+#
+# This geometry is used by:
+#   - frame_selector_full.py   (for best-frame selection)
+#   - cine_iterator_full...    (for cropping / overlays)
 
 import numpy as np
 import cv2
@@ -34,7 +40,7 @@ def _otsu_mask(gray):
 
 
 # ------------------------------------------------------------
-# Geometric analysis using width-masked connected components
+# Geometric analysis: sphere + droplet
 # ------------------------------------------------------------
 def analyze_frame_geometric(c, frame_idx, min_area=50):
     """
@@ -77,31 +83,30 @@ def analyze_frame_geometric(c, frame_idx, min_area=50):
             "y_top": None,
             "y_bottom": None,
             "y_bottom_sphere": None,
-            "cx": W/2
+            "cx": W / 2.0,
         }
 
     # ================================
-    # Find sphere (large, near bottom, central-ish)
+    # 2. Find sphere (large, near bottom, central-ish)
     # ================================
     sphere_cands = []
 
-    for c in comps:
-        area = c["area"]
-        cx   = c["cx"]
-        width_ratio = c["w"] / W  # you already extracted w above
+    for c_comp in comps:
+        area = c_comp["area"]
+        cx   = c_comp["cx"]
+        width_ratio = c_comp["w"] / W
 
-        # sphere is wide and large
+        # Sphere is wide and large
         if area > min_area * 5 and width_ratio > 0.30:
-            # sphere should be somewhat central
-            if abs(cx - W/2) < W * 0.35:
-                sphere_cands.append(c)
+            # roughly central
+            if abs(cx - W / 2.0) < W * 0.35:
+                sphere_cands.append(c_comp)
 
-    # fallback if none matched filters
     if len(sphere_cands) == 0:
-        sphere = max(comps, key=lambda c: c["y_top"])
+        # Fallback: just take the lowest-top component
+        sphere = max(comps, key=lambda c_comp: c_comp["y_top"])
     else:
-        # pick the lowest-top among sphere-like components
-        sphere = max(sphere_cands, key=lambda c: c["y_top"])
+        sphere = max(sphere_cands, key=lambda c_comp: c_comp["y_top"])
 
     y_sphere = int(sphere["y_top"])
 
@@ -111,27 +116,27 @@ def analyze_frame_geometric(c, frame_idx, min_area=50):
     #    - NOT touching left/right borders
     # ================================
     droplet_cands = []
-    for c in comps:
-        if c["y_bottom"] < y_sphere:
-            touches_left  = (c["x"] == 0)
-            touches_right = (c["x"] + c["w"] == W)
+    for c_comp in comps:
+        if c_comp["y_bottom"] < y_sphere:
+            touches_left  = (c_comp["x"] == 0)
+            touches_right = (c_comp["x"] + c_comp["w"] == W)
 
             if not touches_left and not touches_right:
-                droplet_cands.append(c)
+                droplet_cands.append(c_comp)
 
     if len(droplet_cands) == 0:
-        # touching or merged with sphere — invalid frame
+        # touching / merged with sphere, or no droplet
         return {
             "frame": gray,
             "mask": dark_mask,
             "y_top": None,
             "y_bottom": None,
             "y_bottom_sphere": y_sphere,
-            "cx": W/2
+            "cx": W / 2.0,
         }
 
     # Droplet = highest comp above sphere
-    droplet = min(droplet_cands, key=lambda c: c["y_top"])
+    droplet = min(droplet_cands, key=lambda c_comp: c_comp["y_top"])
 
     return {
         "frame": gray,
@@ -139,53 +144,61 @@ def analyze_frame_geometric(c, frame_idx, min_area=50):
         "y_top": int(droplet["y_top"]),
         "y_bottom": int(droplet["y_bottom"]),
         "y_bottom_sphere": y_sphere,
-        "cx": float(droplet["cx"])
+        "cx": float(droplet["cx"]),
     }
-
 
 
 # ------------------------------------------------------------
 # Cropping based on droplet centre
 # ------------------------------------------------------------
 def crop_autocenter_simple(frame, y_top, y_bottom, cx,
-                           target_w=320, target_h=320):
+                           target_w=320, target_h=320,
+                           y_sphere=None, safety=3):
     """
-    Droplet-centred, fixed-size crop.
-
-    - Droplet vertical centre is placed at crop vertical centre.
-    - Droplet horizontal centre = cx from geometry.
-    - No resizing or warping: pure crop.
-    - Returns exactly (target_h, target_w).
+    Centres the crop on the droplet, but guarantees:
+        - sphere never appears in crop
+        - fixed, folder-wide crop size
+        - no warping, pure crop
+        - droplet remains exactly centered unless sphere constraint forces shift up
     """
 
     H, W = frame.shape
 
-    # Vertical centre of droplet
+    # 1) droplet vertical centre
     cy = 0.5 * (y_top + y_bottom)
+    half_h = target_h // 2
+    half_w = target_w // 2
 
-    # --- raw crop window around (cx, cy) ---
-    x0 = int(cx - target_w / 2)
+    # Raw centred crop
+    x0 = int(cx - half_w)
     x1 = x0 + target_w
-
-    y0 = int(cy - target_h / 2)
+    y0 = int(cy - half_h)
     y1 = y0 + target_h
 
-    # --- clamp horizontally ---
-    if x0 < 0:
-        x0 = 0
-        x1 = target_w
-    if x1 > W:
-        x1 = W
-        x0 = W - target_w
+    # ---- NEW LOGIC: ensure sphere never appears ----
+    if y_sphere is not None:
+        # the crop bottom must be strictly above sphere minus safety margin
+        max_y1 = y_sphere - safety
 
-    # --- clamp vertically ---
+        if y1 > max_y1:
+            # shift the entire crop up
+            shift = y1 - max_y1
+            y0 -= shift
+            y1 -= shift
+
+    # Clamp to image boundaries
     if y0 < 0:
+        y1 -= y0
         y0 = 0
-        y1 = target_h
     if y1 > H:
+        y0 -= (y1 - H)
         y1 = H
-        y0 = H - target_h
 
-    # Final crop
+    if x0 < 0:
+        x1 -= x0
+        x0 = 0
+    if x1 > W:
+        x0 -= (x1 - W)
+        x1 = W
+
     return frame[y0:y1, x0:x1]
-

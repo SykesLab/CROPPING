@@ -6,7 +6,7 @@
 #   Frame must be pre-collision
 #   Best frame = minimises |top_margin - bottom_gap|
 #
-# 100% consistent with frame_cropping_full.py
+# Uses the SAME geometry as frame_cropping_full.py
 
 import numpy as np
 import cv2
@@ -41,7 +41,7 @@ def _get_dark_fraction(c, idx):
 
 
 # -----------------------------------------------------------
-# Darkness curve
+# Darkness curve over entire cine
 # -----------------------------------------------------------
 def analyze_cine_full(c):
     first, last = c.range
@@ -87,15 +87,18 @@ def choose_best_frame_full(c, curve, first):
 
         cent_err = abs(top_margin - bottom_gap)
 
+        # Normalised darkness (tie-breaker only)
         dark_norm = (float(curve[idx - first_frame]) - dmin) / dspan
 
-        # MINIMISE cent_err, darkness is tie-breaker only
+        # Minimise cent_err; darkness is a tiny positive term
         score = -cent_err + 0.05 * dark_norm
 
         if (best_frame is None) or (score > best_score):
             best_frame = idx
             best_score = score
 
+    # Fallback: if nothing satisfied geometry/pre-collision,
+    # use darkest frame (as before).
     if best_frame is None:
         best_frame = first + int(curve.argmax())
 

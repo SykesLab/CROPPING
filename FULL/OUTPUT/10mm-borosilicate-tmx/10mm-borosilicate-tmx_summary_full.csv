@@ -1,4 +1,4 @@
-droplet_id,camera,cine_file,first_frame,last_frame,best_frame,dark_fraction,y_top,y_bottom,y_sphere,crop_path
-1014,g,sphere1014g.cine,-3200,-3100,-3175,0.24700625240802765,108,201,300,C:\Users\justi\Downloads\coursework\testing_4mm\FULL\OUTPUT\10mm-borosilicate-tmx\sphere1014g_crop.png
-1024,g,sphere1024g.cine,-2795,-2665,-2771,0.24970833957195282,96,190,294,C:\Users\justi\Downloads\coursework\testing_4mm\FULL\OUTPUT\10mm-borosilicate-tmx\sphere1024g_crop.png
-1034,g,sphere1034g.cine,-2295,-2175,-2273,0.24693749845027924,103,198,300,C:\Users\justi\Downloads\coursework\testing_4mm\FULL\OUTPUT\10mm-borosilicate-tmx\sphere1034g_crop.png
+droplet_id,camera,cine_file,first_frame,last_frame,best_frame,dark_fraction,y_top,y_bottom,y_sphere,crop_size_px,crop_path
+1014,g,sphere1014g.cine,-3200,-3100,-3175,0.24700625240802765,108,201,300,283,C:\Users\justi\Downloads\coursework\testing_4mm\FULL\OUTPUT\10mm-borosilicate-tmx\sphere1014g_crop.png
+1024,g,sphere1024g.cine,-2795,-2665,-2771,0.24970833957195282,96,190,294,283,C:\Users\justi\Downloads\coursework\testing_4mm\FULL\OUTPUT\10mm-borosilicate-tmx\sphere1024g_crop.png
+1034,g,sphere1034g.cine,-2295,-2175,-2273,0.24693749845027924,103,198,300,283,C:\Users\justi\Downloads\coursework\testing_4mm\FULL\OUTPUT\10mm-borosilicate-tmx\sphere1034g_crop.png
