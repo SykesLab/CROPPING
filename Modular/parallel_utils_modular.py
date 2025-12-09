@@ -1,18 +1,29 @@
 # parallel_utils_modular.py
-from multiprocessing import Pool, cpu_count
+from multiprocessing import Pool
+from tqdm import tqdm
 
-
-def run_parallel(func, items, max_workers=None):
+def run_parallel(func, items, desc="Processing", processes=None):
     """
-    Apply func(item) in parallel over items.
-    Returns list of results in the same order.
-
-    max_workers defaults to all CPU cores.
+    Multiprocessing wrapper with a clean TQDM progress bar.
+    - func: worker function
+    - items: list of items for mapping
+    - desc: text displayed on the progress bar
+    - processes: optional override for number of worker processes
     """
-    if max_workers is None:
-        max_workers = cpu_count()
+    total = len(items)
+    if total == 0:
+        return []
 
-    with Pool(processes=max_workers) as pool:
-        results = pool.map(func, items)
+    with Pool(processes=processes) as pool:
+        # imap yields results lazily and preserves order → works perfectly with tqdm
+        results = list(
+            tqdm(
+                pool.imap(func, items),
+                total=total,
+                desc=desc,
+                dynamic_ncols=True,
+                smoothing=0.1
+            )
+        )
 
     return results

@@ -22,7 +22,8 @@ def save_darkness_plot(out_path, curve, first, last, best, name):
     plt.close()
 
 
-def save_geometric_overlay(out_path, geo, best_idx):
+def save_geometric_overlay(out_path, geo, best_idx, CNN_SIZE=None, safety=3):
+
     """
     Overlay geometry lines and arrows on raw grayscale frame and save.
     """
@@ -54,7 +55,7 @@ def save_geometric_overlay(out_path, geo, best_idx):
     # Arrow X-position for vertical measurements
     x_arrow = int(W * 0.92)
 
-    # === Top margin: 0 → y_top ===
+    # === Top margin: 0 → y_top (yellow) ===
     if y_top is not None and y_top > 0:
         ax.annotate(
             "",
@@ -71,7 +72,8 @@ def save_geometric_overlay(out_path, geo, best_idx):
             va="center",
         )
 
-    # === Bottom gap: y_bottom → y_sphere ===
+
+    # === Bottom gap: y_bottom → y_sphere (yellow) ===
     if (
         y_bottom is not None
         and y_sphere is not None
@@ -82,56 +84,85 @@ def save_geometric_overlay(out_path, geo, best_idx):
             "",
             xy=(x_arrow, y_sphere),
             xytext=(x_arrow, y_bottom),
-            arrowprops=dict(arrowstyle="<->", color="cyan", lw=1.2),
+            arrowprops=dict(arrowstyle="<->", color="yellow", lw=1.2),
         )
         ax.text(
             x_arrow + 5,
             (y_sphere + y_bottom) / 2.0,
             f"{gap:.1f}",
-            color="cyan",
+            color="yellow",
             fontsize=6,
             va="center",
         )
 
-    # === NEW: Droplet diameter arrow: y_top → y_bottom ===
-    if (
-        y_top is not None
-        and y_bottom is not None
-        and y_bottom > y_top
-    ):
+
+    # === Droplet diameter arrow ===
+    if y_top is not None and y_bottom is not None and y_bottom > y_top:
         diameter = float(y_bottom - y_top)
-        x_diam = int(W * 0.06)  # left side vertical measurement position
+        x_diam = int(W * 0.06)
 
         ax.annotate(
             "",
             xy=(x_diam, y_bottom),
             xytext=(x_diam, y_top),
-            arrowprops=dict(arrowstyle="<->", color="magenta", lw=1.2),
+            arrowprops=dict(arrowstyle="<->", color="cyan", lw=1.2),
         )
         ax.text(
             x_diam + 5,
             (y_top + y_bottom) / 2.0,
             f"{diameter:.1f}",
-            color="magenta",
+            color="cyan",
             fontsize=6,
             va="center",
         )
+
+
+    # -------------------------
+    # Draw dashed crop rectangle + size label
+    # -------------------------
+    if CNN_SIZE is not None and y_top is not None and y_bottom is not None:
+        cy = 0.5 * (y_top + y_bottom)
+        half = CNN_SIZE / 2
+
+        y0 = max(0, int(cy - half))
+        x0 = max(0, int(geo["cx"] - half))
+        y1 = min(H, y0 + CNN_SIZE)
+        x1 = min(W, x0 + CNN_SIZE)
+
+        rect = plt.Rectangle(
+            (x0, y0),
+            x1 - x0,
+            y1 - y0,
+            linewidth=1.0,
+            edgecolor="magenta",
+            facecolor="none",
+            linestyle="--"
+        )
+        ax.add_patch(rect)
+
+        # NEW: print crop size top-left in pink
+        ax.text(
+            x0 + 3, y0 + 10,
+            f"{x1 - x0} × {y1 - y0}",
+            color="magenta",
+            fontsize=6,
+            va="top"
+        )
+
 
     # Legend
     legend_elements = [
         Line2D([0], [0], color="blue",   lw=1.5, label="Top of image"),
         Line2D([0], [0], color="green",  lw=1.5, label="Top of droplet"),
         Line2D([0], [0], color="orange", lw=1.5, label="Bottom of droplet"),
-        Line2D([0], [0], color="red",    lw=1.5, label="Top of bottom sphere"),
-        Line2D([0], [0], color="yellow", lw=1.5, label="Top margin"),
-        Line2D([0], [0], color="cyan",   lw=1.5, label="Bottom gap"),
-        Line2D([0], [0], color="magenta",lw=1.5, label="Droplet diameter"),
+        Line2D([0], [0], color="red",    lw=1.5, label="Top of sphere"),
+        Line2D([0], [0], color="cyan",   lw=1.5, label="Droplet diameter"),
     ]
     ax.legend(handles=legend_elements, loc="lower right", fontsize=6)
+
 
     ax.set_title(f"Best frame {best_idx}")
     ax.axis("off")
     plt.tight_layout()
     plt.savefig(out_path, dpi=200)
     plt.close()
-

@@ -30,8 +30,7 @@ def suppress_all_output():
 # Load ALL pyphantom components silently in ONE place
 # ==========================================================
 with suppress_all_output():
-    from pyphantom import cine
-    from pyphantom import utils
+    from pyphantom import cine, utils
     try:
         from pyphantom import Phantom
         ph = Phantom(init_camera=False)

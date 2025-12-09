@@ -1,54 +1,13 @@
 # cine_io_modular.py
 #
 # Safely loads .cine files and groups them by droplet ID.
-# Fully suppresses Phantom SDK ("phpy: version...") banner output,
-# including inside multiprocessing workers.
+# Uses the central silent Phantom importer (phantom_silence_modular.py),
+# so no file in this project ever imports pyphantom directly.
 
-import os
-import sys
 import re
 from pathlib import Path
-from contextlib import contextmanager
 
-
-# ============================================================
-#  SILENCE stdout temporarily (used for pyphantom imports)
-# ============================================================
-@contextmanager
-def suppress_stdout():
-    """Temporarily silence all stdout."""
-    saved_stdout = sys.stdout
-    sys.stdout = open(os.devnull, "w")
-    try:
-        yield
-    finally:
-        try:
-            sys.stdout.close()
-        except Exception:
-            pass
-        sys.stdout = saved_stdout
-
-
-# ============================================================
-#  IMPORT pyphantom WITH STDOUT SUPPRESSED (critical fix)
-# ============================================================
-
-# Silence banner while importing pyphantom.cine
-with suppress_stdout():
-    from pyphantom import cine
-
-# Silence banner while importing Phantom (camera init)
-ph = None
-try:
-    with suppress_stdout():
-        from pyphantom import Phantom
-        ph = Phantom(init_camera=False)
-except Exception:
-    try:
-        with suppress_stdout():
-            ph = Phantom()
-    except Exception:
-        ph = None
+from phantom_silence_modular import cine  # <-- centralised silent import
 
 
 # ============================================================
@@ -56,16 +15,15 @@ except Exception:
 # ============================================================
 def safe_load_cine(path: Path):
     """
-    Safely load a .cine file using pyphantom.
+    Safely load a .cine file using pyphantom via the silent cine handle.
     Returns a cine object or None on failure.
     """
     try:
-        with suppress_stdout():  # ensure no Phantom noise appears
-            c = cine.Cine.from_filepath(str(path))
+        c = cine.Cine.from_filepath(str(path))
         if c is None:
             return None
 
-        # Accessing c.range forces the handle to initialize properly
+        # Accessing c.range forces the internal handle to initialize
         _ = c.range
         return c
 
