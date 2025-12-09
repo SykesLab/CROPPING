@@ -1,14 +1,14 @@
 # geom_analysis_modular.py
 #
 # Geometric analysis for sphere + droplet detection in a single frame.
-# Variable naming cleaned up to avoid any potential shadowing issues.
 
 import numpy as np
 import cv2
 from image_utils_modular import load_frame_gray, otsu_mask
+from config_modular import GEOM_MIN_AREA, SPHERE_WIDTH_RATIO, SPHERE_CENTER_TOLERANCE
 
 
-def analyze_frame_geometric(cine_obj, frame_idx, min_area=50):
+def analyze_frame_geometric(cine_obj, frame_idx, min_area=None):
     """
     Geometric analysis for sphere + droplet in a single frame.
 
@@ -22,8 +22,8 @@ def analyze_frame_geometric(cine_obj, frame_idx, min_area=50):
         The loaded cine object.
     frame_idx : int
         Absolute frame index to analyse.
-    min_area : int
-        Minimum connected component area (pixels) to consider.
+    min_area : int, optional
+        Minimum connected component area (pixels). Defaults to config value.
 
     Returns
     -------
@@ -35,6 +35,9 @@ def analyze_frame_geometric(cine_obj, frame_idx, min_area=50):
         "y_bottom_sphere": sphere top row (int) or None
         "cx": droplet centre x (float) or W/2
     """
+    if min_area is None:
+        min_area = GEOM_MIN_AREA
+    
     gray = load_frame_gray(cine_obj, frame_idx)
     H, W = gray.shape
 
@@ -81,8 +84,8 @@ def analyze_frame_geometric(cine_obj, frame_idx, min_area=50):
         width_ratio = comp["w"] / W
 
         # Sphere is typically wide + large
-        if area > min_area * 5 and width_ratio > 0.30:
-            if abs(cx - W / 2.0) < W * 0.35:
+        if area > min_area * 5 and width_ratio > SPHERE_WIDTH_RATIO:
+            if abs(cx - W / 2.0) < W * SPHERE_CENTER_TOLERANCE:
                 sphere_candidates.append(comp)
 
     if len(sphere_candidates) == 0:

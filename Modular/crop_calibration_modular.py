@@ -1,6 +1,11 @@
 # crop_calibration_modular.py
+#
+# Crop size calibration based on observed droplet geometry.
+# Uses percentile-based approach for outlier robustness.
+
+import numpy as np
 from typing import List
-from config_modular import MIN_CNN_SIZE, MAX_CNN_SIZE
+from config_modular import MIN_CNN_SIZE, MAX_CNN_SIZE, CALIBRATION_PERCENTILE
 
 
 def maybe_add_calibration_sample(diams: List[float], gaps: List[float], geo: dict):
@@ -39,15 +44,15 @@ def compute_crop_size(
 
         allowed_h_i = diameter_i + 2 * max(0, gap_i - safety_pixels)
 
-    To use a single crop size for all droplets, we must choose a height that is
-    <= allowed_h_i for *every* calibration sample, so we take:
+    To use a single crop size for all droplets, we use a percentile-based approach
+    (rather than strict min) to be robust to outliers:
 
-        crop_h = min_i allowed_h_i
+        crop_h = percentile(allowed_heights, CALIBRATION_PERCENTILE)
 
     This guarantees:
-        - droplet can be centred vertically
+        - droplet can be centred vertically for most samples
         - sphere stays below the crop by at least `safety_pixels`
-        - same crop size works for all calibration droplets in this set
+        - robust to occasional outlier measurements
     """
     if not diams or not gaps or len(diams) != len(gaps):
         return fallback
@@ -65,14 +70,14 @@ def compute_crop_size(
     if not allowed_heights:
         return fallback
 
-    # Use the *smallest* allowed height => safe for all droplets
-    crop_h = int(min(allowed_heights))
+    # Use percentile for outlier robustness (default 5th percentile)
+    crop_h = int(np.percentile(allowed_heights, CALIBRATION_PERCENTILE))
 
     # Upper-bound by MAX_CNN_SIZE (we never want to exceed this)
     crop_h = min(crop_h, int(MAX_CNN_SIZE))
 
     # We *prefer* at least MIN_CNN_SIZE, but we won't violate geometry to enforce it.
-    # Only raise to MIN_CNN_SIZE if that does not exceed the smallest allowed height.
+    # Only raise to MIN_CNN_SIZE if that does not exceed the computed value.
     if crop_h >= MIN_CNN_SIZE:
         return crop_h
     else:
