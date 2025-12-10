@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
+from timing_utils_modular import format_time
+
 
 def aggregate_timings(
     timing_list: List[Dict[str, float]],
@@ -31,7 +33,7 @@ def aggregate_timings(
         if k in ("n_frames", "n_cines", "n_outputs"):
             print(f"    {k}: {int(v)}")
         else:
-            print(f"    {k}: {v:.2f}s")
+            print(f"    {k}: {format_time(v)}")
 
     return totals
 
@@ -48,32 +50,44 @@ def print_global_summary(
         output_timing: Output phase timing dict.
         phase_times: Optional dict with phase1_sec, phase2_sec, phase3_sec.
     """
+    # Calculate total elapsed time
+    total_elapsed = 0.0
+    if phase_times:
+        total_elapsed = (
+            phase_times.get("phase1_sec", 0.0) +
+            phase_times.get("phase2_sec", 0.0) +
+            phase_times.get("phase3_sec", 0.0)
+        )
+
     print("\n" + "=" * 50)
     print("GLOBAL TIMING SUMMARY")
     print("=" * 50)
+
+    if total_elapsed > 0:
+        print(f"\n  TOTAL ELAPSED: {format_time(total_elapsed)}")
 
     print("\n[ANALYSIS PHASE]")
     for k, v in sorted(analysis_timing.items()):
         if k in ("n_frames", "n_cines"):
             print(f"  {k}: {int(v)}")
         else:
-            print(f"  {k}: {v:.2f}s")
+            print(f"  {k}: {format_time(v)}")
 
     print("\n[OUTPUT PHASE]")
     for k, v in sorted(output_timing.items()):
         if k in ("n_outputs",):
             print(f"  {k}: {int(v)}")
         else:
-            print(f"  {k}: {v:.2f}s")
+            print(f"  {k}: {format_time(v)}")
 
     if phase_times:
         print("\n[PHASE TOTALS]")
         if "phase1_sec" in phase_times:
-            print(f"  Phase 1 (analysis):    {phase_times['phase1_sec']:.2f}s")
+            print(f"  Phase 1 (analysis):    {format_time(phase_times['phase1_sec'])}")
         if "phase2_sec" in phase_times:
-            print(f"  Phase 2 (calibration): {phase_times['phase2_sec']:.3f}s")
+            print(f"  Phase 2 (calibration): {format_time(phase_times['phase2_sec'])}")
         if "phase3_sec" in phase_times:
-            print(f"  Phase 3 (outputs):     {phase_times['phase3_sec']:.2f}s")
+            print(f"  Phase 3 (outputs):     {format_time(phase_times['phase3_sec'])}")
 
 
 def save_profile_json(

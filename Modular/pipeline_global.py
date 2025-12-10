@@ -26,7 +26,7 @@ from profiling_modular import (
     print_global_summary,
     save_profile_json,
 )
-from timing_utils_modular import Timer
+from timing_utils_modular import Timer, format_time
 from workers_modular import analyze_folder_crops_only, analyze_folder_full
 
 
@@ -116,7 +116,7 @@ def process_global(
     )
     phase2_sec = time.time() - phase2_start
     print(f"\n[GLOBAL] Crop size = {cnn_size}×{cnn_size}")
-    print(f"[GLOBAL] Phase 2 (calibration) — {phase2_sec:.3f}s\n")
+    print(f"[GLOBAL] Phase 2 (calibration) — {format_time(phase2_sec)}\n")
 
     # Phase 3: Generate outputs
     print("[GLOBAL] Phase 3: Generating outputs...")
@@ -158,7 +158,7 @@ def process_global(
         },
     )
 
-    print(f"\n=== GLOBAL PROCESSING COMPLETE — {total_sec:.1f}s ===")
+    print(f"\n=== GLOBAL PROCESSING COMPLETE — {format_time(total_sec)} ===")
 
     if profile:
         save_profile_json(
@@ -332,8 +332,8 @@ def _quick_test_global(
             + folder_timing["geometry_scan"]
         )
         print(
-            f"  load: {folder_timing['load_cine']:.2f}s | "
-            f"analysis: {analysis_time:.2f}s | "
+            f"  load: {format_time(folder_timing['load_cine'])} | "
+            f"analysis: {format_time(analysis_time)} | "
             f"frames: {folder_timing['n_frames']}"
         )
 
@@ -356,9 +356,9 @@ def _quick_test_global(
         if k == "n_frames":
             print(f"  {k}: {int(v)}")
         elif v > 0:
-            print(f"  {k}: {v:.2f}s")
+            print(f"  {k}: {format_time(v)}")
 
-    print(f"\n=== QUICK TEST COMPLETE — {total_sec:.1f}s ===")
+    print(f"\n=== QUICK TEST COMPLETE — {format_time(total_sec)} ===")
 
     if profile:
         save_profile_json(

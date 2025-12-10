@@ -41,6 +41,7 @@ def run_parallel(
             desc=f"{desc} (safe)",
             dynamic_ncols=True,
             smoothing=0.1,
+            unit="item",
         ):
             results.append(func(item))
         return results
@@ -54,6 +55,7 @@ def run_parallel(
                 desc=desc,
                 dynamic_ncols=True,
                 smoothing=0.1,
+                unit="item",
             )
         )
 

@@ -30,6 +30,7 @@ except ImportError:
 import config_modular
 from config_modular import OUTPUT_ROOT
 from phantom_silence_modular import cine
+from timing_utils_modular import format_time
 
 # Queue for worker -> GUI communication (logs, progress, done signals)
 gui_queue: queue.Queue = queue.Queue()
@@ -723,18 +724,14 @@ class PipelineGUI(ctk.CTk):
         eta_text = ""
 
         if self.start_time is not None:
-            elapsed = int(time.time() - self.start_time)
-            e_mins = elapsed // 60
-            e_secs = elapsed % 60
-            elapsed_text = f" | Elapsed: {e_mins}m {e_secs}s"
+            elapsed = time.time() - self.start_time
+            elapsed_text = f" | Elapsed: {format_time(elapsed)}"
 
             if current > 0 and total > 0:
-                avg_per_item = (time.time() - self.start_time) / current
+                avg_per_item = elapsed / current
                 remaining = max(0, total - current)
-                eta_seconds = int(avg_per_item * remaining)
-                a_mins = eta_seconds // 60
-                a_secs = eta_seconds % 60
-                eta_text = f" | ETA: {a_mins}m {a_secs}s"
+                eta_seconds = avg_per_item * remaining
+                eta_text = f" | ETA: {format_time(eta_seconds)}"
 
         self.progress_label.configure(
             text=f"Processing: {current}/{total}{elapsed_text}{eta_text}"

@@ -3,6 +3,29 @@
 import time
 
 
+def format_time(seconds: float) -> str:
+    """Format seconds as human-readable time string.
+
+    Args:
+        seconds: Time in seconds.
+
+    Returns:
+        Formatted string like "2h 15m 30s" or "45m 12s" or "8.5s".
+    """
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+
+    total_secs = int(seconds)
+    hours = total_secs // 3600
+    mins = (total_secs % 3600) // 60
+    secs = total_secs % 60
+
+    if hours > 0:
+        return f"{hours}h {mins}m {secs}s"
+    else:
+        return f"{mins}m {secs}s"
+
+
 class Timer:
     """Wall-clock timer with formatted output.
 
@@ -30,11 +53,5 @@ class Timer:
 
     @property
     def elapsed(self) -> str:
-        """Return formatted elapsed time string (s/min/hr)."""
-        sec = self.seconds
-        if sec < 60:
-            return f"{sec:.1f}s"
-        elif sec < 3600:
-            return f"{sec / 60:.1f} min"
-        else:
-            return f"{sec / 3600:.1f} hr"
+        """Return formatted elapsed time string (e.g. '2h 15m 30s')."""
+        return format_time(self.seconds)
