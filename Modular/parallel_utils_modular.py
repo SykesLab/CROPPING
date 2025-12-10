@@ -1,35 +1,39 @@
-# parallel_utils_modular.py
+"""Parallel processing utilities with progress bars."""
+
 from multiprocessing import Pool
+from typing import Any, Callable, List, Optional
+
 from tqdm import tqdm
 
 
-def run_parallel(func, items, desc="Processing", processes=None, safe_mode=False):
-    """
-    Parallel (or safe single-process) wrapper with a clean TQDM progress bar.
+def run_parallel(
+    func: Callable[[Any], Any],
+    items: List[Any],
+    desc: str = "Processing",
+    processes: Optional[int] = None,
+    safe_mode: bool = False,
+) -> List[Any]:
+    """Execute function over items with optional parallelisation.
 
-    Parameters
-    ----------
-    func : callable
-        Worker function taking a single argument.
-    items : list
-        Items to map over.
-    desc : str
-        Text displayed on the progress bar.
-    processes : int or None
-        Number of worker processes for multiprocessing.Pool.
-        Ignored in safe_mode.
-    safe_mode : bool
-        If True → run sequentially in the main process (nice for debugging,
-        stack traces, and profiling). If False → use multiprocessing.
+    Args:
+        func: Worker function taking a single argument.
+        items: List of items to process.
+        desc: Description for progress bar.
+        processes: Number of worker processes (None = CPU count).
+        safe_mode: If True, run sequentially for debugging.
+
+    Returns:
+        List of results in same order as items.
+
+    Example:
+        >>> results = run_parallel(process_item, items, desc="Analysing")
     """
     total = len(items)
     if total == 0:
         return []
 
-    # -----------------------------
-    # SAFE MODE: single-process loop
-    # -----------------------------
     if safe_mode:
+        # Single-process mode for debugging
         results = []
         for item in tqdm(
             items,
@@ -41,9 +45,7 @@ def run_parallel(func, items, desc="Processing", processes=None, safe_mode=False
             results.append(func(item))
         return results
 
-    # -----------------------------
-    # FAST MODE: multiprocessing
-    # -----------------------------
+    # Multiprocessing mode
     with Pool(processes=processes) as pool:
         results = list(
             tqdm(

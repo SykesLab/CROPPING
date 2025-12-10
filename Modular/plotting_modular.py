@@ -1,15 +1,34 @@
-# plotting_modular.py
-import numpy as np
-import matplotlib.pyplot as plt
-from matplotlib.lines import Line2D
+"""Visualisation utilities for darkness curves and geometry overlays."""
+
+from pathlib import Path
+from typing import Any, Dict, Optional, Union
+
 import cv2
+import matplotlib.pyplot as plt
+import numpy as np
+from matplotlib.lines import Line2D
 
 
-def save_darkness_plot(out_path, curve, first, last, best, name):
-    """
-    Save darkness curve plot with best frame marked.
+def save_darkness_plot(
+    out_path: Union[str, Path],
+    curve: np.ndarray,
+    first: int,
+    last: int,
+    best: int,
+    name: str,
+) -> None:
+    """Save darkness curve plot with best frame marker.
+
+    Args:
+        out_path: Output file path.
+        curve: Darkness curve array.
+        first: First frame index.
+        last: Last frame index.
+        best: Best frame index.
+        name: Title suffix (typically filename).
     """
     x = np.arange(first, last + 1)
+
     plt.figure(figsize=(10, 4))
     plt.plot(x, curve, label="Dark fraction")
     plt.axvline(best, color="r", linestyle="--", label=f"Best = {best}")
@@ -22,20 +41,31 @@ def save_darkness_plot(out_path, curve, first, last, best, name):
     plt.close()
 
 
-def save_geometric_overlay(out_path, geo, best_idx, CNN_SIZE=None, safety=3):
+def save_geometric_overlay(
+    out_path: Union[str, Path],
+    geo: Dict[str, Any],
+    best_idx: int,
+    cnn_size: Optional[int] = None,
+    safety: int = 3,
+) -> None:
+    """Save frame with geometry annotations overlaid.
 
-    """
-    Overlay geometry lines and arrows on raw grayscale frame and save.
+    Args:
+        out_path: Output file path.
+        geo: Geometry dict containing frame, mask, and coordinates.
+        best_idx: Frame index for title.
+        cnn_size: Crop size to display (optional).
+        safety: Safety margin for crop rectangle.
     """
     raw = geo["frame"]
     mask = geo["mask"]
-
     y_top = geo["y_top"]
     y_bottom = geo["y_bottom"]
     y_sphere = geo["y_bottom_sphere"]
 
-    H, W = raw.shape
+    height, width = raw.shape
 
+    # Create RGB overlay
     rgb = cv2.cvtColor(raw, cv2.COLOR_GRAY2RGB)
     rgb[mask] = (rgb[mask] * 0.6 + np.array([255, 0, 0]) * 0.4).astype(np.uint8)
 
@@ -43,19 +73,19 @@ def save_geometric_overlay(out_path, geo, best_idx, CNN_SIZE=None, safety=3):
     plt.imshow(rgb, cmap="gray")
     ax = plt.gca()
 
-    # Lines
+    # Draw horizontal lines
     ax.axhline(0, color="blue", linewidth=1.5, label="Top of image")
     if y_top is not None:
         ax.axhline(y_top, color="green", linewidth=1.5, label="Top of droplet")
     if y_bottom is not None:
         ax.axhline(y_bottom, color="orange", linewidth=1.5, label="Bottom of droplet")
     if y_sphere is not None:
-        ax.axhline(y_sphere, color="red", linewidth=1.5, label="Top of bottom sphere")
+        ax.axhline(y_sphere, color="red", linewidth=1.5, label="Top of sphere")
 
-    # Arrow X-position for vertical measurements
-    x_arrow = int(W * 0.92)
+    # Arrow position
+    x_arrow = int(width * 0.92)
 
-    # === Top margin: 0 → y_top (yellow) ===
+    # Top margin arrow
     if y_top is not None and y_top > 0:
         ax.annotate(
             "",
@@ -72,13 +102,8 @@ def save_geometric_overlay(out_path, geo, best_idx, CNN_SIZE=None, safety=3):
             va="center",
         )
 
-
-    # === Bottom gap: y_bottom → y_sphere (yellow) ===
-    if (
-        y_bottom is not None
-        and y_sphere is not None
-        and y_sphere > y_bottom
-    ):
+    # Bottom gap arrow
+    if y_bottom is not None and y_sphere is not None and y_sphere > y_bottom:
         gap = float(y_sphere - y_bottom)
         ax.annotate(
             "",
@@ -95,12 +120,10 @@ def save_geometric_overlay(out_path, geo, best_idx, CNN_SIZE=None, safety=3):
             va="center",
         )
 
-
-    # === Droplet diameter arrow ===
+    # Droplet diameter arrow
     if y_top is not None and y_bottom is not None and y_bottom > y_top:
         diameter = float(y_bottom - y_top)
-        x_diam = int(W * 0.06)
-
+        x_diam = int(width * 0.06)
         ax.annotate(
             "",
             xy=(x_diam, y_bottom),
@@ -116,18 +139,15 @@ def save_geometric_overlay(out_path, geo, best_idx, CNN_SIZE=None, safety=3):
             va="center",
         )
 
-
-    # -------------------------
-    # Draw dashed crop rectangle + size label
-    # -------------------------
-    if CNN_SIZE is not None and y_top is not None and y_bottom is not None:
+    # Crop rectangle
+    if cnn_size is not None and y_top is not None and y_bottom is not None:
         cy = 0.5 * (y_top + y_bottom)
-        half = CNN_SIZE / 2
+        half = cnn_size / 2
 
         y0 = max(0, int(cy - half))
         x0 = max(0, int(geo["cx"] - half))
-        y1 = min(H, y0 + CNN_SIZE)
-        x1 = min(W, x0 + CNN_SIZE)
+        y1 = min(height, y0 + cnn_size)
+        x1 = min(width, x0 + cnn_size)
 
         rect = plt.Rectangle(
             (x0, y0),
@@ -136,30 +156,28 @@ def save_geometric_overlay(out_path, geo, best_idx, CNN_SIZE=None, safety=3):
             linewidth=1.0,
             edgecolor="magenta",
             facecolor="none",
-            linestyle="--"
+            linestyle="--",
         )
         ax.add_patch(rect)
 
-        # NEW: print crop size top-left in pink
         ax.text(
-            x0 + 3, y0 + 10,
+            x0 + 3,
+            y0 + 10,
             f"{x1 - x0} × {y1 - y0}",
             color="magenta",
             fontsize=6,
-            va="top"
+            va="top",
         )
-
 
     # Legend
     legend_elements = [
-        Line2D([0], [0], color="blue",   lw=1.5, label="Top of image"),
-        Line2D([0], [0], color="green",  lw=1.5, label="Top of droplet"),
+        Line2D([0], [0], color="blue", lw=1.5, label="Top of image"),
+        Line2D([0], [0], color="green", lw=1.5, label="Top of droplet"),
         Line2D([0], [0], color="orange", lw=1.5, label="Bottom of droplet"),
-        Line2D([0], [0], color="red",    lw=1.5, label="Top of sphere"),
-        Line2D([0], [0], color="cyan",   lw=1.5, label="Droplet diameter"),
+        Line2D([0], [0], color="red", lw=1.5, label="Top of sphere"),
+        Line2D([0], [0], color="cyan", lw=1.5, label="Droplet diameter"),
     ]
     ax.legend(handles=legend_elements, loc="lower right", fontsize=6)
-
 
     ax.set_title(f"Best frame {best_idx}")
     ax.axis("off")

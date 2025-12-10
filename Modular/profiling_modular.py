@@ -1,70 +1,73 @@
-# profiling_modular.py
-#
-# Timing aggregation and profiling output utilities.
-# Used by both per-folder and global pipelines.
+"""Timing aggregation and profiling utilities."""
 
 import json
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Union
 
 
-def aggregate_timings(timing_list, label=""):
-    """
-    Aggregate timing dicts from multiple workers and print summary.
-    
+def aggregate_timings(
+    timing_list: List[Dict[str, float]],
+    label: str = "",
+) -> Dict[str, float]:
+    """Aggregate timing dictionaries and print summary.
+
     Args:
-        timing_list: List of timing dicts from workers
-        label: Label for print output
-        
+        timing_list: List of timing dicts from workers.
+        label: Label for printed output.
+
     Returns:
-        dict with summed totals
+        Dictionary with summed totals.
     """
     if not timing_list:
         return {}
-    
-    totals = {}
+
+    totals: Dict[str, float] = {}
     for t in timing_list:
         for k, v in t.items():
             totals[k] = totals.get(k, 0.0) + v
-    
+
     print(f"\n  [TIMING {label}]")
     for k, v in sorted(totals.items()):
         if k in ("n_frames", "n_cines", "n_outputs"):
             print(f"    {k}: {int(v)}")
         else:
             print(f"    {k}: {v:.2f}s")
-    
+
     return totals
 
 
-def print_global_summary(analysis_timing, output_timing, phase_times=None):
-    """
-    Print global timing summary at end of pipeline.
-    
+def print_global_summary(
+    analysis_timing: Dict[str, float],
+    output_timing: Dict[str, float],
+    phase_times: Optional[Dict[str, float]] = None,
+) -> None:
+    """Print global timing summary.
+
     Args:
-        analysis_timing: dict of analysis phase timings
-        output_timing: dict of output phase timings
-        phase_times: optional dict with phase1_sec, phase2_sec, phase3_sec
+        analysis_timing: Analysis phase timing dict.
+        output_timing: Output phase timing dict.
+        phase_times: Optional dict with phase1_sec, phase2_sec, phase3_sec.
     """
     print("\n" + "=" * 50)
     print("GLOBAL TIMING SUMMARY")
     print("=" * 50)
-    
+
     print("\n[ANALYSIS PHASE]")
     for k, v in sorted(analysis_timing.items()):
         if k in ("n_frames", "n_cines"):
             print(f"  {k}: {int(v)}")
         else:
             print(f"  {k}: {v:.2f}s")
-    
+
     print("\n[OUTPUT PHASE]")
     for k, v in sorted(output_timing.items()):
         if k in ("n_outputs",):
             print(f"  {k}: {int(v)}")
         else:
             print(f"  {k}: {v:.2f}s")
-    
+
     if phase_times:
-        print(f"\n[PHASE TOTALS]")
+        print("\n[PHASE TOTALS]")
         if "phase1_sec" in phase_times:
             print(f"  Phase 1 (analysis):    {phase_times['phase1_sec']:.2f}s")
         if "phase2_sec" in phase_times:
@@ -73,14 +76,17 @@ def print_global_summary(analysis_timing, output_timing, phase_times=None):
             print(f"  Phase 3 (outputs):     {phase_times['phase3_sec']:.2f}s")
 
 
-def save_profile_json(output_root, filename, data):
-    """
-    Save profiling data to JSON file.
-    
+def save_profile_json(
+    output_root: Union[str, Path],
+    filename: str,
+    data: Dict[str, Any],
+) -> None:
+    """Save profiling data to JSON file.
+
     Args:
-        output_root: Output directory path
-        filename: JSON filename (e.g., "profiling_global.json")
-        data: dict to serialize
+        output_root: Output directory path.
+        filename: JSON filename.
+        data: Data to serialize.
     """
     prof_path = Path(output_root) / filename
     with open(prof_path, "w") as f:
@@ -88,8 +94,8 @@ def save_profile_json(output_root, filename, data):
     print(f"[PROFILE] Saved → {prof_path}")
 
 
-def init_output_timing():
-    """Return a fresh output timing dict."""
+def init_output_timing() -> Dict[str, float]:
+    """Return fresh output timing dict."""
     return {
         "crop": 0.0,
         "darkness_plot": 0.0,
@@ -98,8 +104,8 @@ def init_output_timing():
     }
 
 
-def init_output_timing_with_count():
-    """Return a fresh output timing dict with n_outputs counter."""
+def init_output_timing_with_count() -> Dict[str, float]:
+    """Return fresh output timing dict with counter."""
     return {
         "crop": 0.0,
         "darkness_plot": 0.0,
@@ -109,14 +115,17 @@ def init_output_timing_with_count():
     }
 
 
-def accumulate_timings(target, source):
-    """
-    Add source timing values to target dict.
+def accumulate_timings(
+    target: Dict[str, float],
+    source: Dict[str, float],
+) -> None:
+    """Accumulate source values into target dict.
+
     Only adds keys that exist in target.
-    
+
     Args:
-        target: dict to accumulate into
-        source: dict with values to add
+        target: Target dict (modified in place).
+        source: Source dict with values to add.
     """
     for k, v in source.items():
         if k in target:

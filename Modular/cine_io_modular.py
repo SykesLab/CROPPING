@@ -1,76 +1,81 @@
-# cine_io_modular.py
-#
-# Safely loads .cine files and groups them by droplet ID.
-# Uses the central silent Phantom importer (phantom_silence_modular.py),
-# so no file in this project ever imports pyphantom directly.
+"""Cine file I/O and grouping utilities.
+
+Handles safe loading of .cine files and grouping by droplet ID.
+"""
 
 import re
 from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
-from phantom_silence_modular import cine  # <-- centralised silent import
+from phantom_silence_modular import cine
 
 
-# ============================================================
-#  SAFE CINE LOADER
-# ============================================================
-def safe_load_cine(path: Path):
-    """
-    Safely load a .cine file using pyphantom via the silent cine handle.
-    Returns a cine object or None on failure.
+def safe_load_cine(path: Path) -> Optional[Any]:
+    """Safely load a .cine file.
+
+    Args:
+        path: Path to the .cine file.
+
+    Returns:
+        Loaded cine object, or None if loading failed.
     """
     try:
-        c = cine.Cine.from_filepath(str(path))
-        if c is None:
+        cine_obj = cine.Cine.from_filepath(str(path))
+        if cine_obj is None:
             return None
 
-        # Accessing c.range forces the internal handle to initialize
-        _ = c.range
-        return c
+        # Access range to force handle initialisation
+        _ = cine_obj.range
+        return cine_obj
 
     except Exception as e:
         print(f"[CINE LOAD ERROR] {path.name}: {e}")
         return None
 
 
-# ============================================================
-#  ITERATE SUBFOLDERS
-# ============================================================
-def iter_subfolders(root: Path):
-    """
-    Returns sorted list of subdirectories under the given root.
+def iter_subfolders(root: Path) -> List[Path]:
+    """Get sorted list of subdirectories.
+
+    Args:
+        root: Root directory to scan.
+
+    Returns:
+        Sorted list of subdirectory paths.
     """
     return [p for p in sorted(root.iterdir()) if p.is_dir()]
 
 
-# ============================================================
-#  GROUP CINE FILES BY DROPLET ID (g/v pairs)
-# ============================================================
-def group_cines_by_droplet(folder: Path):
-    """
-    Group .cine files by droplet ID and camera ('g' or 'v').
+def group_cines_by_droplet(
+    folder: Path,
+) -> List[Tuple[str, Dict[str, Optional[Path]]]]:
+    """Group .cine files by droplet ID and camera.
 
-    Expected file pattern: sphere0843g.cine → droplet ID = 0843, cam = g
-    Returns: list of (droplet_id, {"g": path_or_None, "v": path_or_None})
+    Expected filename pattern: sphere0843g.cine -> ID=0843, cam=g
+
+    Args:
+        folder: Folder containing .cine files.
+
+    Returns:
+        List of (droplet_id, {"g": path_or_None, "v": path_or_None}) tuples,
+        sorted numerically by droplet ID.
     """
     folder = Path(folder)
-    groups = {}
+    groups: Dict[str, Dict[str, Optional[Path]]] = {}
 
     for path in sorted(folder.glob("*.cine")):
-        # Extract: numeric ID + camera letter
-        # Example: sphere0843g → ID=0843, cam=g
         stem = path.stem
-        m = re.search(r"(\d+)([gv])$", stem, re.IGNORECASE)
-        if not m:
+        match = re.search(r"(\d+)([gv])$", stem, re.IGNORECASE)
+        if not match:
             continue
 
-        droplet_id = m.group(1)
-        cam = m.group(2).lower()
+        droplet_id = match.group(1)
+        cam = match.group(2).lower()
 
         if droplet_id not in groups:
             groups[droplet_id] = {"g": None, "v": None}
 
         groups[droplet_id][cam] = path
 
-    # Sort droplet IDs numerically
+    # Sort numerically by droplet ID
     sorted_ids = sorted(groups.keys(), key=lambda x: int(x))
     return [(did, groups[did]) for did in sorted_ids]

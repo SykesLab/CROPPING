@@ -1,9 +1,0 @@
-droplet_id,camera,cine_file,first_frame,last_frame,best_frame,dark_fraction,y_top,y_bottom,y_sphere,crop_size_px,crop_path
-0080,v,sphere0080v.cine,-5310,-5110,-5276,0.4064423739910126,90,325,406,283,C:\Users\justi\Downloads\coursework\testing_4mm\Modular\OUTPUT\10mm-borosilicate-1\sphere0080v_crop.png
-0090,v,sphere0090v.cine,-1720,-1600,-1687,0.4088955223560333,86,326,405,283,C:\Users\justi\Downloads\coursework\testing_4mm\Modular\OUTPUT\10mm-borosilicate-1\sphere0090v_crop.png
-0100,v,sphere0100v.cine,-70,100,-39,0.4191855490207672,82,321,398,283,C:\Users\justi\Downloads\coursework\testing_4mm\Modular\OUTPUT\10mm-borosilicate-1\sphere0100v_crop.png
-0110,v,sphere0110v.cine,-1650,-1500,-1614,0.4184199273586273,80,318,400,283,C:\Users\justi\Downloads\coursework\testing_4mm\Modular\OUTPUT\10mm-borosilicate-1\sphere0110v_crop.png
-0120,v,sphere0120v.cine,-1140,-980,-1101,0.41951659321784973,75,312,397,283,C:\Users\justi\Downloads\coursework\testing_4mm\Modular\OUTPUT\10mm-borosilicate-1\sphere0120v_crop.png
-0130,v,sphere0130v.cine,-460,-280,-423,0.41893652081489563,76,317,399,283,C:\Users\justi\Downloads\coursework\testing_4mm\Modular\OUTPUT\10mm-borosilicate-1\sphere0130v_crop.png
-0140,v,sphere0140v.cine,20,320,60,0.4178095757961273,79,315,399,283,C:\Users\justi\Downloads\coursework\testing_4mm\Modular\OUTPUT\10mm-borosilicate-1\sphere0140v_crop.png
-0150,v,sphere0150v.cine,180,380,221,0.41902148723602295,75,315,398,283,C:\Users\justi\Downloads\coursework\testing_4mm\Modular\OUTPUT\10mm-borosilicate-1\sphere0150v_crop.png

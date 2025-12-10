@@ -1,63 +1,59 @@
-# output_writer_modular.py
-#
-# Output generation: crops, plots, and CSV writing.
-# Used by both per-folder and global pipelines.
-#
-# MEMORY OPTIMIZATION: Frames are reloaded here when needed,
-# rather than being stored in memory during analysis phase.
+"""Output generation: crops, plots, and CSV writing.
+
+Memory-optimised: frames are reloaded when needed rather than stored.
+"""
 
 import csv
 import time
 from pathlib import Path
+from typing import Any, Dict, Optional, Tuple, Union
 
 import cv2
 
-from config_modular import OUTPUT_ROOT, CINE_STEP, CROP_SAFETY_PIXELS
 from cine_io_modular import group_cines_by_droplet, safe_load_cine
+from config_modular import CROP_SAFETY_PIXELS, OUTPUT_ROOT
 from cropping_modular import crop_droplet_with_sphere_guard
-from plotting_modular import save_darkness_plot, save_geometric_overlay
 from image_utils_modular import load_frame_gray, otsu_mask
+from plotting_modular import save_darkness_plot, save_geometric_overlay
 
 
-def _reload_frame_and_mask(path, best_idx):
-    """
-    Reload a single frame from cine file and compute mask.
-    Used during output phase for cropping and plotting.
-    
+def _reload_frame_and_mask(
+    path: Path,
+    best_idx: int,
+) -> Tuple[Optional[Any], Optional[Any]]:
+    """Reload frame and compute mask for output generation.
+
+    Args:
+        path: Path to cine file.
+        best_idx: Frame index to load.
+
     Returns:
-        (frame, mask) or (None, None) on failure
+        Tuple of (frame, mask) or (None, None) on failure.
     """
-    c = safe_load_cine(path)
-    if c is None:
+    cine_obj = safe_load_cine(path)
+    if cine_obj is None:
         return None, None
-    
-    frame = load_frame_gray(c, best_idx)
+
+    frame = load_frame_gray(cine_obj, best_idx)
     _, mask = otsu_mask(frame)
-    
+
     return frame, mask
 
 
-# ============================================================
-# OUTPUT WORKER FOR PER-DROPLET (used by per-folder pipeline)
-# ============================================================
+def generate_droplet_outputs(
+    args: Tuple[str, Dict[str, Dict[str, Any]], int, str],
+) -> Tuple[str, Dict[str, float]]:
+    """Generate outputs for single droplet (both cameras).
 
-def generate_droplet_outputs(args):
-    """
-    Generate outputs for a single droplet (both cameras).
-    Reloads frames as needed (memory efficient).
-    
-    If curve is None: crops only (fast mode)
-    If curve is not None: crops + all plots (full output mode)
-    
     Args:
-        args: tuple of (droplet_id, cam_data, CNN_SIZE, out_sub_path)
-        
+        args: Tuple of (droplet_id, cam_data, cnn_size, out_sub_path).
+
     Returns:
-        (message, timing_dict)
+        Tuple of (message, timing_dict).
     """
-    droplet_id, cam_data, CNN_SIZE, out_sub_path = args
+    droplet_id, cam_data, cnn_size, out_sub_path = args
     out_sub_path = Path(out_sub_path)
-    
+
     timing = {
         "reload_frame": 0.0,
         "crop": 0.0,
@@ -68,82 +64,91 @@ def generate_droplet_outputs(args):
 
     for cam, info in cam_data.items():
         path = info["path"]
-        curve = info["curve"]  # None in crops-only mode
+        curve = info["curve"]
         first = info["first"]
         last = info["last"]
         best_idx = info["best"]
-        geo = info["geo"]  # Contains y_top, y_bottom, y_bottom_sphere, cx
+        geo = info["geo"]
 
         y_top = geo["y_top"]
         y_bottom = geo["y_bottom"]
         y_sphere = geo["y_bottom_sphere"]
         cx = geo["cx"]
 
-        # Reload frame for cropping
-        if y_top is not None and y_bottom is not None:
+        if y_top is None or y_bottom is None:
+            continue
+
+        # Reload frame
+        t0 = time.perf_counter()
+        frame, mask = _reload_frame_and_mask(path, best_idx)
+        timing["reload_frame"] += time.perf_counter() - t0
+
+        if frame is None:
+            continue
+
+        # Generate crop
+        t0 = time.perf_counter()
+        crop = crop_droplet_with_sphere_guard(
+            frame,
+            y_top,
+            y_bottom,
+            cx,
+            target_w=cnn_size,
+            target_h=cnn_size,
+            y_sphere=y_sphere,
+            safety=CROP_SAFETY_PIXELS,
+        )
+        timing["crop"] += time.perf_counter() - t0
+
+        t0 = time.perf_counter()
+        cv2.imwrite(str(out_sub_path / f"{path.stem}_crop.png"), crop)
+        timing["imwrite"] += time.perf_counter() - t0
+
+        # Full output mode: generate plots
+        if curve is not None:
             t0 = time.perf_counter()
-            frame, mask = _reload_frame_and_mask(path, best_idx)
-            timing["reload_frame"] += time.perf_counter() - t0
-            
-            if frame is not None:
-                t0 = time.perf_counter()
-                crop = crop_droplet_with_sphere_guard(
-                    frame, y_top, y_bottom, cx,
-                    target_w=CNN_SIZE, target_h=CNN_SIZE,
-                    y_sphere=y_sphere, safety=CROP_SAFETY_PIXELS,
-                )
-                timing["crop"] += time.perf_counter() - t0
-                
-                t0 = time.perf_counter()
-                cv2.imwrite(str(out_sub_path / f"{path.stem}_crop.png"), crop)
-                timing["imwrite"] += time.perf_counter() - t0
+            save_darkness_plot(
+                out_sub_path / f"{path.stem}_darkness.png",
+                curve,
+                first,
+                last,
+                best_idx,
+                path.name,
+            )
+            timing["darkness_plot"] += time.perf_counter() - t0
 
-                # Full output mode: generate plots
-                if curve is not None:
-                    # Darkness plot
-                    t0 = time.perf_counter()
-                    save_darkness_plot(
-                        out_sub_path / f"{path.stem}_darkness.png",
-                        curve, first, last, best_idx, path.name
-                    )
-                    timing["darkness_plot"] += time.perf_counter() - t0
-
-                    # Overlay plot (needs frame and mask)
-                    t0 = time.perf_counter()
-                    geo_for_plot = {
-                        "frame": frame,
-                        "mask": mask,
-                        "y_top": y_top,
-                        "y_bottom": y_bottom,
-                        "y_bottom_sphere": y_sphere,
-                        "cx": cx,
-                    }
-                    save_geometric_overlay(
-                        out_sub_path / f"{path.stem}_overlay.png",
-                        geo_for_plot, best_idx, CNN_SIZE=CNN_SIZE
-                    )
-                    timing["overlay_plot"] += time.perf_counter() - t0
+            t0 = time.perf_counter()
+            geo_for_plot = {
+                "frame": frame,
+                "mask": mask,
+                "y_top": y_top,
+                "y_bottom": y_bottom,
+                "y_bottom_sphere": y_sphere,
+                "cx": cx,
+            }
+            save_geometric_overlay(
+                out_sub_path / f"{path.stem}_overlay.png",
+                geo_for_plot,
+                best_idx,
+                cnn_size=cnn_size,
+            )
+            timing["overlay_plot"] += time.perf_counter() - t0
 
     return (f"[DONE] {droplet_id}", timing)
 
 
-# ============================================================
-# OUTPUT WORKER FOR PER-FOLDER (used by global pipeline)
-# ============================================================
+def generate_folder_outputs(
+    args: Tuple[str, Dict[Tuple[str, str], Dict[str, Any]], int, int],
+) -> Tuple[str, Dict[str, float]]:
+    """Generate outputs for all droplets in a folder.
 
-def generate_folder_outputs(args):
-    """
-    Generate outputs for all droplets in a folder.
-    Writes CSV and generates crops/plots.
-    Reloads frames as needed (memory efficient).
-    
     Args:
-        args: tuple of (sub_path, analyses_dict, CNN_SIZE)
-        
+        args: Tuple of (sub_path, analyses_dict, cnn_size, step).
+
     Returns:
-        (message, timing_dict)
+        Tuple of (message, timing_dict).
     """
-    sub_path, analyses_dict, CNN_SIZE = args
+    sub_path, analyses_dict, cnn_size, step = args
     sub = Path(sub_path)
 
     timing = {
@@ -156,7 +161,7 @@ def generate_folder_outputs(args):
     }
 
     groups = group_cines_by_droplet(sub)
-    selected = list(range(0, len(groups), CINE_STEP))
+    selected = list(range(0, len(groups), step))
 
     out_sub = OUTPUT_ROOT / sub.name
     out_sub.mkdir(parents=True, exist_ok=True)
@@ -166,11 +171,18 @@ def generate_folder_outputs(args):
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([
-            "droplet_id", "camera", "cine_file",
-            "first_frame", "last_frame",
-            "best_frame", "dark_fraction",
-            "y_top", "y_bottom", "y_sphere",
-            "crop_size_px", "crop_path",
+            "droplet_id",
+            "camera",
+            "cine_file",
+            "first_frame",
+            "last_frame",
+            "best_frame",
+            "dark_fraction",
+            "y_top",
+            "y_bottom",
+            "y_sphere",
+            "crop_size_px",
+            "crop_path",
         ])
 
         for idx in selected:
@@ -193,7 +205,7 @@ def generate_folder_outputs(args):
                 best_idx = info["best"]
                 geo = info["geo"]
 
-                dark_val = ""
+                dark_val: Union[str, float] = ""
                 if curve is not None:
                     dark_val = float(curve[best_idx - first])
 
@@ -204,32 +216,39 @@ def generate_folder_outputs(args):
 
                 crop_path = ""
                 if y_top is not None and y_bottom is not None:
-                    # Reload frame
                     t0 = time.perf_counter()
                     frame, mask = _reload_frame_and_mask(path, best_idx)
                     timing["reload_frame"] += time.perf_counter() - t0
-                    
+
                     if frame is not None:
                         t0 = time.perf_counter()
                         crop = crop_droplet_with_sphere_guard(
-                            frame, y_top, y_bottom, cx,
-                            target_w=CNN_SIZE, target_h=CNN_SIZE,
-                            y_sphere=y_sphere, safety=CROP_SAFETY_PIXELS,
+                            frame,
+                            y_top,
+                            y_bottom,
+                            cx,
+                            target_w=cnn_size,
+                            target_h=cnn_size,
+                            y_sphere=y_sphere,
+                            safety=CROP_SAFETY_PIXELS,
                         )
                         timing["crop"] += time.perf_counter() - t0
-                        
+
                         t0 = time.perf_counter()
                         out_crop = out_sub / f"{path.stem}_crop.png"
                         cv2.imwrite(str(out_crop), crop)
                         timing["imwrite"] += time.perf_counter() - t0
                         crop_path = str(out_crop)
 
-                        # Full output mode: generate plots
                         if curve is not None:
                             t0 = time.perf_counter()
                             save_darkness_plot(
                                 out_sub / f"{path.stem}_darkness.png",
-                                curve, first, last, best_idx, path.name
+                                curve,
+                                first,
+                                last,
+                                best_idx,
+                                path.name,
                             )
                             timing["darkness_plot"] += time.perf_counter() - t0
 
@@ -244,42 +263,57 @@ def generate_folder_outputs(args):
                             }
                             save_geometric_overlay(
                                 out_sub / f"{path.stem}_overlay.png",
-                                geo_for_plot, best_idx, CNN_SIZE=CNN_SIZE
+                                geo_for_plot,
+                                best_idx,
+                                cnn_size=cnn_size,
                             )
                             timing["overlay_plot"] += time.perf_counter() - t0
 
                 writer.writerow([
-                    droplet_id, cam, path.name,
-                    first, last,
-                    best_idx, dark_val,
-                    y_top, y_bottom, y_sphere,
-                    CNN_SIZE, crop_path,
+                    droplet_id,
+                    cam,
+                    path.name,
+                    first,
+                    last,
+                    best_idx,
+                    dark_val,
+                    y_top,
+                    y_bottom,
+                    y_sphere,
+                    cnn_size,
+                    crop_path,
                 ])
 
     return (f"[DONE] {sub.name}", timing)
 
 
-# ============================================================
-# CSV WRITING UTILITIES
-# ============================================================
+def write_folder_csv(
+    csv_path: Union[str, Path],
+    folder_analyses: Dict[str, Dict[str, Dict[str, Any]]],
+    out_sub: Path,
+    cnn_size: int,
+) -> None:
+    """Write CSV summary for a folder.
 
-def write_folder_csv(csv_path, folder_analyses, out_sub, CNN_SIZE):
-    """
-    Write CSV summary for a folder (per-folder pipeline).
-    
     Args:
-        csv_path: Path to output CSV
-        folder_analyses: dict of {droplet_id: {cam: info}}
-        out_sub: Output subfolder path
-        CNN_SIZE: Crop size used
+        csv_path: Output CSV path.
+        folder_analyses: Dict of {droplet_id: {cam: info}}.
+        out_sub: Output subfolder path.
+        cnn_size: Crop size used.
     """
     with open(csv_path, "w", newline="") as f:
         writer = csv.writer(f)
         writer.writerow([
-            "droplet_id", "camera", "cine_file",
-            "best_frame", "dark_fraction",
-            "y_top", "y_bottom", "y_sphere",
-            "crop_size_px", "crop_path"
+            "droplet_id",
+            "camera",
+            "cine_file",
+            "best_frame",
+            "dark_fraction",
+            "y_top",
+            "y_bottom",
+            "y_sphere",
+            "crop_size_px",
+            "crop_path",
         ])
 
         for droplet_id, cam_dict in folder_analyses.items():
@@ -288,21 +322,27 @@ def write_folder_csv(csv_path, folder_analyses, out_sub, CNN_SIZE):
                 curve = info["curve"]
                 best_idx = info["best"]
                 first = info["first"]
-
                 geo = info["geo"]
+
                 y_top = geo["y_top"]
                 y_bottom = geo["y_bottom"]
                 y_sphere = geo["y_bottom_sphere"]
 
-                dark_val = ""
+                dark_val: Union[str, float] = ""
                 if curve is not None:
                     dark_val = float(curve[best_idx - first])
-                
+
                 crop_path = str(out_sub / f"{path.stem}_crop.png")
 
                 writer.writerow([
-                    droplet_id, cam, path.name,
-                    best_idx, dark_val,
-                    y_top, y_bottom, y_sphere,
-                    CNN_SIZE, crop_path,
+                    droplet_id,
+                    cam,
+                    path.name,
+                    best_idx,
+                    dark_val,
+                    y_top,
+                    y_bottom,
+                    y_sphere,
+                    cnn_size,
+                    crop_path,
                 ])

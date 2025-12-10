@@ -1,38 +1,54 @@
-# pipeline_folder.py
-#
-# Per-folder pipeline - orchestration only.
-# Workers and utilities are in separate modules.
+"""Per-folder pipeline orchestration.
+
+Calibrates crop size separately for each folder.
+"""
 
 import time
+from pathlib import Path
+from typing import Any, Dict, List
 
-from config_modular import OUTPUT_ROOT, CINE_ROOT, CINE_STEP, CROP_SAFETY_PIXELS
-from cine_io_modular import group_cines_by_droplet, iter_subfolders
+from cine_io_modular import group_cines_by_droplet, iter_subfolders, safe_load_cine
+import config_modular
+from config_modular import CINE_ROOT, CROP_SAFETY_PIXELS, OUTPUT_ROOT
 from crop_calibration_modular import compute_crop_size
-from parallel_utils_modular import run_parallel
-from timing_utils_modular import Timer
-
-from workers_modular import analyze_droplet_full, analyze_droplet_crops_only
+from darkness_analysis_modular import (
+    analyze_cine_darkness,
+    choose_best_frame_geometry_only,
+    choose_best_frame_with_geo,
+)
+from image_utils_modular import otsu_mask
 from output_writer_modular import generate_droplet_outputs, write_folder_csv
+from parallel_utils_modular import run_parallel
+from plotting_modular import save_darkness_plot, save_geometric_overlay
 from profiling_modular import (
     aggregate_timings,
     print_global_summary,
     save_profile_json,
-    init_output_timing,
 )
+from timing_utils_modular import Timer
+from workers_modular import analyze_droplet_crops_only, analyze_droplet_full
 
 
-def process_per_folder(safe_mode=False, profile=False, quick_test=False, full_output=True):
-    """
-    Per-folder pipeline: calibrate crop size separately for each folder.
-    
+def process_per_folder(
+    safe_mode: bool = False,
+    profile: bool = False,
+    quick_test: bool = False,
+    full_output: bool = True,
+) -> None:
+    """Execute per-folder pipeline.
+
+    Calibrates crop size separately for each folder.
+
     Args:
-        safe_mode: If True, run single-process (for debugging). If False, multiprocessing.
-        profile: If True, save profiling JSON
-        quick_test: If True, process only first droplet per folder
-        full_output: If True, generate all plots. If False, crops only.
+        safe_mode: If True, run single-process for debugging.
+        profile: If True, save profiling JSON.
+        quick_test: If True, process only first droplet per folder.
+        full_output: If True, generate all plots.
     """
     if quick_test:
-        _quick_test_per_folder(safe_mode=safe_mode, profile=profile, full_output=full_output)
+        _quick_test_per_folder(
+            safe_mode=safe_mode, profile=profile, full_output=full_output
+        )
         return
 
     subfolders = iter_subfolders(CINE_ROOT)
@@ -42,13 +58,13 @@ def process_per_folder(safe_mode=False, profile=False, quick_test=False, full_ou
     total_droplets = 0
     for sub in subfolders:
         groups = group_cines_by_droplet(sub)
-        total_droplets += len(range(0, len(groups), CINE_STEP))
+        total_droplets += len(range(0, len(groups), config_modular.CINE_STEP))
 
     global_done = 0
     global_timer = Timer()
-    folder_profiles = []
-    
-    global_analysis_timing = {}
+    folder_profiles: List[Dict[str, Any]] = []
+
+    global_analysis_timing: Dict[str, float] = {}
     global_output_timing = {
         "reload_frame": 0.0,
         "crop": 0.0,
@@ -61,10 +77,11 @@ def process_per_folder(safe_mode=False, profile=False, quick_test=False, full_ou
     output_str = "full output" if full_output else "crops only"
     if profile:
         mode_str += " + PROFILING"
-    print(f"\n[PER-FOLDER MODE] {mode_str}, {output_str}")
+    step = config_modular.CINE_STEP
+    print(f"\n[PER-FOLDER MODE] {mode_str}, {output_str}, step={step}")
     print(f"Found {total_folders} subfolders.\n")
 
-    # Choose analysis worker based on full_output (not safe_mode)
+    # Select worker based on output mode
     worker_func = analyze_droplet_full if full_output else analyze_droplet_crops_only
 
     for f_idx, sub in enumerate(subfolders, start=1):
@@ -81,13 +98,12 @@ def process_per_folder(safe_mode=False, profile=False, quick_test=False, full_ou
             print("  [INFO] No droplets in this folder.")
             continue
 
-        selected_indices = list(range(0, n_groups, CINE_STEP))
+        selected_indices = list(range(0, n_groups, config_modular.CINE_STEP))
         droplets_to_process = [
-            (groups[idx][0], groups[idx][1])
-            for idx in selected_indices
+            (groups[idx][0], groups[idx][1]) for idx in selected_indices
         ]
 
-        # === Phase 1: Analysis ===
+        # Phase 1: Analysis
         print(f"[{sub.name}] Phase 1: Analyse droplets...")
         p1_timer = Timer()
 
@@ -100,34 +116,36 @@ def process_per_folder(safe_mode=False, profile=False, quick_test=False, full_ou
         p1_sec = p1_timer.seconds
         print(f"[{sub.name}] Phase 1 done — {p1_timer.elapsed}")
 
-        folder_analyses = {}
-        all_diams = []
-        all_gaps = []
-        phase1_timings = []
+        folder_analyses: Dict[str, Dict] = {}
+        all_diams: List[float] = []
+        all_gaps: List[float] = []
+        phase1_timings: List[Dict[str, float]] = []
 
         for droplet_id, cam_dict, diams, gaps, timing in results:
             folder_analyses[droplet_id] = cam_dict
             all_diams.extend(diams)
             all_gaps.extend(gaps)
             phase1_timings.append(timing)
-        
+
         p1_timing_totals = aggregate_timings(phase1_timings, "Phase 1 - Analysis")
         for k, v in p1_timing_totals.items():
             global_analysis_timing[k] = global_analysis_timing.get(k, 0.0) + v
 
-        # === Phase 2: Calibration ===
+        # Phase 2: Calibration
         p2_start = time.time()
 
         if not all_gaps:
-            CNN_SIZE = 128
+            cnn_size = 128
             print(f"[CAL:{sub.name}] No valid geometry → fallback 128×128")
         else:
-            CNN_SIZE = compute_crop_size(all_diams, all_gaps, safety_pixels=CROP_SAFETY_PIXELS)
-            print(f"[CAL:{sub.name}] crop size = {CNN_SIZE}×{CNN_SIZE}")
+            cnn_size = compute_crop_size(
+                all_diams, all_gaps, safety_pixels=CROP_SAFETY_PIXELS
+            )
+            print(f"[CAL:{sub.name}] crop size = {cnn_size}×{cnn_size}")
 
         p2_sec = time.time() - p2_start
 
-        # === Phase 3: Outputs ===
+        # Phase 3: Outputs
         p3_timer = Timer()
         print(f"[{sub.name}] Phase 3: Outputs...")
 
@@ -135,7 +153,7 @@ def process_per_folder(safe_mode=False, profile=False, quick_test=False, full_ou
         out_sub.mkdir(parents=True, exist_ok=True)
 
         output_args = [
-            (droplet_id, folder_analyses[droplet_id], CNN_SIZE, str(out_sub))
+            (droplet_id, folder_analyses[droplet_id], cnn_size, str(out_sub))
             for droplet_id in folder_analyses
         ]
 
@@ -147,10 +165,10 @@ def process_per_folder(safe_mode=False, profile=False, quick_test=False, full_ou
         )
         p3_sec = p3_timer.seconds
 
-        phase3_timings = []
+        phase3_timings: List[Dict[str, float]] = []
         for msg, timing in results_out:
             phase3_timings.append(timing)
-        
+
         p3_timing_totals = aggregate_timings(phase3_timings, "Phase 3 - Outputs")
         for k, v in p3_timing_totals.items():
             if k in global_output_timing:
@@ -161,11 +179,14 @@ def process_per_folder(safe_mode=False, profile=False, quick_test=False, full_ou
         # Global progress
         global_done += len(output_args)
         pct = (global_done / total_droplets) * 100 if total_droplets > 0 else 100.0
-        print(f"[GLOBAL] {global_done}/{total_droplets} — {pct:.1f}% (elapsed {global_timer.elapsed})")
+        print(
+            f"[GLOBAL] {global_done}/{total_droplets} — {pct:.1f}% "
+            f"(elapsed {global_timer.elapsed})"
+        )
 
         # Write CSV
         csv_path = out_sub / f"{sub.name}_summary.csv"
-        write_folder_csv(csv_path, folder_analyses, out_sub, CNN_SIZE)
+        write_folder_csv(csv_path, folder_analyses, out_sub, cnn_size)
         print(f"[{sub.name}] CSV saved.")
 
         folder_total_sec = time.time() - folder_start
@@ -183,35 +204,34 @@ def process_per_folder(safe_mode=False, profile=False, quick_test=False, full_ou
             })
 
     total_sec = global_timer.seconds
-    
+
     print_global_summary(global_analysis_timing, global_output_timing)
-    
+
     print(f"\n=== PER-FOLDER COMPLETE — {total_sec:.1f}s ===")
 
     if profile:
-        save_profile_json(OUTPUT_ROOT, "profiling_perfolder.json", {
-            "mode": "per-folder",
-            "safe_mode": safe_mode,
-            "full_output": full_output,
-            "total_seconds": total_sec,
-            "global_analysis_timing": global_analysis_timing,
-            "global_output_timing": global_output_timing,
-            "folders": folder_profiles,
-        })
+        save_profile_json(
+            OUTPUT_ROOT,
+            "profiling_perfolder.json",
+            {
+                "mode": "per-folder",
+                "safe_mode": safe_mode,
+                "full_output": full_output,
+                "step": config_modular.CINE_STEP,
+                "total_seconds": total_sec,
+                "global_analysis_timing": global_analysis_timing,
+                "global_output_timing": global_output_timing,
+                "folders": folder_profiles,
+            },
+        )
 
 
-def _quick_test_per_folder(safe_mode=False, profile=False, full_output=True):
+def _quick_test_per_folder(
+    safe_mode: bool = False,
+    profile: bool = False,
+    full_output: bool = True,
+) -> None:
     """Quick test: first droplet per folder only."""
-    from darkness_analysis_modular import (
-        analyze_cine_darkness,
-        choose_best_frame_with_geo,
-        choose_best_frame_geometry_only,
-    )
-    from cine_io_modular import safe_load_cine
-    from plotting_modular import save_darkness_plot, save_geometric_overlay
-    from image_utils_modular import otsu_mask
-    import cv2
-
     subfolders = iter_subfolders(CINE_ROOT)
     total_folders = len(subfolders)
 
@@ -225,10 +245,13 @@ def _quick_test_per_folder(safe_mode=False, profile=False, full_output=True):
         "overlay_plot": 0.0,
         "n_frames": 0,
     }
-    folder_profiles = []
+    folder_profiles: List[Dict[str, Any]] = []
 
     output_str = "full output" if full_output else "crops only"
-    print(f"\n[QUICK TEST - PER-FOLDER] {'SAFE' if safe_mode else 'FAST'} mode, {output_str}")
+    print(
+        f"\n[QUICK TEST - PER-FOLDER] {'SAFE' if safe_mode else 'FAST'} mode, "
+        f"{output_str}"
+    )
     print(f"Processing first droplet from each of {total_folders} folders.\n")
 
     for f_idx, sub in enumerate(subfolders, start=1):
@@ -260,34 +283,37 @@ def _quick_test_per_folder(safe_mode=False, profile=False, full_output=True):
                 continue
 
             t0 = time.perf_counter()
-            c = safe_load_cine(path)
+            cine_obj = safe_load_cine(path)
             folder_timing["load_cine"] += time.perf_counter() - t0
 
-            if c is None:
+            if cine_obj is None:
                 continue
 
-            first, last = c.range
-            folder_timing["n_frames"] += (last - first + 1)
+            first, last = cine_obj.range
+            folder_timing["n_frames"] += last - first + 1
 
             if full_output:
                 t0 = time.perf_counter()
-                dark = analyze_cine_darkness(c)
+                dark = analyze_cine_darkness(cine_obj)
                 folder_timing["darkness_curve"] += time.perf_counter() - t0
                 curve = dark["darkness_curve"]
 
                 t0 = time.perf_counter()
-                best_idx, geo = choose_best_frame_with_geo(c, curve)
+                best_idx, geo = choose_best_frame_with_geo(cine_obj, curve)
                 folder_timing["best_frame"] += time.perf_counter() - t0
 
                 t0 = time.perf_counter()
                 save_darkness_plot(
                     out_sub / f"{path.stem}_darkness.png",
-                    curve, first, last, best_idx, path.name
+                    curve,
+                    first,
+                    last,
+                    best_idx,
+                    path.name,
                 )
                 folder_timing["darkness_plot"] += time.perf_counter() - t0
 
                 t0 = time.perf_counter()
-                # Reconstruct geo with frame/mask for plotting
                 frame = geo["frame"]
                 _, mask = otsu_mask(frame)
                 geo_for_plot = {
@@ -300,21 +326,29 @@ def _quick_test_per_folder(safe_mode=False, profile=False, full_output=True):
                 }
                 save_geometric_overlay(
                     out_sub / f"{path.stem}_overlay.png",
-                    geo_for_plot, best_idx, CNN_SIZE=None
+                    geo_for_plot,
+                    best_idx,
+                    cnn_size=None,
                 )
                 folder_timing["overlay_plot"] += time.perf_counter() - t0
             else:
                 t0 = time.perf_counter()
-                best_idx, geo = choose_best_frame_geometry_only(c)
+                best_idx, geo = choose_best_frame_geometry_only(cine_obj)
                 folder_timing["geometry_scan"] += time.perf_counter() - t0
 
         folder_sec = time.time() - t_folder
-        
-        analysis_time = folder_timing['darkness_curve'] + folder_timing['best_frame'] + folder_timing['geometry_scan']
-        print(f"  load: {folder_timing['load_cine']:.2f}s | "
-              f"analysis: {analysis_time:.2f}s | "
-              f"frames: {folder_timing['n_frames']}")
-        
+
+        analysis_time = (
+            folder_timing["darkness_curve"]
+            + folder_timing["best_frame"]
+            + folder_timing["geometry_scan"]
+        )
+        print(
+            f"  load: {folder_timing['load_cine']:.2f}s | "
+            f"analysis: {analysis_time:.2f}s | "
+            f"frames: {folder_timing['n_frames']}"
+        )
+
         for k in global_timing:
             global_timing[k] += folder_timing[k]
 
@@ -326,7 +360,7 @@ def _quick_test_per_folder(safe_mode=False, profile=False, full_output=True):
             })
 
     total_sec = global_timer.seconds
-    
+
     print("\n" + "=" * 50)
     print("QUICK TEST SUMMARY")
     print("=" * 50)
@@ -335,15 +369,19 @@ def _quick_test_per_folder(safe_mode=False, profile=False, full_output=True):
             print(f"  {k}: {int(v)}")
         elif v > 0:
             print(f"  {k}: {v:.2f}s")
-    
+
     print(f"\n=== QUICK TEST COMPLETE — {total_sec:.1f}s ===")
 
     if profile:
-        save_profile_json(OUTPUT_ROOT, "profiling_perfolder_quicktest.json", {
-            "mode": "per-folder-quicktest",
-            "safe_mode": safe_mode,
-            "full_output": full_output,
-            "total_seconds": total_sec,
-            "global_timing": global_timing,
-            "folders": folder_profiles,
-        })
+        save_profile_json(
+            OUTPUT_ROOT,
+            "profiling_perfolder_quicktest.json",
+            {
+                "mode": "per-folder-quicktest",
+                "safe_mode": safe_mode,
+                "full_output": full_output,
+                "total_seconds": total_sec,
+                "global_timing": global_timing,
+                "folders": folder_profiles,
+            },
+        )

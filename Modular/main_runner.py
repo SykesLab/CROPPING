@@ -1,165 +1,257 @@
-# main_runner.py
-#
-# Entry point for the modular cropping pipeline.
-# Lets you choose: global vs per-folder crop, execution mode, and output options.
+"""Entry point for the modular cropping pipeline.
+
+Provides streamlined interactive configuration.
+"""
 
 import sys
 from pathlib import Path
+from typing import Any, Dict
 
+import config_modular
 from config_modular import CINE_ROOT
-from pipeline_global import process_global
-from pipeline_folder import process_per_folder
-
-# Use SILENT cine import (pre-loads SDK once, suppresses banner)
 from phantom_silence_modular import cine
+from pipeline_folder import process_per_folder
+from pipeline_global import process_global
 
 
-def check_sdk_and_cines(root_folder: Path) -> bool:
-    """Verify SDK works and .cine files exist."""
-    cine_files = list(root_folder.rglob("*.cine"))
-
+def _check_sdk() -> bool:
+    """Quick SDK validation."""
+    cine_files = list(CINE_ROOT.rglob("*.cine"))
     if not cine_files:
-        print(f"\n[SDK CHECK] No .cine files under {root_folder}")
         return False
-
-    test_path = cine_files[0]
-    print(f"\n[SDK CHECK] Testing SDK on: {test_path}")
-
     try:
-        c = cine.Cine.from_filepath(str(test_path))
-        if c is None:
-            print("[SDK CHECK] Cine returned None.")
-            return False
-
-        _ = c.range
-        print("[SDK CHECK] SUCCESS — Cine loading works.\n")
-        return True
-
-    except Exception as e:
-        print("[SDK CHECK] FAILED — Cine could not be opened.")
-        print("Details:", e)
+        c = cine.Cine.from_filepath(str(cine_files[0]))
+        return c is not None and c.range is not None
+    except Exception:
         return False
 
 
-def _ask_crop_mode() -> str:
-    """Ask user for global vs per-folder crop mode."""
-    print("\n" + "=" * 40)
-    print(" MODULAR CROPPING PIPELINE")
-    print("=" * 40)
-    print(f"CINE ROOT: {CINE_ROOT}")
-    print("=" * 40)
-    print("1 = Global crop size (all folders)")
-    print("2 = Per-folder crop size")
-    print("=" * 40 + "\n")
-
-    return input("Enter 1 or 2: ").strip()
+def _count_data() -> Dict[str, int]:
+    """Count folders and approximate droplets."""
+    folders = [p for p in CINE_ROOT.iterdir() if p.is_dir()]
+    total_cines = len(list(CINE_ROOT.rglob("*.cine")))
+    return {
+        "folders": len(folders),
+        "cines": total_cines,
+        "droplets": total_cines // 2,
+    }
 
 
-def _ask_execution_mode():
-    """
-    Ask for execution mode.
+def _header() -> bool:
+    """Print header and return SDK status."""
+    print("\n" + "=" * 50)
+    print("  DROPLET CROPPING PIPELINE")
+    print("=" * 50)
+    
+    # Check SDK
+    sdk_ok = _check_sdk()
+    status = "Ready" if sdk_ok else "SDK Error"
+    
+    # Count data
+    counts = _count_data()
+    
+    print(f"  Source:   {CINE_ROOT}")
+    print(f"  Found:    {counts['folders']} folders, ~{counts['droplets']} droplets")
+    print(f"  Status:   {status}")
+    print("=" * 50)
+    
+    return sdk_ok
+
+
+def _prompt_choice(question: str, options: Dict[str, str], default: str) -> str:
+    """Prompt user to select from options.
+    
+    Args:
+        question: Question text
+        options: {key: description} mapping
+        default: Default key (shown with *)
     
     Returns:
-        (safe_mode, profile, quick_test)
+        Selected key (uppercase)
     """
-    print("\n" + "=" * 40)
-    print(" EXECUTION MODE")
-    print("=" * 40)
-    print("1 = Fast (multiprocessing)")
-    print("2 = Safe (single-process, for debugging)")
-    print("3 = Safe + Profiling (full dataset)")
-    print("4 = Quick Test (first droplet per folder)")
-    print("=" * 40 + "\n")
-
-    mode = input("Enter 1, 2, 3, or 4: ").strip()
-
-    if mode == "1":
-        return False, False, False  # safe_mode, profile, quick_test
-    elif mode == "2":
-        return True, False, False
-    elif mode == "3":
-        return True, True, False
-    elif mode == "4":
-        return True, True, True
-    else:
-        print("Invalid execution mode.")
-        sys.exit(1)
+    print(f"\n  {question}")
+    for key, desc in options.items():
+        marker = " *" if key == default else ""
+        print(f"    [{key}] {desc}{marker}")
+    
+    choice = input(f"  [{default}] > ").strip().upper()
+    
+    if choice == "":
+        return default
+    if choice in options:
+        return choice
+    
+    print(f"    Invalid, using: {default}")
+    return default
 
 
-def _ask_output_options() -> bool:
-    """
-    Ask user what outputs they want.
+def _prompt_int(question: str, default: int, min_val: int = 1) -> int:
+    """Prompt for integer input."""
+    choice = input(f"  {question} [{default}] > ").strip()
+    
+    if choice == "":
+        return default
+    try:
+        val = int(choice)
+        return max(min_val, val)
+    except ValueError:
+        print(f"    Invalid, using: {default}")
+        return default
+
+
+def _prompt_yes_no(question: str, default: bool = False) -> bool:
+    """Yes/no prompt."""
+    hint = "[Y/n]" if default else "[y/N]"
+    choice = input(f"  {question} {hint} > ").strip().lower()
+    
+    if choice == "":
+        return default
+    return choice in ("y", "yes")
+
+
+def configure() -> Dict[str, Any]:
+    """Run interactive configuration.
     
     Returns:
-        full_output: If True, generate all plots. If False, crops only.
+        Configuration dict with all settings.
     """
-    print("\n" + "=" * 40)
-    print(" OUTPUT OPTIONS")
-    print("=" * 40)
-    print("1 = Crops only (fastest, minimal memory)")
-    print("2 = Full output (crops + darkness + overlay plots)")
-    print("=" * 40 + "\n")
-
-    choice = input("Enter 1 or 2: ").strip()
-
-    if choice == "1":
-        return False  # crops only
-    elif choice == "2":
-        return True   # full output
-    else:
-        print("Invalid choice, defaulting to crops only.")
-        return False
-
-
-def main():
-    crop_choice = _ask_crop_mode()
-
-    if not check_sdk_and_cines(CINE_ROOT):
-        print("[ABORT] SDK or cine load failure.")
-        sys.exit(1)
-
-    safe_mode, profile, quick_test = _ask_execution_mode()
+    config = {}
     
-    # Ask for output options (applies to all modes)
-    # Safe mode and quick test default to full output for debugging
-    if safe_mode or quick_test:
-        full_output = True
-        print("\n[INFO] Safe/Quick mode → full output enabled by default.")
+    # 1. Scope
+    scope = _prompt_choice(
+        "What to process?",
+        {
+            "F": "Full run (all selected droplets)",
+            "Q": "Quick test (1 droplet per folder)",
+        },
+        default="F"
+    )
+    config["quick_test"] = (scope == "Q")
+    
+    # 2. Sampling (skip if quick test)
+    if config["quick_test"]:
+        config["step"] = 1
+        print("\n  Sampling: N/A (quick test)")
     else:
-        full_output = _ask_output_options()
+        sampling = _prompt_choice(
+            "Sampling rate?",
+            {
+                "A": "All droplets (step=1)",
+                "T": "Every 10th (step=10)",
+                "C": "Custom step",
+            },
+            default="T"
+        )
+        if sampling == "A":
+            config["step"] = 1
+        elif sampling == "T":
+            config["step"] = 10
+        else:
+            config["step"] = _prompt_int("Enter step size:", default=10, min_val=1)
+    
+    # 3. Crop mode
+    crop = _prompt_choice(
+        "Crop calibration?",
+        {
+            "G": "Global (one size for all folders)",
+            "P": "Per-folder (separate size each folder)",
+        },
+        default="G"
+    )
+    config["global_mode"] = (crop == "G")
+    
+    # 4. Execution
+    execution = _prompt_choice(
+        "Execution mode?",
+        {
+            "F": "Fast (multiprocessing)",
+            "S": "Safe (single-process, for debugging)",
+        },
+        default="F"
+    )
+    config["safe_mode"] = (execution == "S")
+    
+    # 5. Outputs
+    output = _prompt_choice(
+        "Outputs to generate?",
+        {
+            "C": "Crops only (fastest)",
+            "A": "All (crops + darkness + overlay plots)",
+        },
+        default="C"
+    )
+    config["full_output"] = (output == "A")
+    
+    # 6. Profiling (optional add-on)
+    config["profile"] = _prompt_yes_no("Save profiling JSON?", default=False)
+    
+    return config
 
-    # Print summary
-    print("\n" + "=" * 40)
-    print(" CONFIGURATION SUMMARY")
-    print("=" * 40)
-    print(f"  Crop mode:    {'Global' if crop_choice == '1' else 'Per-folder'}")
-    print(f"  Execution:    {'Safe (single-process)' if safe_mode else 'Fast (multiprocessing)'}")
-    print(f"  Profiling:    {'Yes' if profile else 'No'}")
-    print(f"  Quick test:   {'Yes' if quick_test else 'No'}")
-    print(f"  Full output:  {'Yes (crops + all plots)' if full_output else 'No (crops only)'}")
-    print("=" * 40)
 
-    if crop_choice == "1":
-        print("\n[MODE] Global crop mode\n")
+def _print_summary(config: Dict[str, Any]) -> None:
+    """Print configuration summary."""
+    counts = _count_data()
+    
+    # Calculate estimated droplets
+    if config["quick_test"]:
+        est_droplets = counts["folders"]
+    else:
+        est_droplets = counts["droplets"] // config["step"]
+    
+    print("\n" + "-" * 50)
+    print("  CONFIGURATION")
+    print("-" * 50)
+    print(f"  Scope:       {'Quick test' if config['quick_test'] else 'Full run'}")
+    print(f"  Sampling:    Every {config['step']} {'(N/A)' if config['quick_test'] else ''}")
+    print(f"  Crop mode:   {'Global' if config['global_mode'] else 'Per-folder'}")
+    print(f"  Execution:   {'Safe' if config['safe_mode'] else 'Fast'}")
+    print(f"  Outputs:     {'All plots' if config['full_output'] else 'Crops only'}")
+    print(f"  Profiling:   {'Yes' if config['profile'] else 'No'}")
+    print("-" * 50)
+    print(f"  Estimated:   ~{est_droplets} droplets to process")
+    print("-" * 50)
+
+
+def main() -> None:
+    """Main entry point."""
+    # Header + SDK check
+    if not _header():
+        print("\n[ERROR] SDK check failed. Cannot load .cine files.")
+        sys.exit(1)
+    
+    # Interactive configuration
+    config = configure()
+    
+    # Show summary
+    _print_summary(config)
+    
+    # Confirm
+    if not _prompt_yes_no("Proceed?", default=True):
+        print("\n  Cancelled.\n")
+        sys.exit(0)
+    
+    # Apply sampling rate to config module
+    config_modular.CINE_STEP = config["step"]
+    
+    # Run pipeline
+    print("\n" + "=" * 50)
+    
+    if config["global_mode"]:
         process_global(
-            safe_mode=safe_mode,
-            profile=profile,
-            quick_test=quick_test,
-            full_output=full_output,
-        )
-    elif crop_choice == "2":
-        print("\n[MODE] Per-folder crop mode\n")
-        process_per_folder(
-            safe_mode=safe_mode,
-            profile=profile,
-            quick_test=quick_test,
-            full_output=full_output,
+            safe_mode=config["safe_mode"],
+            profile=config["profile"],
+            quick_test=config["quick_test"],
+            full_output=config["full_output"],
         )
     else:
-        print("Invalid crop mode choice.")
-        sys.exit(1)
-
-    print("\n=== DONE ===\n")
+        process_per_folder(
+            safe_mode=config["safe_mode"],
+            profile=config["profile"],
+            quick_test=config["quick_test"],
+            full_output=config["full_output"],
+        )
+    
+    print("\n=== COMPLETE ===\n")
 
 
 if __name__ == "__main__":

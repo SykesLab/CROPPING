@@ -1,18 +1,33 @@
-# crop_calibration_modular.py
-#
-# Crop size calibration based on observed droplet geometry.
-# Uses percentile-based approach for outlier robustness.
+"""Crop size calibration based on droplet geometry.
+
+Computes optimal crop size using observed droplet diameters and
+sphere gaps, with outlier-robust percentile-based estimation.
+"""
+
+from typing import Any, Dict, List
 
 import numpy as np
-from typing import List
-from config_modular import MIN_CNN_SIZE, MAX_CNN_SIZE, CALIBRATION_PERCENTILE
+
+from config_modular import (
+    CALIBRATION_PERCENTILE,
+    MAX_CNN_SIZE,
+    MIN_CNN_SIZE,
+)
 
 
-def maybe_add_calibration_sample(diams: List[float], gaps: List[float], geo: dict):
-    """
-    If geometry is valid (droplet above sphere), append diameter + gap to lists.
+def maybe_add_calibration_sample(
+    diams: List[float],
+    gaps: List[float],
+    geo: Dict[str, Any],
+) -> None:
+    """Add geometry sample to calibration lists if valid.
 
-    NOTE: diams[i] and gaps[i] are treated as a *pair* belonging to the same frame.
+    A sample is valid if the droplet is entirely above the sphere.
+
+    Args:
+        diams: List to append diameter to (modified in place).
+        gaps: List to append gap to (modified in place).
+        geo: Geometry dict from analyze_frame_geometric.
     """
     y_top = geo.get("y_top")
     y_bottom = geo.get("y_bottom")
@@ -36,33 +51,29 @@ def compute_crop_size(
     safety_pixels: float,
     fallback: int = 128,
 ) -> int:
-    """
-    Compute a CNN crop size based on observed droplet diameters and sphere gaps.
+    """Compute optimal crop size from calibration samples.
 
-    For each (diameter_i, gap_i) pair, the *largest* crop height that still keeps the
-    sphere out while centering the droplet is:
+    For each (diameter, gap) pair, the maximum safe crop height is:
+        allowed_h = diameter + 2 * max(0, gap - safety_pixels)
 
-        allowed_h_i = diameter_i + 2 * max(0, gap_i - safety_pixels)
+    Uses percentile-based estimation for outlier robustness.
 
-    To use a single crop size for all droplets, we use a percentile-based approach
-    (rather than strict min) to be robust to outliers:
+    Args:
+        diams: List of droplet diameters.
+        gaps: List of sphere gaps.
+        safety_pixels: Minimum gap to maintain between crop and sphere.
+        fallback: Default size if calibration fails.
 
-        crop_h = percentile(allowed_heights, CALIBRATION_PERCENTILE)
-
-    This guarantees:
-        - droplet can be centred vertically for most samples
-        - sphere stays below the crop by at least `safety_pixels`
-        - robust to occasional outlier measurements
+    Returns:
+        Computed crop size in pixels, bounded by MIN/MAX_CNN_SIZE.
     """
     if not diams or not gaps or len(diams) != len(gaps):
         return fallback
 
-    allowed_heights = []
+    allowed_heights: List[float] = []
     for d, g in zip(diams, gaps):
-        # If gap is non-positive, this sample isn't useful for calibration
         if g <= 0:
             continue
-        # Max crop height that still excludes sphere for this droplet
         allowed = float(d) + 2.0 * max(0.0, float(g) - float(safety_pixels))
         if allowed > 0:
             allowed_heights.append(allowed)
@@ -70,16 +81,11 @@ def compute_crop_size(
     if not allowed_heights:
         return fallback
 
-    # Use percentile for outlier robustness (default 5th percentile)
+    # Use percentile for outlier robustness
     crop_h = int(np.percentile(allowed_heights, CALIBRATION_PERCENTILE))
 
-    # Upper-bound by MAX_CNN_SIZE (we never want to exceed this)
-    crop_h = min(crop_h, int(MAX_CNN_SIZE))
+    # Apply bounds
+    crop_h = min(crop_h, MAX_CNN_SIZE)
 
-    # We *prefer* at least MIN_CNN_SIZE, but we won't violate geometry to enforce it.
-    # Only raise to MIN_CNN_SIZE if that does not exceed the computed value.
-    if crop_h >= MIN_CNN_SIZE:
-        return crop_h
-    else:
-        # Geometry says we can't safely reach MIN_CNN_SIZE; honour geometry.
-        return crop_h
+    # Prefer MIN_CNN_SIZE but don't violate geometry constraints
+    return max(crop_h, MIN_CNN_SIZE) if crop_h >= MIN_CNN_SIZE else crop_h
