@@ -20,20 +20,44 @@ from image_utils_modular import load_frame_gray
 
 
 def get_dark_fraction(cine_obj: Any, idx: int) -> float:
-    """Calculate fraction of dark pixels in a frame using Otsu thresholding.
+    """Calculate fraction of dark pixels in a frame, excluding vignetting.
+
+    Uses connected components to filter out dark regions touching the
+    left/right borders (typically vignetting/corner shadows). Only counts
+    dark regions floating in the middle of the frame.
 
     Args:
         cine_obj: Loaded cine object.
         idx: Frame index.
 
     Returns:
-        Fraction of pixels classified as dark (0.0 to 1.0).
+        Fraction of image area occupied by non-border dark regions.
     """
     gray = load_frame_gray(cine_obj, idx)
+    h, w = gray.shape
+    total_pixels = h * w
+
     _, mask = cv2.threshold(
         gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
     )
-    return float((mask == 0).mean())
+    dark_mask = (mask == 0).astype(np.uint8)
+
+    # Connected components analysis
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+        dark_mask, connectivity=8
+    )
+
+    # Sum area of components NOT touching left/right borders
+    valid_area = 0
+    for i in range(1, num_labels):  # Skip background (label 0)
+        x, y, bw, bh, area = stats[i]
+        touches_left = (x == 0)
+        touches_right = (x + bw >= w)
+        if touches_left or touches_right:
+            continue  # Skip vignetting
+        valid_area += area
+
+    return float(valid_area) / float(total_pixels)
 
 
 def analyze_cine_darkness(cine_obj: Any) -> Dict[str, Any]:

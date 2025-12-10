@@ -6,7 +6,7 @@ Memory-optimised: frames are reloaded when needed rather than stored.
 import csv
 import time
 from pathlib import Path
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Callable, Dict, Optional, Tuple, Union
 
 import cv2
 
@@ -15,6 +15,29 @@ from config_modular import CROP_SAFETY_PIXELS, OUTPUT_ROOT
 from cropping_modular import crop_droplet_with_sphere_guard
 from image_utils_modular import load_frame_gray, otsu_mask
 from plotting_modular import save_darkness_plot, save_geometric_overlay
+
+
+# Optional callback for GUI notification
+_on_image_saved: Optional[Callable[[Path], None]] = None
+
+
+def set_image_callback(callback: Optional[Callable[[Path], None]]) -> None:
+    """Set callback to be called when an image is saved.
+    
+    Args:
+        callback: Function that takes a Path, or None to disable.
+    """
+    global _on_image_saved
+    _on_image_saved = callback
+
+
+def _notify_image_saved(path: Path) -> None:
+    """Notify callback if set."""
+    if _on_image_saved is not None:
+        try:
+            _on_image_saved(path)
+        except Exception:
+            pass  # Don't let GUI errors stop processing
 
 
 def _reload_frame_and_mask(
@@ -101,8 +124,10 @@ def generate_droplet_outputs(
         timing["crop"] += time.perf_counter() - t0
 
         t0 = time.perf_counter()
-        cv2.imwrite(str(out_sub_path / f"{path.stem}_crop.png"), crop)
+        crop_path = out_sub_path / f"{path.stem}_crop.png"
+        cv2.imwrite(str(crop_path), crop)
         timing["imwrite"] += time.perf_counter() - t0
+        _notify_image_saved(crop_path)
 
         # Full output mode: generate plots
         if curve is not None:
@@ -239,6 +264,7 @@ def generate_folder_outputs(
                         cv2.imwrite(str(out_crop), crop)
                         timing["imwrite"] += time.perf_counter() - t0
                         crop_path = str(out_crop)
+                        _notify_image_saved(out_crop)
 
                         if curve is not None:
                             t0 = time.perf_counter()

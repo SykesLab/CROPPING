@@ -9,6 +9,36 @@ import numpy as np
 from matplotlib.lines import Line2D
 
 
+def _filter_border_touching(mask: np.ndarray) -> np.ndarray:
+    """Remove components touching left/right borders from mask.
+
+    Used to exclude vignetting from overlay visualisation.
+
+    Args:
+        mask: Boolean mask (True = dark pixels).
+
+    Returns:
+        Filtered mask with border-touching components removed.
+    """
+    h, w = mask.shape
+    mask_uint8 = mask.astype(np.uint8)
+
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
+        mask_uint8, connectivity=8
+    )
+
+    # Build filtered mask
+    filtered = np.zeros_like(mask, dtype=bool)
+    for i in range(1, num_labels):  # Skip background
+        x, y, bw, bh, area = stats[i]
+        touches_left = (x == 0)
+        touches_right = (x + bw >= w)
+        if not (touches_left or touches_right):
+            filtered[labels == i] = True
+
+    return filtered
+
+
 def save_darkness_plot(
     out_path: Union[str, Path],
     curve: np.ndarray,
@@ -65,9 +95,12 @@ def save_geometric_overlay(
 
     height, width = raw.shape
 
+    # Filter out border-touching components (vignetting) for cleaner display
+    filtered_mask = _filter_border_touching(mask)
+
     # Create RGB overlay
     rgb = cv2.cvtColor(raw, cv2.COLOR_GRAY2RGB)
-    rgb[mask] = (rgb[mask] * 0.6 + np.array([255, 0, 0]) * 0.4).astype(np.uint8)
+    rgb[filtered_mask] = (rgb[filtered_mask] * 0.6 + np.array([255, 0, 0]) * 0.4).astype(np.uint8)
 
     plt.figure(figsize=(6, 6))
     plt.imshow(rgb, cmap="gray")
