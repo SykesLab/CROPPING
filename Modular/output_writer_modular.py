@@ -1,18 +1,20 @@
 """Output generation: crops, plots, and CSV writing.
 
 Memory-optimised: frames are reloaded when needed rather than stored.
+Now includes focus metrics computation for each crop.
 """
 
 import csv
 import time
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import cv2
 
 from cine_io_modular import group_cines_by_droplet, safe_load_cine
-from config_modular import CROP_SAFETY_PIXELS, OUTPUT_ROOT
+from config_modular import CROP_SAFETY_PIXELS, OUTPUT_ROOT, FOCUS_METRICS_ENABLED
 from cropping_modular import crop_droplet_with_sphere_guard
+from focus_metrics_modular import compute_all_focus_metrics
 from image_utils_modular import load_frame_gray, otsu_mask
 from plotting_modular import save_darkness_plot, save_geometric_overlay
 
@@ -179,6 +181,7 @@ def generate_folder_outputs(
     timing = {
         "reload_frame": 0.0,
         "crop": 0.0,
+        "focus_metrics": 0.0,
         "darkness_plot": 0.0,
         "overlay_plot": 0.0,
         "imwrite": 0.0,
@@ -208,6 +211,13 @@ def generate_folder_outputs(
             "y_sphere",
             "crop_size_px",
             "crop_path",
+            # Focus metrics
+            "laplacian_var",
+            "tenengrad",
+            "tenengrad_var",
+            "brenner",
+            "norm_laplacian",
+            "energy_gradient",
         ])
 
         for idx in selected:
@@ -240,6 +250,8 @@ def generate_folder_outputs(
                 cx = geo["cx"]
 
                 crop_path = ""
+                focus_metrics: Dict[str, float] = {}
+                
                 if y_top is not None and y_bottom is not None:
                     t0 = time.perf_counter()
                     frame, mask = _reload_frame_and_mask(path, best_idx)
@@ -258,6 +270,12 @@ def generate_folder_outputs(
                             safety=CROP_SAFETY_PIXELS,
                         )
                         timing["crop"] += time.perf_counter() - t0
+
+                        # Compute focus metrics
+                        if FOCUS_METRICS_ENABLED:
+                            t0 = time.perf_counter()
+                            focus_metrics = compute_all_focus_metrics(crop)
+                            timing["focus_metrics"] += time.perf_counter() - t0
 
                         t0 = time.perf_counter()
                         out_crop = out_sub / f"{path.stem}_crop.png"
@@ -308,6 +326,13 @@ def generate_folder_outputs(
                     y_sphere,
                     cnn_size,
                     crop_path,
+                    # Focus metrics (empty string if not computed)
+                    focus_metrics.get("laplacian_var", ""),
+                    focus_metrics.get("tenengrad", ""),
+                    focus_metrics.get("tenengrad_var", ""),
+                    focus_metrics.get("brenner", ""),
+                    focus_metrics.get("norm_laplacian", ""),
+                    focus_metrics.get("energy_gradient", ""),
                 ])
 
     return (f"[DONE] {sub.name}", timing)

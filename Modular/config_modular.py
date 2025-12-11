@@ -48,3 +48,12 @@ DARKNESS_WEIGHT: float = 0.05  # Weight of darkness vs centring error
 # CALIBRATION (crop_calibration_modular.py)
 # ============================================================
 CALIBRATION_PERCENTILE: float = 5.0  # Percentile for outlier-robust calibration
+
+# ============================================================
+# FOCUS METRICS (focus_metrics_modular.py)
+# ============================================================
+FOCUS_METRICS_ENABLED: bool = True  # Compute focus metrics for each crop
+FOCUS_PRIMARY_METRIC: str = "laplacian_var"  # Primary metric for classification
+# Thresholds set to None = auto-determine from dataset statistics
+FOCUS_SHARP_THRESHOLD: float = None  # Scores above this are "sharp"
+FOCUS_BLUR_THRESHOLD: float = None   # Scores below this are "blurry"
