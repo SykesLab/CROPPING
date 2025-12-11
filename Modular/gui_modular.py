@@ -82,6 +82,9 @@ class PipelineGUI(ctk.CTk):
         # For elapsed timer
         self.elapsed_timer_active: bool = False
 
+        # Thumbnail refresh throttling (max ~1 Hz)
+        self._last_thumbnail_refresh: float = 0.0
+
         # Top-level frames
         self.landing_frame = ctk.CTkFrame(self)
         self.landing_frame.grid(row=0, column=0, sticky="nsew")
@@ -605,6 +608,7 @@ class PipelineGUI(ctk.CTk):
             pass
 
         self.polling_active = True
+        self._last_thumbnail_refresh = 0.0
         self._poll_output_folder()
 
     def _stop_output_polling(self) -> None:
@@ -663,6 +667,12 @@ class PipelineGUI(ctk.CTk):
                 self.progress_current = crop_count
                 self._update_progress_display()
 
+            # Throttle thumbnail refresh to at most once per second
+            now = time.time()
+            if now - self._last_thumbnail_refresh >= 1.0:
+                self._refresh_thumbnails()
+                self._last_thumbnail_refresh = now
+
         except Exception:
             pass  # Ignore errors during polling
 
@@ -671,15 +681,12 @@ class PipelineGUI(ctk.CTk):
             self.after(500, self._poll_output_folder)  # Poll every 500ms
 
     def _add_thumbnail(self, path: str) -> None:
-        """Add a new thumbnail to the display."""
+        """Add a new thumbnail path to the queue (refresh is throttled)."""
         try:
             # Append new path, keep last 5
             self.thumbnail_paths.append(path)
             if len(self.thumbnail_paths) > 5:
                 self.thumbnail_paths.pop(0)
-
-            self._refresh_thumbnails()
-
         except Exception as e:
             self._log(f"Thumbnail error: {e}")
 
@@ -1083,7 +1090,3 @@ def run_gui() -> None:
 
     app = PipelineGUI()
     app.mainloop()
-
-
-if __name__ == "__main__":
-    run_gui()
