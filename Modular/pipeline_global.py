@@ -35,6 +35,7 @@ def process_global(
     profile: bool = False,
     quick_test: bool = False,
     full_output: bool = True,
+    gui_mode: bool = False,
 ) -> None:
     """Execute global pipeline.
 
@@ -45,10 +46,12 @@ def process_global(
         profile: If True, save profiling JSON.
         quick_test: If True, process only first droplet per folder.
         full_output: If True, generate all plots.
+        gui_mode: If True, print progress instead of tqdm bars.
     """
     if quick_test:
         _quick_test_global(
-            safe_mode=safe_mode, profile=profile, full_output=full_output
+            safe_mode=safe_mode, profile=profile, full_output=full_output,
+            gui_mode=gui_mode
         )
         return
 
@@ -90,6 +93,7 @@ def process_global(
         analysis_args,
         desc="Global analysis",
         safe_mode=safe_mode,
+        gui_mode=gui_mode,
     )
     phase1_sec = phase1_timer.seconds
     print(f"[GLOBAL] Phase 1 complete — {phase1_timer.elapsed}")
@@ -132,6 +136,7 @@ def process_global(
         args_list,
         desc="Global outputs",
         safe_mode=safe_mode,
+        gui_mode=gui_mode,
     )
     phase3_sec = phase3_timer.seconds
 
@@ -184,6 +189,7 @@ def _quick_test_global(
     safe_mode: bool = False,
     profile: bool = False,
     full_output: bool = True,
+    gui_mode: bool = False,
 ) -> None:
     """Quick test: first droplet per folder only."""
     subfolders = iter_subfolders(CINE_ROOT)

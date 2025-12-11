@@ -34,6 +34,7 @@ def process_per_folder(
     profile: bool = False,
     quick_test: bool = False,
     full_output: bool = True,
+    gui_mode: bool = False,
 ) -> None:
     """Execute per-folder pipeline.
 
@@ -44,10 +45,12 @@ def process_per_folder(
         profile: If True, save profiling JSON.
         quick_test: If True, process only first droplet per folder.
         full_output: If True, generate all plots.
+        gui_mode: If True, print progress instead of tqdm bars.
     """
     if quick_test:
         _quick_test_per_folder(
-            safe_mode=safe_mode, profile=profile, full_output=full_output
+            safe_mode=safe_mode, profile=profile, full_output=full_output,
+            gui_mode=gui_mode
         )
         return
 
@@ -112,6 +115,7 @@ def process_per_folder(
             droplets_to_process,
             desc=f"{sub.name}: analyse",
             safe_mode=safe_mode,
+            gui_mode=gui_mode,
         )
         p1_sec = p1_timer.seconds
         print(f"[{sub.name}] Phase 1 done — {p1_timer.elapsed}")
@@ -162,6 +166,7 @@ def process_per_folder(
             output_args,
             desc=f"{sub.name}: outputs",
             safe_mode=safe_mode,
+            gui_mode=gui_mode,
         )
         p3_sec = p3_timer.seconds
 
@@ -230,6 +235,7 @@ def _quick_test_per_folder(
     safe_mode: bool = False,
     profile: bool = False,
     full_output: bool = True,
+    gui_mode: bool = False,
 ) -> None:
     """Quick test: first droplet per folder only."""
     subfolders = iter_subfolders(CINE_ROOT)

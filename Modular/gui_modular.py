@@ -333,7 +333,7 @@ class PipelineGUI(ctk.CTk):
 
         ctk.CTkLabel(
             sample_frame,
-            text="Sampling (frame step)",
+            text="Sampling (cine step)",
             font=ctk.CTkFont(weight="bold"),
         ).grid(row=0, column=0, padx=10, pady=(8, 4), sticky="w")
 
@@ -341,10 +341,16 @@ class PipelineGUI(ctk.CTk):
 
         s_row = 1
         self.sample_radios: List[ctk.CTkRadioButton] = []
-        for step in ["1", "2", "5", "10"]:
+        step_labels = [
+            ("1", "Every cine"),
+            ("2", "Every 2nd cine"),
+            ("5", "Every 5th cine"),
+            ("10", "Every 10th cine"),
+        ]
+        for step, label in step_labels:
             rb = ctk.CTkRadioButton(
                 sample_frame,
-                text=f"Every {step} frame(s)",
+                text=label,
                 variable=self.sample_var,
                 value=step,
             )
@@ -355,11 +361,11 @@ class PipelineGUI(ctk.CTk):
         # Custom step
         custom_frame = ctk.CTkFrame(sample_frame)
         custom_frame.grid(row=s_row, column=0, padx=10, pady=(4, 10), sticky="w")
-        self.custom_step = ctk.CTkEntry(custom_frame, width=60, placeholder_text="step")
+        self.custom_step = ctk.CTkEntry(custom_frame, width=60, placeholder_text="N")
         self.custom_step.grid(row=0, column=0, padx=(5, 5))
         self.custom_radio = ctk.CTkRadioButton(
             custom_frame,
-            text="Custom step",
+            text="Every Nth cine",
             variable=self.sample_var,
             value="custom",
         )
@@ -944,7 +950,7 @@ class PipelineGUI(ctk.CTk):
         config_modular.CINE_STEP = config["step"]
 
         emit_log(
-            f"Step: {config['step']}, "
+            f"Cine step: {config['step']}, "
             f"Mode: {'Global' if config['global_mode'] else 'Per-folder'}, "
             f"Outputs: {'All plots' if config['full_output'] else 'Crops only'}"
         )
@@ -954,6 +960,15 @@ class PipelineGUI(ctk.CTk):
 
         def gui_print(*args: Any, **kwargs: Any) -> None:
             text = " ".join(str(a) for a in args)
+            
+            # Check for progress marker
+            if text.startswith("__PROGRESS__:"):
+                # Parse: __PROGRESS__:current:total:desc
+                parts = text.split(":", 3)
+                if len(parts) == 4:
+                    gui_queue.put(("increment", parts[3]))
+                return  # Don't print to CLI or log
+            
             # Normal CLI output
             original_print(*args, **kwargs)
             # Mirror into GUI log
@@ -971,6 +986,7 @@ class PipelineGUI(ctk.CTk):
                     profile=config["profile"],
                     quick_test=False,
                     full_output=config["full_output"],
+                    gui_mode=True,
                 )
             else:
                 process_per_folder(
@@ -978,6 +994,7 @@ class PipelineGUI(ctk.CTk):
                     profile=config["profile"],
                     quick_test=False,
                     full_output=config["full_output"],
+                    gui_mode=True,
                 )
         finally:
             # Restore print
@@ -1032,8 +1049,18 @@ class PipelineGUI(ctk.CTk):
                 if msg_type == "log":
                     self._log(data)
 
+                elif msg_type == "increment":
+                    # Increment global progress counter
+                    self.progress_current += 1
+                    self._update_progress_display()
+                    self.update_idletasks()  # Force UI refresh
+
                 elif msg_type == "progress":
-                    current, total = data
+                    # Legacy format (current, total) or (current, total, desc)
+                    if len(data) == 3:
+                        current, total, desc = data
+                    else:
+                        current, total = data
                     self.progress_current = current
                     self.progress_total = total
                     self._update_progress_display()
@@ -1046,6 +1073,7 @@ class PipelineGUI(ctk.CTk):
 
         # Schedule next poll
         self.after(100, self._poll_queue)
+
 
 
 def run_gui() -> None:
