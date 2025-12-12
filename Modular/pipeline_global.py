@@ -13,6 +13,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
+import numpy as np
+import pandas as pd
+
 import config_modular
 from cine_io_modular import group_cines_by_droplet, iter_subfolders, safe_load_cine
 from config_modular import CINE_ROOT, CROP_SAFETY_PIXELS, OUTPUT_ROOT
@@ -23,6 +26,7 @@ from darkness_analysis_modular import (
     choose_best_frame_with_geo,
 )
 from geom_analysis_modular import extract_geometry_info
+from focus_metrics_modular import classify_folder_focus, suggest_thresholds
 from image_utils_modular import otsu_mask
 from parallel_utils_modular import run_parallel
 from plotting_modular import save_darkness_plot, save_geometric_overlay
@@ -284,6 +288,7 @@ def process_global(
     quick_test: bool = False,
     full_output: bool = True,
     gui_mode: bool = False,
+    focus_classification: bool = True,
 ) -> None:
     """Execute global pipeline with droplet-level parallelization.
 
@@ -296,6 +301,7 @@ def process_global(
         quick_test: If True, process only first droplet per folder.
         full_output: If True, generate all plots.
         gui_mode: If True, print progress instead of tqdm bars.
+        focus_classification: If True, run per-folder focus classification.
     """
     if quick_test:
         _quick_test_global(
@@ -311,6 +317,8 @@ def process_global(
     output_str = "full output" if full_output else "crops only"
     if profile:
         mode_str += " + PROFILING"
+    if focus_classification:
+        mode_str += " + FOCUS CLASSIFICATION"
     print(f"\n[GLOBAL MODE] {mode_str}, {output_str}, step={step}\n")
 
     subfolders = iter_subfolders(CINE_ROOT)
@@ -353,6 +361,10 @@ def process_global(
     # Select worker based on output mode
     worker_func = _analyze_droplet_global_full if full_output else _analyze_droplet_global_crops_only
 
+    # Total work = Phase 1 (analysis) + Phase 3 (outputs)
+    # Phase 2 (calibration) is instant, doesn't count
+    total_work = total_droplets * 2
+
     # ============================================================
     # PHASE 1: Analyse all droplets (parallelized at droplet level)
     # ============================================================
@@ -365,6 +377,8 @@ def process_global(
         desc="Analysing droplets",
         safe_mode=safe_mode,
         gui_mode=gui_mode,
+        progress_offset=0,
+        progress_total=total_work,
     )
     phase1_sec = phase1_timer.seconds
     print(f"[GLOBAL] Phase 1 complete — {phase1_timer.elapsed}")
@@ -417,6 +431,8 @@ def process_global(
         desc="Generating outputs",
         safe_mode=safe_mode,
         gui_mode=gui_mode,
+        progress_offset=total_droplets,  # Continue from Phase 1
+        progress_total=total_work,
     )
     phase3_sec = phase3_timer.seconds
 
@@ -437,6 +453,13 @@ def process_global(
     # ============================================================
     print("\n[GLOBAL] Writing summary CSVs...")
     _write_global_csvs(folder_analyses, cnn_size)
+
+    # ============================================================
+    # FOCUS CLASSIFICATION (per-folder)
+    # ============================================================
+    if focus_classification:
+        print("\n[GLOBAL] Running per-folder focus classification...")
+        _run_focus_classification()
 
     total_sec = global_timer.seconds
 
@@ -471,6 +494,171 @@ def process_global(
                 "global_output_timing": global_output_timing,
             },
         )
+
+
+def _run_focus_classification() -> None:
+    """Run per-folder focus classification on all summary CSVs.
+    
+    For each folder:
+        1. Load the summary CSV
+        2. Compute per-folder p25/p75 thresholds
+        3. Classify each crop as sharp/medium/blurry
+        4. Save updated CSV with focus_class column
+        5. Copy sharp images to Focus/{folder}/ directory
+        6. Generate combined dataset CSV
+    """
+    import shutil
+    import matplotlib.pyplot as plt
+    
+    all_data = []
+    folder_stats = []
+    total_sharp_copied = 0
+    
+    # Create Focus output directory
+    focus_dir = OUTPUT_ROOT / "Focus"
+    focus_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Process each folder's CSV
+    for csv_path in OUTPUT_ROOT.rglob("*_summary.csv"):
+        # Skip CSVs inside the Focus directory
+        if "Focus" in csv_path.parts:
+            continue
+            
+        try:
+            df = pd.read_csv(csv_path)
+            
+            if 'laplacian_var' not in df.columns or df['laplacian_var'].isna().all():
+                print(f"  Skipping {csv_path.name} (no focus metrics)")
+                continue
+            
+            folder_name = csv_path.parent.name
+            scores = df['laplacian_var'].dropna().values
+            
+            if len(scores) < 4:
+                print(f"  Skipping {csv_path.name} (too few samples: {len(scores)})")
+                continue
+            
+            # Per-folder classification
+            classifications, sharp_thresh, blur_thresh = classify_folder_focus(scores)
+            
+            # Add classification to dataframe
+            df['focus_class'] = None
+            valid_idx = df['laplacian_var'].notna()
+            df.loc[valid_idx, 'focus_class'] = classifications
+            
+            # Add folder column
+            df['folder'] = folder_name
+            
+            # Save updated CSV
+            df.to_csv(csv_path, index=False)
+            
+            # Copy sharp images to Focus folder
+            sharp_df = df[df['focus_class'] == 'sharp']
+            if len(sharp_df) > 0:
+                folder_focus_dir = focus_dir / folder_name
+                folder_focus_dir.mkdir(parents=True, exist_ok=True)
+                
+                for _, row in sharp_df.iterrows():
+                    crop_path = row.get('crop_path', '')
+                    if crop_path and Path(crop_path).exists():
+                        dest_path = folder_focus_dir / Path(crop_path).name
+                        shutil.copy2(crop_path, dest_path)
+                        total_sharp_copied += 1
+            
+            # Collect stats
+            n_sharp = (df['focus_class'] == 'sharp').sum()
+            n_medium = (df['focus_class'] == 'medium').sum()
+            n_blurry = (df['focus_class'] == 'blurry').sum()
+            
+            folder_stats.append({
+                'folder': folder_name,
+                'n_total': len(df),
+                'n_sharp': n_sharp,
+                'n_medium': n_medium,
+                'n_blurry': n_blurry,
+                'sharp_thresh': sharp_thresh,
+                'blur_thresh': blur_thresh,
+                'mean_laplacian': df['laplacian_var'].mean(),
+            })
+            
+            all_data.append(df)
+            
+            print(f"  {folder_name}: {n_sharp} sharp / {n_medium} medium / {n_blurry} blurry "
+                  f"(thresholds: {blur_thresh:.0f}-{sharp_thresh:.0f})")
+            
+        except Exception as e:
+            print(f"  Error processing {csv_path.name}: {e}")
+    
+    if not all_data:
+        print("  No valid CSVs found for focus classification")
+        return
+    
+    # Combine all data
+    combined_df = pd.concat(all_data, ignore_index=True)
+    
+    # Save combined CSV to Focus directory
+    combined_path = focus_dir / "focus_classified_all.csv"
+    combined_df.to_csv(combined_path, index=False)
+    print(f"\n  Saved combined dataset: Focus/{combined_path.name} ({len(combined_df)} crops)")
+    
+    # Save sharp-only CSV to Focus directory
+    sharp_only_df = combined_df[combined_df['focus_class'] == 'sharp']
+    sharp_path = focus_dir / "sharp_crops.csv"
+    sharp_only_df.to_csv(sharp_path, index=False)
+    print(f"  Saved sharp crops list: Focus/{sharp_path.name} ({len(sharp_only_df)} crops)")
+    
+    # Save folder statistics to Focus directory
+    stats_df = pd.DataFrame(folder_stats)
+    stats_path = focus_dir / "focus_folder_stats.csv"
+    stats_df.to_csv(stats_path, index=False)
+    print(f"  Saved folder statistics: Focus/{stats_path.name}")
+    
+    # Print summary
+    total_sharp = combined_df['focus_class'].eq('sharp').sum()
+    total_medium = combined_df['focus_class'].eq('medium').sum()
+    total_blurry = combined_df['focus_class'].eq('blurry').sum()
+    
+    print(f"\n  FOCUS CLASSIFICATION SUMMARY (per-folder thresholds)")
+    print(f"  ────────────────────────────────────────────────────")
+    print(f"  Total crops:  {len(combined_df)}")
+    print(f"  Sharp:        {total_sharp} ({100*total_sharp/len(combined_df):.1f}%)")
+    print(f"  Medium:       {total_medium} ({100*total_medium/len(combined_df):.1f}%)")
+    print(f"  Blurry:       {total_blurry} ({100*total_blurry/len(combined_df):.1f}%)")
+    print(f"  Sharp images copied to Focus/: {total_sharp_copied}")
+    
+    # Generate summary plot
+    try:
+        fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+        
+        # Left: classification breakdown
+        ax1 = axes[0]
+        counts = [total_sharp, total_medium, total_blurry]
+        labels = [f'Sharp\n({total_sharp})', f'Medium\n({total_medium})', f'Blurry\n({total_blurry})']
+        colors = ['#2ecc71', '#f39c12', '#e74c3c']
+        ax1.pie(counts, labels=labels, colors=colors, autopct='%1.0f%%', startangle=90)
+        ax1.set_title('Focus Classification (Per-Folder Thresholds)')
+        
+        # Right: per-folder sharp count
+        ax2 = axes[1]
+        stats_df_sorted = stats_df.sort_values('n_sharp', ascending=True)
+        colors = ['#2ecc71' if s > m + b else '#f39c12' if m > s + b else '#e74c3c' 
+                  for s, m, b in zip(stats_df_sorted['n_sharp'], 
+                                     stats_df_sorted['n_medium'], 
+                                     stats_df_sorted['n_blurry'])]
+        ax2.barh(range(len(stats_df_sorted)), stats_df_sorted['n_sharp'], color=colors, alpha=0.7)
+        ax2.set_yticks(range(len(stats_df_sorted)))
+        ax2.set_yticklabels(stats_df_sorted['folder'], fontsize=8)
+        ax2.set_xlabel('Number of Sharp Crops')
+        ax2.set_title('Sharp Crops per Folder')
+        
+        plt.tight_layout()
+        plot_path = focus_dir / "focus_classification_summary.png"
+        plt.savefig(plot_path, dpi=150)
+        plt.close()
+        print(f"  Saved summary plot: Focus/{plot_path.name}")
+        
+    except Exception as e:
+        print(f"  Could not generate plot: {e}")
 
 
 def _write_global_csvs(

@@ -365,6 +365,13 @@ def write_folder_csv(
             "y_sphere",
             "crop_size_px",
             "crop_path",
+            # Focus metrics
+            "laplacian_var",
+            "tenengrad",
+            "tenengrad_var",
+            "brenner",
+            "norm_laplacian",
+            "energy_gradient",
         ])
 
         for droplet_id, cam_dict in folder_analyses.items():
@@ -383,7 +390,17 @@ def write_folder_csv(
                 if curve is not None:
                     dark_val = float(curve[best_idx - first])
 
-                crop_path = str(out_sub / f"{path.stem}_crop.png")
+                crop_path_str = str(out_sub / f"{path.stem}_crop.png")
+                
+                # Compute focus metrics from saved crop
+                focus_metrics: Dict[str, float] = {}
+                if FOCUS_METRICS_ENABLED:
+                    try:
+                        crop_img = cv2.imread(crop_path_str, cv2.IMREAD_GRAYSCALE)
+                        if crop_img is not None:
+                            focus_metrics = compute_all_focus_metrics(crop_img)
+                    except Exception:
+                        pass  # Leave metrics empty on error
 
                 writer.writerow([
                     droplet_id,
@@ -395,5 +412,12 @@ def write_folder_csv(
                     y_bottom,
                     y_sphere,
                     cnn_size,
-                    crop_path,
+                    crop_path_str,
+                    # Focus metrics (empty string if not computed)
+                    focus_metrics.get("laplacian_var", ""),
+                    focus_metrics.get("tenengrad", ""),
+                    focus_metrics.get("tenengrad_var", ""),
+                    focus_metrics.get("brenner", ""),
+                    focus_metrics.get("norm_laplacian", ""),
+                    focus_metrics.get("energy_gradient", ""),
                 ])

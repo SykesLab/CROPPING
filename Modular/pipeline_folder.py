@@ -7,6 +7,9 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List
 
+import numpy as np
+import pandas as pd
+
 from cine_io_modular import group_cines_by_droplet, iter_subfolders, safe_load_cine
 import config_modular
 from config_modular import CINE_ROOT, CROP_SAFETY_PIXELS, OUTPUT_ROOT
@@ -16,6 +19,7 @@ from darkness_analysis_modular import (
     choose_best_frame_geometry_only,
     choose_best_frame_with_geo,
 )
+from focus_metrics_modular import classify_folder_focus
 from image_utils_modular import otsu_mask
 from output_writer_modular import generate_droplet_outputs, write_folder_csv
 from parallel_utils_modular import run_parallel
@@ -35,6 +39,7 @@ def process_per_folder(
     quick_test: bool = False,
     full_output: bool = True,
     gui_mode: bool = False,
+    focus_classification: bool = True,
 ) -> None:
     """Execute per-folder pipeline.
 
@@ -46,6 +51,7 @@ def process_per_folder(
         quick_test: If True, process only first droplet per folder.
         full_output: If True, generate all plots.
         gui_mode: If True, print progress instead of tqdm bars.
+        focus_classification: If True, run per-folder focus classification.
     """
     if quick_test:
         _quick_test_per_folder(
@@ -211,6 +217,11 @@ def process_per_folder(
     total_sec = global_timer.seconds
 
     print_global_summary(global_analysis_timing, global_output_timing)
+
+    # Focus classification (per-folder)
+    if focus_classification:
+        print("\n[PER-FOLDER] Running focus classification...")
+        _run_focus_classification_perfolder()
 
     print(f"\n=== PER-FOLDER COMPLETE — {format_time(total_sec)} ===")
 
@@ -391,3 +402,10 @@ def _quick_test_per_folder(
                 "folders": folder_profiles,
             },
         )
+
+
+def _run_focus_classification_perfolder() -> None:
+    """Run per-folder focus classification (same as global version)."""
+    # Import from pipeline_global to reuse the same function
+    from pipeline_global import _run_focus_classification
+    _run_focus_classification()

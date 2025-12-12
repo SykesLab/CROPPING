@@ -82,9 +82,6 @@ class PipelineGUI(ctk.CTk):
         # For elapsed timer
         self.elapsed_timer_active: bool = False
 
-        # Thumbnail refresh throttling (max ~1 Hz)
-        self._last_thumbnail_refresh: float = 0.0
-
         # Top-level frames
         self.landing_frame = ctk.CTkFrame(self)
         self.landing_frame.grid(row=0, column=0, sticky="nsew")
@@ -446,10 +443,19 @@ class PipelineGUI(ctk.CTk):
             text="Enable profiling",
             variable=self.profile_var,
         )
-        self.profile_check.grid(row=3, column=0, padx=15, pady=(0, 8), sticky="w")
+        self.profile_check.grid(row=3, column=0, padx=15, pady=(0, 4), sticky="w")
 
-        # Keep profiling in same disable group as outputs
+        self.focus_class_var = ctk.BooleanVar(value=True)
+        self.focus_class_check = ctk.CTkCheckBox(
+            output_frame,
+            text="Focus classification (per-folder)",
+            variable=self.focus_class_var,
+        )
+        self.focus_class_check.grid(row=4, column=0, padx=15, pady=(0, 8), sticky="w")
+
+        # Keep profiling and focus classification in same disable group as outputs
         self.profile_control = self.profile_check
+        self.focus_class_control = self.focus_class_check
 
         # Initialise enable/disable state
         self._update_config_state()
@@ -608,7 +614,6 @@ class PipelineGUI(ctk.CTk):
             pass
 
         self.polling_active = True
-        self._last_thumbnail_refresh = 0.0
         self._poll_output_folder()
 
     def _stop_output_polling(self) -> None:
@@ -667,12 +672,6 @@ class PipelineGUI(ctk.CTk):
                 self.progress_current = crop_count
                 self._update_progress_display()
 
-            # Throttle thumbnail refresh to at most once per second
-            now = time.time()
-            if now - self._last_thumbnail_refresh >= 1.0:
-                self._refresh_thumbnails()
-                self._last_thumbnail_refresh = now
-
         except Exception:
             pass  # Ignore errors during polling
 
@@ -681,14 +680,17 @@ class PipelineGUI(ctk.CTk):
             self.after(500, self._poll_output_folder)  # Poll every 500ms
 
     def _add_thumbnail(self, path: str) -> None:
-        """Add a new thumbnail path to the queue (refresh is throttled)."""
+        """Add a new thumbnail to the display."""
         try:
             # Append new path, keep last 5
             self.thumbnail_paths.append(path)
             if len(self.thumbnail_paths) > 5:
                 self.thumbnail_paths.pop(0)
-        except Exception as e:
-            self._log(f"Thumbnail error: {e}")
+
+            self._refresh_thumbnails()
+
+        except Exception:
+            pass  # Silently ignore thumbnail errors
 
     def _refresh_thumbnails(self) -> None:
         """Refresh all thumbnail displays."""
@@ -706,8 +708,14 @@ class PipelineGUI(ctk.CTk):
                 try:
                     img = Image.open(img_path)
                     img.thumbnail((110, 110))
+                    
+                    # Create CTkImage and store reference on the label itself
                     photo = ctk.CTkImage(light_image=img, dark_image=img, size=(110, 110))
-
+                    
+                    # Store multiple references to prevent garbage collection
+                    thumb._photo_ref = photo
+                    thumb._pil_ref = img
+                    
                     thumb.configure(image=photo, text="")
                     thumb.image = photo  # keep reference
 
@@ -716,12 +724,21 @@ class PipelineGUI(ctk.CTk):
                     thumb.bind("<Button-1>", lambda e, p=img_path: self._open_image(p))
 
                 except Exception:
-                    thumb.configure(image=None, text="?")
-                    thumb.unbind("<Button-1>")
+                    # Silently handle image loading errors
+                    try:
+                        thumb.configure(image=None, text="?")
+                        thumb.unbind("<Button-1>")
+                    except Exception:
+                        pass
             else:
-                thumb.configure(image=None, text="")
-                thumb.image = None
-                thumb.unbind("<Button-1>")
+                try:
+                    thumb.configure(image=None, text="")
+                    thumb.image = None
+                    thumb._photo_ref = None
+                    thumb._pil_ref = None
+                    thumb.unbind("<Button-1>")
+                except Exception:
+                    pass
 
     def _update_progress_display(self) -> None:
         """Update progress bar and label with elapsed/ETA."""
@@ -779,12 +796,16 @@ class PipelineGUI(ctk.CTk):
 
             # Profiling
             config["profile"] = self.profile_var.get()
+
+            # Focus classification
+            config["focus_classification"] = self.focus_class_var.get()
         else:
             # Defaults that won't actually be used in quick mode
             config["step"] = 10
             config["global_mode"] = True
             config["full_output"] = False
             config["profile"] = False
+            config["focus_classification"] = False
 
         return config
 
@@ -825,6 +846,9 @@ class PipelineGUI(ctk.CTk):
         self.thumbnail_paths.clear()
         for thumb in self.thumbnails:
             thumb.configure(image=None, text="")
+            thumb.image = None
+            thumb._photo_ref = None
+            thumb._pil_ref = None
             thumb.unbind("<Button-1>")
 
         # Get config
@@ -994,6 +1018,7 @@ class PipelineGUI(ctk.CTk):
                     quick_test=False,
                     full_output=config["full_output"],
                     gui_mode=True,
+                    focus_classification=config["focus_classification"],
                 )
             else:
                 process_per_folder(
@@ -1002,6 +1027,7 @@ class PipelineGUI(ctk.CTk):
                     quick_test=False,
                     full_output=config["full_output"],
                     gui_mode=True,
+                    focus_classification=config["focus_classification"],
                 )
         finally:
             # Restore print
@@ -1090,3 +1116,7 @@ def run_gui() -> None:
 
     app = PipelineGUI()
     app.mainloop()
+
+
+if __name__ == "__main__":
+    run_gui()

@@ -313,3 +313,34 @@ def suggest_thresholds(
     sharp_thresh = float(np.percentile(scores, sharp_percentile))
     blur_thresh = float(np.percentile(scores, blur_percentile))
     return sharp_thresh, blur_thresh
+
+
+def classify_folder_focus(
+    folder_scores: np.ndarray,
+    sharp_percentile: float = 75.0,
+    blur_percentile: float = 25.0,
+) -> Tuple[np.ndarray, float, float]:
+    """Classify focus within a single folder using per-folder thresholds.
+
+    Args:
+        folder_scores: Array of focus scores for one folder.
+        sharp_percentile: Percentile above which images are "sharp".
+        blur_percentile: Percentile below which images are "blurry".
+
+    Returns:
+        Tuple of (classifications array, sharp_threshold, blur_threshold).
+    """
+    sharp_thresh, blur_thresh = suggest_thresholds(
+        folder_scores, sharp_percentile, blur_percentile
+    )
+    
+    classifications = []
+    for score in folder_scores:
+        if score >= sharp_thresh:
+            classifications.append("sharp")
+        elif score <= blur_thresh:
+            classifications.append("blurry")
+        else:
+            classifications.append("medium")
+    
+    return np.array(classifications), sharp_thresh, blur_thresh
