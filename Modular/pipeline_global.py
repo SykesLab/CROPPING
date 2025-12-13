@@ -17,7 +17,7 @@ import numpy as np
 import pandas as pd
 
 import config_modular
-from cine_io_modular import group_cines_by_droplet, iter_subfolders, safe_load_cine
+from cine_io_modular import group_cines_by_droplet, get_cine_folders, iter_subfolders, safe_load_cine
 from config_modular import CINE_ROOT, CROP_SAFETY_PIXELS, OUTPUT_ROOT
 from crop_calibration_modular import compute_crop_size, maybe_add_calibration_sample
 from darkness_analysis_modular import (
@@ -321,8 +321,12 @@ def process_global(
         mode_str += " + FOCUS CLASSIFICATION"
     print(f"\n[GLOBAL MODE] {mode_str}, {output_str}, step={step}\n")
 
-    subfolders = iter_subfolders(CINE_ROOT)
+    subfolders = get_cine_folders(CINE_ROOT)
     n_folders = len(subfolders)
+    
+    if n_folders == 0:
+        print("[GLOBAL] No folders with .cine files found!")
+        return
 
     # ============================================================
     # COLLECT ALL DROPLETS FROM ALL FOLDERS
@@ -773,8 +777,12 @@ def _quick_test_global(
     gui_mode: bool = False,
 ) -> None:
     """Quick test: first droplet per folder only."""
-    subfolders = iter_subfolders(CINE_ROOT)
+    subfolders = get_cine_folders(CINE_ROOT)
     total_folders = len(subfolders)
+    
+    if total_folders == 0:
+        print("[QUICK TEST] No folders with .cine files found!")
+        return
 
     global_timer = Timer()
     global_timing = {

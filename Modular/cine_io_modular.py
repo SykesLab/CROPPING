@@ -45,6 +45,37 @@ def iter_subfolders(root: Path) -> List[Path]:
     return [p for p in sorted(root.iterdir()) if p.is_dir()]
 
 
+def get_cine_folders(root: Path) -> List[Path]:
+    """Get list of folders containing .cine files.
+    
+    Handles two cases:
+    1. Root has subfolders containing .cine files → returns subfolders
+    2. Root itself contains .cine files → returns [root]
+    
+    Args:
+        root: Root directory to scan.
+        
+    Returns:
+        List of folders to process.
+    """
+    root = Path(root)
+    
+    # First try subfolders
+    subfolders = iter_subfolders(root)
+    
+    if subfolders:
+        # Filter to only subfolders that actually contain .cine files
+        cine_folders = [sf for sf in subfolders if list(sf.glob("*.cine"))]
+        if cine_folders:
+            return cine_folders
+    
+    # No subfolders with cines - check if root itself has cines
+    if list(root.glob("*.cine")):
+        return [root]
+    
+    return []
+
+
 def group_cines_by_droplet(
     folder: Path,
 ) -> List[Tuple[str, Dict[str, Optional[Path]]]]:

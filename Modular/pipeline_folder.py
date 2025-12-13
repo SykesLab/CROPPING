@@ -10,7 +10,7 @@ from typing import Any, Dict, List
 import numpy as np
 import pandas as pd
 
-from cine_io_modular import group_cines_by_droplet, iter_subfolders, safe_load_cine
+from cine_io_modular import group_cines_by_droplet, get_cine_folders, iter_subfolders, safe_load_cine
 import config_modular
 from config_modular import CINE_ROOT, CROP_SAFETY_PIXELS, OUTPUT_ROOT
 from crop_calibration_modular import compute_crop_size
@@ -60,8 +60,12 @@ def process_per_folder(
         )
         return
 
-    subfolders = iter_subfolders(CINE_ROOT)
+    subfolders = get_cine_folders(CINE_ROOT)
     total_folders = len(subfolders)
+    
+    if total_folders == 0:
+        print("[PER-FOLDER] No folders with .cine files found!")
+        return
 
     # Count total droplets
     total_droplets = 0
@@ -249,8 +253,12 @@ def _quick_test_per_folder(
     gui_mode: bool = False,
 ) -> None:
     """Quick test: first droplet per folder only."""
-    subfolders = iter_subfolders(CINE_ROOT)
+    subfolders = get_cine_folders(CINE_ROOT)
     total_folders = len(subfolders)
+    
+    if total_folders == 0:
+        print("[QUICK TEST] No folders with .cine files found!")
+        return
 
     global_timer = Timer()
     global_timing = {

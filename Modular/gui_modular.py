@@ -81,6 +81,9 @@ class PipelineGUI(ctk.CTk):
         
         # For elapsed timer
         self.elapsed_timer_active: bool = False
+        
+        # Track if selected folder has subfolders (for global mode availability)
+        self.has_subfolders: bool = True
 
         # Top-level frames
         self.landing_frame = ctk.CTkFrame(self)
@@ -192,21 +195,31 @@ class PipelineGUI(ctk.CTk):
     def _rescan_counts_for_root(self, root: Path) -> None:
         """Scan cine root and update counts on both landing + header."""
         try:
-            from cine_io_modular import iter_subfolders, group_cines_by_droplet
+            from cine_io_modular import get_cine_folders, iter_subfolders, group_cines_by_droplet
 
-            subfolders = list(iter_subfolders(root))
-            n_folders = len(subfolders)
+            cine_folders = get_cine_folders(root)
+            n_folders = len(cine_folders)
             droplets = 0
-            for sub in subfolders:
-                groups = group_cines_by_droplet(sub)
+            
+            for folder in cine_folders:
+                groups = group_cines_by_droplet(folder)
                 droplets += len(groups)
+            
+            # Check if we have actual subfolders (for global mode availability)
+            # Global mode only makes sense with multiple folders
+            self.has_subfolders = len(iter_subfolders(root)) > 0 and n_folders > 1
 
-            text = f"{n_folders} folders, ~{droplets} droplets"
+            text = f"{n_folders} folder{'s' if n_folders != 1 else ''}, ~{droplets} droplets"
+            
         except Exception as e:
             text = f"Scan error: {e}"
+            self.has_subfolders = False
 
         self.landing_info_label.configure(text=text)
         self.count_label.configure(text=text)
+        
+        # Update config state (may need to disable global mode)
+        self._update_config_state()
 
     # ============================================================
     # HEADER
@@ -257,15 +270,15 @@ class PipelineGUI(ctk.CTk):
         # Basic cine count from whichever root is current
         root = self.selected_root or config_modular.CINE_ROOT
         try:
-            from cine_io_modular import iter_subfolders, group_cines_by_droplet
+            from cine_io_modular import get_cine_folders, group_cines_by_droplet
 
-            subfolders = list(iter_subfolders(root))
-            n_folders = len(subfolders)
+            cine_folders = get_cine_folders(root)
+            n_folders = len(cine_folders)
             droplets = 0
-            for sub in subfolders:
+            for sub in cine_folders:
                 droplets += len(group_cines_by_droplet(sub))
 
-            text = f"{n_folders} folders, ~{droplets} droplets"
+            text = f"{n_folders} folder{'s' if n_folders != 1 else ''}, ~{droplets} droplets"
         except Exception as e:
             text = f"Scan error: {e}"
 
@@ -461,34 +474,79 @@ class PipelineGUI(ctk.CTk):
         self._update_config_state()
 
     def _update_config_state(self) -> None:
-        """Enable/disable controls depending on quick/full mode."""
+        """Enable/disable controls depending on quick/full mode and subfolder availability."""
         quick = self.mode_var.get() == "quick"
         state = "disabled" if quick else "normal"
 
         # Sampling
         for w in self.sampling_controls:
-            try:
-                w.configure(state=state)
-            except Exception:
-                pass
+            self._set_widget_state(w, state)
 
-        # Calibration
-        for w in self.calib_controls:
-            try:
-                w.configure(state=state)
-            except Exception:
-                pass
+        # Calibration - also check for subfolders
+        # Per-folder always available when not in quick mode
+        self._set_widget_state(self.calib_folder_radio, state)
+        
+        # Global only available if we have subfolders AND not in quick mode
+        if quick or not self.has_subfolders:
+            global_state = "disabled"
+            # If global is currently selected but unavailable, switch to folder
+            if self.calib_var.get() == "global":
+                self.calib_var.set("folder")
+        else:
+            global_state = "normal"
+        self._set_widget_state(self.calib_global_radio, global_state)
 
         # Outputs
         for w in self.output_controls:
-            try:
-                w.configure(state=state)
-            except Exception:
-                pass
+            self._set_widget_state(w, state)
 
-        # Profiling
+        # Profiling and focus classification
+        self._set_widget_state(self.profile_control, state)
+        self._set_widget_state(self.focus_class_control, state)
+    
+    def _set_widget_state(self, widget: ctk.CTkBaseClass, state: str) -> None:
+        """Set widget state with proper visual feedback for radio buttons and checkboxes.
+        
+        Args:
+            widget: The widget to update.
+            state: "normal" or "disabled".
+        """
         try:
-            self.profile_control.configure(state=state)
+            widget.configure(state=state)
+            
+            # For radio buttons, update colors for clearer visual feedback
+            if isinstance(widget, ctk.CTkRadioButton):
+                if state == "disabled":
+                    # Grey out text and the radio button indicator
+                    widget.configure(
+                        text_color="gray50",
+                        text_color_disabled="gray50",
+                        fg_color="gray50",           # The selected indicator
+                        border_color="gray50",       # The ring border
+                    )
+                else:
+                    # Reset to default theme colors
+                    widget.configure(
+                        text_color=("gray10", "gray90"),
+                        fg_color=("#3B8ED0", "#1F6AA5"),    # Default blue
+                        border_color=("#3E454A", "#949A9F"),
+                    )
+            
+            # For checkboxes, similar treatment
+            elif isinstance(widget, ctk.CTkCheckBox):
+                if state == "disabled":
+                    widget.configure(
+                        text_color="gray50",
+                        text_color_disabled="gray50",
+                        fg_color="gray50",
+                        border_color="gray50",
+                    )
+                else:
+                    widget.configure(
+                        text_color=("gray10", "gray90"),
+                        fg_color=("#3B8ED0", "#1F6AA5"),
+                        border_color=("#3E454A", "#949A9F"),
+                    )
         except Exception:
             pass
 
@@ -813,12 +871,12 @@ class PipelineGUI(ctk.CTk):
         """Estimate total units for progress (approx droplets * 2 cameras)."""
         try:
             root = self.selected_root or config_modular.CINE_ROOT
-            from cine_io_modular import iter_subfolders, group_cines_by_droplet
+            from cine_io_modular import get_cine_folders, group_cines_by_droplet
 
-            subfolders = list(iter_subfolders(root))
+            cine_folders = get_cine_folders(root)
             droplets = 0
-            for sub in subfolders:
-                droplets += len(group_cines_by_droplet(sub))
+            for folder in cine_folders:
+                droplets += len(group_cines_by_droplet(folder))
 
             # Each droplet has ~2 cameras, step reduces count
             return max(1, (droplets * 2) // max(1, step))
@@ -865,9 +923,9 @@ class PipelineGUI(ctk.CTk):
         else:
             # For quick test, total is number of folders
             try:
-                from cine_io_modular import iter_subfolders
+                from cine_io_modular import get_cine_folders
                 root = self.selected_root or config_modular.CINE_ROOT
-                self.progress_total = len(list(iter_subfolders(root)))
+                self.progress_total = len(get_cine_folders(root))
             except Exception:
                 self.progress_total = 1
 
@@ -901,7 +959,7 @@ class PipelineGUI(ctk.CTk):
         """Run quick detection test (1st droplet per folder)."""
         from cine_io_modular import (
             group_cines_by_droplet,
-            iter_subfolders,
+            get_cine_folders,
             safe_load_cine,
         )
         from darkness_analysis_modular import (
@@ -912,12 +970,16 @@ class PipelineGUI(ctk.CTk):
         from plotting_modular import save_darkness_plot, save_geometric_overlay
 
         root = self.selected_root or config_modular.CINE_ROOT
-        subfolders = list(iter_subfolders(root))
-        total = len(subfolders)
+        cine_folders = get_cine_folders(root)
+        total = len(cine_folders)
+        
+        if total == 0:
+            emit_log("No folders with .cine files found!")
+            return
 
-        emit_log(f"Quick detection test: {total} folders")
+        emit_log(f"Quick detection test: {total} folder{'s' if total != 1 else ''}")
 
-        for idx, sub in enumerate(subfolders, start=1):
+        for idx, sub in enumerate(cine_folders, start=1):
             emit_progress(idx, total)
             emit_log(f"[{idx}/{total}] {sub.name}")
 
