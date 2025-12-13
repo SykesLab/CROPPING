@@ -35,7 +35,9 @@ python gui_modular.py
 
 ### 4. Select Paths in GUI
 
-1. **CINE Root** — Browse to folder containing your .cine subfolders
+1. **CINE Root** — Browse to either:
+   - A parent folder containing subfolders with .cine files, OR
+   - A single folder directly containing .cine files
 2. **Output Root** — Browse to where you want outputs saved
 3. Configure options (step, mode, etc.)
 4. Click **Run Pipeline**
@@ -89,15 +91,16 @@ Modular/
 
 ## Pipeline Modes
 
-### Global Mode (Recommended)
+### Global Mode
 - Calibrates crop size across ALL folders
 - Consistent crop dimensions for CNN training
-- Better for large datasets
+- Better for large datasets with multiple folders
+- **Only available when selecting a parent folder with multiple subfolders**
 
 ### Per-Folder Mode
 - Independent processing per folder
 - Crop sizes may vary between folders
-- Faster for single-folder processing
+- **Automatically selected when processing a single folder**
 
 ## Focus Classification
 
