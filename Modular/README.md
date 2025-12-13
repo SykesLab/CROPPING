@@ -38,21 +38,16 @@ python gui_modular.py
 1. **CINE Root** — Browse to either:
    - A parent folder containing subfolders with .cine files, OR
    - A single folder directly containing .cine files
-2. **Output Root** — Browse to where you want outputs saved
-3. Configure options (step, mode, etc.)
-4. Click **Run Pipeline**
+2. Configure options (step, mode, focus classification, etc.)
+3. Click **Run Pipeline**
 
-**Alternative (Command Line):**
-```bash
-python main_runner.py --mode global --step 1 --cine-root "C:\path\to\cines" --output-root "C:\path\to\output"
-```
+Outputs are saved to the `OUTPUT/` folder defined in `config_modular.py`. Edit `OUTPUT_ROOT` there if you need a different location.
 
 ## Project Structure
 
 ```
 Modular/
-├── main_runner.py          # CLI entry point
-├── gui_modular.py          # GUI interface
+├── gui_modular.py          # GUI interface (main entry point)
 ├── config_modular.py       # Default configuration
 ├── setup_environment.py    # Environment verification
 ├── requirements.txt        # Python dependencies
@@ -104,15 +99,12 @@ Modular/
 
 ## Focus Classification
 
-After running the pipeline, classify crops by focus quality:
+Focus classification is **built into the pipeline** — enable "Focus classification" checkbox in the GUI.
 
-```bash
-python focus_analysis.py
-```
-
-This creates:
-- `Focus/sharp_crops.csv` — List of sharp crops for CNN training
-- `Focus/{folder}/` — Copies of sharp images organised by folder
+When enabled, the pipeline automatically:
+- Computes focus metrics (Laplacian, Tenengrad, Brenner) for each crop
+- Classifies crops as sharp/medium/blurry using per-folder thresholds
+- Copies sharp crops to `OUTPUT/Focus/{folder}/` for CNN training
 
 ### Per-Folder Thresholds
 
@@ -121,11 +113,41 @@ Focus classification uses per-folder thresholds to ensure diverse training data:
 - Handles varying optical conditions between sessions
 - Produces robust models that generalise to new setups
 
+### Standalone Analysis
+
+To rerun focus analysis on existing crops without reprocessing:
+```bash
+python focus_analysis.py path/to/OUTPUT
+```
+
 ## Output Files
 
-### Per-Droplet Crops
-- `{droplet_id}{cam}_crop.png` — Grayscale droplet crop
-- Standard size (e.g., 388×388) across all folders
+### Directory Structure
+```
+OUTPUT/
+├── {folder}/
+│   ├── {droplet}{cam}_crop.png       # Grayscale droplet crop
+│   ├── {droplet}{cam}_darkness.png   # Darkness curve plot (full output mode)
+│   ├── {droplet}{cam}_overlay.png    # Geometric overlay plot (full output mode)
+│   └── {folder}_summary.csv          # Metadata for all crops
+│
+├── Focus/                             # Focus classification results
+│   ├── sharp_crops.csv               # All sharp crops with metrics
+│   ├── focus_classified_all.csv      # All crops with classifications
+│   ├── focus_folder_stats.csv        # Per-folder threshold statistics
+│   ├── focus_classification_summary.png  # Distribution visualisation
+│   └── {folder}/                     # Sharp crop copies by folder
+│
+└── focus_metrics_computed.csv        # Combined metrics from all folders
+```
+
+### Crop Images
+- `{droplet}{cam}_crop.png` — Grayscale droplet crop (e.g., `sphere0843g_crop.png`)
+- Standard size across all folders when using Global mode (e.g., 388×388)
+
+### Visualisation Plots (Full Output Mode)
+- `{droplet}{cam}_darkness.png` — Darkness curve showing frame selection
+- `{droplet}{cam}_overlay.png` — Geometric overlay showing detected droplet boundaries
 
 ### Summary CSV
 Each folder produces `{folder}_summary.csv`:
@@ -136,13 +158,16 @@ Each folder produces `{folder}_summary.csv`:
 | camera | g (green) or v (violet) |
 | cine_file | Source .cine filename |
 | best_frame | Selected frame index |
-| dark_fraction | Darkness metric |
-| y_top, y_bottom, y_sphere | Geometry |
+| dark_fraction | Darkness metric at best frame |
+| y_top, y_bottom, y_sphere | Detected geometry |
 | crop_size_px | Crop dimensions |
 | crop_path | Path to crop image |
 | laplacian_var | Focus metric (edge strength) |
-| tenengrad | Focus metric (gradient) |
-| brenner | Focus metric (contrast) |
+| tenengrad | Focus metric (gradient magnitude) |
+| tenengrad_var | Focus metric (gradient variance) |
+| brenner | Focus metric (local contrast) |
+| norm_laplacian | Focus metric (normalised Laplacian) |
+| energy_gradient | Focus metric (energy of gradient) |
 
 ## Troubleshooting
 
