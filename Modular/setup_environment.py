@@ -174,14 +174,9 @@ def create_directories() -> None:
     try:
         from config_modular import OUTPUT_ROOT, CINE_ROOT
         
-        OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
-        print(f"  ✓ Output directory: {OUTPUT_ROOT}")
-        
-        if not CINE_ROOT.exists():
-            print(f"  ⚠ CINE_ROOT does not exist: {CINE_ROOT}")
-            print(f"    Update config_modular.py with your data path")
-        else:
-            print(f"  ✓ CINE_ROOT exists: {CINE_ROOT}")
+        print(f"  Default output: {OUTPUT_ROOT}")
+        print(f"  Default CINE root: {CINE_ROOT}")
+        print(f"  (You can change these in the GUI)")
             
     except ImportError:
         print("  ⚠ Could not import config_modular - skipping directory check")
@@ -241,8 +236,8 @@ def verify_environment(auto_install: bool = False) -> bool:
         print(f"  ⚠ {phantom_msg}")
         print_phantom_instructions()
     
-    # Check directories
-    print("\n--- Checking Directories ---")
+    # Show default paths
+    print("\n--- Default Paths (configurable in GUI) ---")
     create_directories()
     
     # Summary

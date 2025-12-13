@@ -27,25 +27,22 @@ The Phantom SDK (pyphantom) is required to read .cine files:
 2. Install following their instructions
 3. Verify: `python -c "import pyphantom; print('OK')"`
 
-### 3. Configure Paths
+### 3. Run Pipeline
 
-Edit `config_modular.py`:
-
-```python
-CINE_ROOT = Path(r"C:\path\to\your\cine\folders")
-OUTPUT_ROOT = Path(r"C:\path\to\output")
-```
-
-### 4. Run Pipeline
-
-**GUI Mode:**
 ```bash
 python gui_modular.py
 ```
 
-**Command Line:**
+### 4. Select Paths in GUI
+
+1. **CINE Root** — Browse to folder containing your .cine subfolders
+2. **Output Root** — Browse to where you want outputs saved
+3. Configure options (step, mode, etc.)
+4. Click **Run Pipeline**
+
+**Alternative (Command Line):**
 ```bash
-python main_runner.py --mode global --step 1
+python main_runner.py --mode global --step 1 --cine-root "C:\path\to\cines" --output-root "C:\path\to\output"
 ```
 
 ## Project Structure
@@ -54,9 +51,10 @@ python main_runner.py --mode global --step 1
 Modular/
 ├── main_runner.py          # CLI entry point
 ├── gui_modular.py          # GUI interface
-├── config_modular.py       # Configuration (paths, settings)
+├── config_modular.py       # Default configuration
 ├── setup_environment.py    # Environment verification
 ├── requirements.txt        # Python dependencies
+├── README.md               # This file
 │
 ├── pipeline_global.py      # Global calibration pipeline
 ├── pipeline_folder.py      # Per-folder pipeline
@@ -149,13 +147,13 @@ Each folder produces `{folder}_summary.csv`:
 Install the Phantom SDK from Vision Research.
 
 ### "No .cine files found"
-Check `CINE_ROOT` in `config_modular.py` points to your data.
+Check your CINE Root path in the GUI points to folders containing .cine files.
 
 ### Out of memory
-Reduce `--step` value or process fewer folders at once.
+Increase the Step value (processes every Nth droplet) or process fewer folders.
 
 ### GUI not responding
-The pipeline runs in a background thread. Progress updates in the console.
+The pipeline runs in a background thread. Check the console for progress.
 
 ## Dependencies
 
