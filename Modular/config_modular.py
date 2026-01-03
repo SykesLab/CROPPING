@@ -2,15 +2,18 @@
 
 All tuneable parameters are centralised here for easy modification
 and documentation purposes.
+
+Note: CINE_ROOT and OUTPUT_ROOT are defaults that can be changed
+via the GUI at runtime.
 """
 
 from pathlib import Path
 
 # ============================================================
-# PATHS
+# PATHS (defaults - configurable in GUI)
 # ============================================================
-PROJECT_ROOT: Path = Path(r"C:\Users\justi\Downloads\coursework\testing_4mm\Modular")
-CINE_ROOT: Path = Path(r"F:\spheres")
+PROJECT_ROOT: Path = Path(__file__).parent
+CINE_ROOT: Path = PROJECT_ROOT / "data"  # Placeholder - select via GUI
 OUTPUT_ROOT: Path = PROJECT_ROOT / "OUTPUT"
 OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 

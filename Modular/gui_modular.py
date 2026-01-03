@@ -28,7 +28,6 @@ except ImportError:
     raise
 
 import config_modular
-from config_modular import OUTPUT_ROOT
 from phantom_silence_modular import cine
 from timing_utils_modular import format_time
 
@@ -112,7 +111,7 @@ class PipelineGUI(ctk.CTk):
     # LANDING SCREEN
     # ============================================================
     def _build_landing(self) -> None:
-        """Initial landing page asking for cine folder."""
+        """Build landing page with CINE root and Output folder selection."""
         self.landing_frame.grid_columnconfigure(0, weight=1)
         self.landing_frame.grid_rowconfigure(0, weight=1)
 
@@ -120,38 +119,121 @@ class PipelineGUI(ctk.CTk):
         inner.grid(row=0, column=0, padx=20, pady=20, sticky="nsew")
         inner.grid_columnconfigure(0, weight=1)
 
+        # Title
         title = ctk.CTkLabel(
             inner,
             text="DROPLET CROPPING PIPELINE",
             font=ctk.CTkFont(size=20, weight="bold"),
         )
-        title.grid(row=0, column=0, pady=(30, 10), sticky="n")
+        title.grid(row=0, column=0, pady=(30, 20), sticky="n")
 
-        subtitle = ctk.CTkLabel(
-            inner,
-            text="Select the root folder containing your cine subfolders to begin.",
-            wraplength=500,
+        # ----- CINE Root Section -----
+        cine_section = ctk.CTkFrame(inner)
+        cine_section.grid(row=1, column=0, padx=20, pady=10, sticky="ew")
+        cine_section.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            cine_section,
+            text="CINE Root",
+            font=ctk.CTkFont(weight="bold"),
+        ).grid(row=0, column=0, columnspan=2, padx=10, pady=(10, 5), sticky="w")
+
+        self.landing_cine_path = ctk.CTkLabel(
+            cine_section,
+            text=str(config_modular.CINE_ROOT),
+            wraplength=450,
+            anchor="w",
         )
-        subtitle.grid(row=1, column=0, pady=(0, 30), sticky="n")
+        self.landing_cine_path.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
 
-        select_btn = ctk.CTkButton(
-            inner,
-            text="Select cine root folder",
-            command=self._select_folder,
-            width=220,
+        ctk.CTkButton(
+            cine_section,
+            text="Browse",
+            width=80,
+            command=self._select_cine_folder,
+        ).grid(row=1, column=1, padx=10, pady=5, sticky="e")
+
+        self.landing_cine_info = ctk.CTkLabel(
+            cine_section,
+            text="",
+            text_color="gray",
         )
-        select_btn.grid(row=2, column=0, pady=(0, 10))
+        self.landing_cine_info.grid(row=2, column=0, columnspan=2, padx=10, pady=(0, 10), sticky="w")
 
-        default_root = config_modular.CINE_ROOT
-        self.landing_path_label = ctk.CTkLabel(
-            inner,
-            text=f"Current: {default_root}",
-            wraplength=500,
+        # ----- Output Folder Section -----
+        output_section = ctk.CTkFrame(inner)
+        output_section.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
+        output_section.grid_columnconfigure(0, weight=1)
+
+        ctk.CTkLabel(
+            output_section,
+            text="Output Folder",
+            font=ctk.CTkFont(weight="bold"),
+        ).grid(row=0, column=0, columnspan=3, padx=10, pady=(10, 5), sticky="w")
+
+        self.landing_output_path = ctk.CTkLabel(
+            output_section,
+            text=str(config_modular.OUTPUT_ROOT),
+            wraplength=350,
+            anchor="w",
         )
-        self.landing_path_label.grid(row=3, column=0, pady=(10, 5))
+        self.landing_output_path.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
 
-        self.landing_info_label = ctk.CTkLabel(inner, text="")
-        self.landing_info_label.grid(row=4, column=0, pady=(5, 20))
+        ctk.CTkButton(
+            output_section,
+            text="Use Default (./OUTPUT)",
+            width=150,
+            command=self._use_default_output,
+        ).grid(row=1, column=1, padx=5, pady=5)
+
+        ctk.CTkButton(
+            output_section,
+            text="Browse",
+            width=80,
+            command=self._select_output_folder,
+        ).grid(row=1, column=2, padx=10, pady=5, sticky="e")
+
+        # ----- Buttons Row -----
+        btn_frame = ctk.CTkFrame(inner, fg_color="transparent")
+        btn_frame.grid(row=3, column=0, pady=(30, 30))
+
+        self.continue_btn = ctk.CTkButton(
+            btn_frame,
+            text="Continue →",
+            width=150,
+            command=self._continue_to_main,
+        )
+        self.continue_btn.grid(row=0, column=0, padx=10)
+
+        about_btn = ctk.CTkButton(
+            btn_frame,
+            text="About",
+            width=80,
+            fg_color="gray",
+            command=self._show_about,
+        )
+        about_btn.grid(row=0, column=1, padx=10)
+
+        # Initial scan
+        self._scan_cine_folder()
+
+    def _show_about(self) -> None:
+        """Show About dialog with license information."""
+        about_text = (
+            "Droplet Preprocessing Pipeline\n\n"
+            "Copyright (C) 2025 Justice Ward\n\n"
+            "This program is free software: you can redistribute it and/or modify "
+            "it under the terms of the GNU General Public License as published by "
+            "the Free Software Foundation, either version 3 of the License, or "
+            "(at your option) any later version.\n\n"
+            "This program is distributed in the hope that it will be useful, "
+            "but WITHOUT ANY WARRANTY; without even the implied warranty of "
+            "MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the "
+            "GNU General Public License for more details.\n\n"
+            "You should have received a copy of the GNU General Public License "
+            "along with this program. If not, see <https://www.gnu.org/licenses/>."
+        )
+        messagebox.showinfo("About", about_text)
 
     def _show_landing(self) -> None:
         """Show landing screen."""
@@ -165,10 +247,10 @@ class PipelineGUI(ctk.CTk):
         self.main_frame.grid()
         self.main_frame.tkraise()
 
-    def _select_folder(self) -> None:
-        """Choose cine root folder and switch to main UI."""
+    def _select_cine_folder(self) -> None:
+        """Select CINE root folder from landing page."""
         folder = filedialog.askdirectory(
-            title="Select folder containing cine subfolders"
+            title="Select folder containing .cine files"
         )
         if not folder:
             return
@@ -178,19 +260,104 @@ class PipelineGUI(ctk.CTk):
             messagebox.showerror("Invalid folder", "Selected folder does not exist.")
             return
 
-        # Update config module so pipeline sees new root
+        config_modular.CINE_ROOT = root
+        self.selected_root = root
+        self.landing_cine_path.configure(text=str(root))
+        self._scan_cine_folder()
+
+    def _scan_cine_folder(self) -> None:
+        """Scan CINE folder and update info label."""
+        root = config_modular.CINE_ROOT
+        try:
+            from cine_io_modular import get_cine_folders, iter_subfolders, group_cines_by_droplet
+
+            cine_folders = get_cine_folders(root)
+            n_folders = len(cine_folders)
+            droplets = 0
+
+            for folder in cine_folders:
+                groups = group_cines_by_droplet(folder)
+                droplets += len(groups)
+
+            self.has_subfolders = len(iter_subfolders(root)) > 0 and n_folders > 1
+
+            if n_folders > 0:
+                text = f"{n_folders} folder{'s' if n_folders != 1 else ''}, ~{droplets} droplets"
+            else:
+                text = "No .cine files found"
+
+        except Exception as e:
+            text = f"Scan error: {e}"
+            self.has_subfolders = False
+
+        self.landing_cine_info.configure(text=text)
+
+    def _select_output_folder(self) -> None:
+        """Select custom output folder."""
+        folder = filedialog.askdirectory(
+            title="Select output folder"
+        )
+        if not folder:
+            return
+
+        root = Path(folder)
+        config_modular.OUTPUT_ROOT = root
+        root.mkdir(parents=True, exist_ok=True)
+        self.landing_output_path.configure(text=str(root))
+
+    def _use_default_output(self) -> None:
+        """Set output folder to default ./OUTPUT."""
+        default = config_modular.PROJECT_ROOT / "OUTPUT"
+        config_modular.OUTPUT_ROOT = default
+        default.mkdir(parents=True, exist_ok=True)
+        self.landing_output_path.configure(text=str(default))
+
+    def _continue_to_main(self) -> None:
+        """Validate selections and proceed to main screen."""
+        # Check CINE root has files
+        from cine_io_modular import get_cine_folders
+        cine_folders = get_cine_folders(config_modular.CINE_ROOT)
+
+        if not cine_folders:
+            messagebox.showwarning(
+                "No CINE files",
+                "Selected CINE root contains no .cine files.\n\n"
+                "Please select a folder containing .cine files or subfolders with .cine files."
+            )
+            return
+
+        # Ensure output folder exists
+        config_modular.OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+
+        # Update main screen header
+        self.source_label.configure(text=str(config_modular.CINE_ROOT))
+        self._rescan_counts_for_root(config_modular.CINE_ROOT)
+
+        # Go to main screen
+        self._show_main()
+
+    def _change_cine_folder(self) -> None:
+        """Change CINE root folder from main screen header."""
+        folder = filedialog.askdirectory(
+            title="Select folder containing .cine files"
+        )
+        if not folder:
+            return
+
+        root = Path(folder)
+        if not root.exists():
+            messagebox.showerror("Invalid folder", "Selected folder does not exist.")
+            return
+
         config_modular.CINE_ROOT = root
         self.selected_root = root
 
-        # Update landing + main headers
-        self.landing_path_label.configure(text=f"Current: {root}")
+        # Update displays
+        self.landing_cine_path.configure(text=str(root))
         self.source_label.configure(text=str(root))
 
-        # Rescan + show counts
+        # Rescan
         self._rescan_counts_for_root(root)
-
-        # Jump to main screen
-        self._show_main()
 
     def _rescan_counts_for_root(self, root: Path) -> None:
         """Scan cine root and update counts on both landing + header."""
@@ -215,7 +382,7 @@ class PipelineGUI(ctk.CTk):
             text = f"Scan error: {e}"
             self.has_subfolders = False
 
-        self.landing_info_label.configure(text=text)
+        self.landing_cine_info.configure(text=text)
         self.count_label.configure(text=text)
         
         # Update config state (may need to disable global mode)
@@ -247,7 +414,7 @@ class PipelineGUI(ctk.CTk):
             frame,
             text="Change…",
             width=80,
-            command=self._select_folder,
+            command=self._change_cine_folder,
         )
         change_btn.grid(row=1, column=2, padx=10, sticky="e")
 
@@ -644,8 +811,8 @@ class PipelineGUI(ctk.CTk):
         self.progress_label.grid(row=2, column=0, columnspan=3, padx=10, pady=(0, 8), sticky="w")
 
     def _open_output_folder(self) -> None:
-        """Open OUTPUT_ROOT in system file explorer."""
-        root = OUTPUT_ROOT
+        """Open output folder in system file explorer."""
+        root = config_modular.OUTPUT_ROOT
         try:
             if platform.system() == "Windows":
                 subprocess.Popen(["explorer", str(root)])
@@ -664,9 +831,9 @@ class PipelineGUI(ctk.CTk):
         self.known_images = set()
         # Scan existing images so we don't show old ones
         try:
-            for img_path in OUTPUT_ROOT.rglob("*_crop.png"):
+            for img_path in config_modular.OUTPUT_ROOT.rglob("*_crop.png"):
                 self.known_images.add(str(img_path))
-            for img_path in OUTPUT_ROOT.rglob("*_overlay.png"):
+            for img_path in config_modular.OUTPUT_ROOT.rglob("*_overlay.png"):
                 self.known_images.add(str(img_path))
         except Exception:
             pass
@@ -705,14 +872,14 @@ class PipelineGUI(ctk.CTk):
         try:
             # Check for new crop images
             new_images = []
-            for img_path in OUTPUT_ROOT.rglob("*_crop.png"):
+            for img_path in config_modular.OUTPUT_ROOT.rglob("*_crop.png"):
                 path_str = str(img_path)
                 if path_str not in self.known_images:
                     self.known_images.add(path_str)
                     new_images.append((img_path.stat().st_mtime, path_str))
 
             # Also check overlay images
-            for img_path in OUTPUT_ROOT.rglob("*_overlay.png"):
+            for img_path in config_modular.OUTPUT_ROOT.rglob("*_overlay.png"):
                 path_str = str(img_path)
                 if path_str not in self.known_images:
                     self.known_images.add(path_str)
@@ -1004,7 +1171,7 @@ class PipelineGUI(ctk.CTk):
 
             best_idx, geo = choose_best_frame_with_geo(cine_obj, curve)
 
-            out_sub = OUTPUT_ROOT / sub.name
+            out_sub = config_modular.OUTPUT_ROOT / sub.name
             out_sub.mkdir(parents=True, exist_ok=True)
 
             save_darkness_plot(

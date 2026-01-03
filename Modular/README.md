@@ -1,6 +1,19 @@
 # Droplet Preprocessing Pipeline
 
+[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+
 Automated preprocessing of high-speed camera footage for droplet analysis. Extracts droplet crops from Phantom .cine files with focus quality assessment.
+
+## Features
+
+- **Automatic droplet detection** — Finds droplets and spheres using connected component analysis
+- **Best frame selection** — Identifies optimal pre-collision frames using darkness curves
+- **Smart cropping** — Sphere-excluding crops with consistent sizing across folders
+- **Focus quality metrics** — Six edge-based sharpness measures (Laplacian, Tenengrad, Brenner, etc.)
+- **Per-folder classification** — Adaptive thresholds ensure diverse training data from varying conditions
+- **GUI interface** — Easy-to-use interface with live preview and progress tracking
+- **Parallel processing** — Multi-core support for faster batch processing
 
 ## Quick Start
 
@@ -33,55 +46,55 @@ The Phantom SDK (pyphantom) is required to read .cine files:
 python gui_modular.py
 ```
 
-### 4. Select Paths in GUI
+### 4. Configure in GUI
 
 1. **CINE Root** — Browse to either:
    - A parent folder containing subfolders with .cine files, OR
    - A single folder directly containing .cine files
-2. Configure options (step, mode, focus classification, etc.)
-3. Click **Run Pipeline**
-
-Outputs are saved to the `OUTPUT/` folder defined in `config_modular.py`. Edit `OUTPUT_ROOT` there if you need a different location.
+2. **Output Folder** — Use default `./OUTPUT` or browse to custom location
+3. Click **Continue**, configure options, then **Run Pipeline**
 
 ## Project Structure
 
 ```
-Modular/
-├── gui_modular.py          # GUI interface (main entry point)
-├── config_modular.py       # Default configuration
-├── setup_environment.py    # Environment verification
-├── requirements.txt        # Python dependencies
-├── README.md               # This file
+droplet-preprocessing/
+├── gui_modular.py           # GUI interface (main entry point)
+├── config_modular.py        # Default configuration
+├── setup_environment.py     # Environment verification
+├── requirements.txt         # Python dependencies
+├── README.md                # This file
+├── LICENSE                  # GPL-3.0 license
 │
-├── pipeline_global.py      # Global calibration pipeline
-├── pipeline_folder.py      # Per-folder pipeline
+├── pipeline_global.py       # Global calibration pipeline
+├── pipeline_folder.py       # Per-folder pipeline
 │
-├── cine_io_modular.py      # .cine file reading
-├── darkness_analysis_modular.py  # Best frame selection
-├── geom_analysis_modular.py      # Droplet geometry
-├── crop_calibration_modular.py   # Crop size calibration
-├── cropping_modular.py     # Image cropping
-├── image_utils_modular.py  # Image utilities
+├── cine_io_modular.py       # .cine file reading
+├── darkness_analysis_modular.py   # Best frame selection
+├── geom_analysis_modular.py       # Droplet geometry
+├── crop_calibration_modular.py    # Crop size calibration
+├── cropping_modular.py      # Image cropping
+├── image_utils_modular.py   # Image utilities
 │
-├── focus_metrics_modular.py  # Focus quality metrics
-├── focus_analysis.py       # Standalone focus analysis
+├── focus_metrics_modular.py # Focus quality metrics
+├── focus_analysis.py        # Standalone focus analysis
 │
-├── output_writer_modular.py  # CSV/output generation
-├── plotting_modular.py     # Visualisation
-├── parallel_utils_modular.py # Multiprocessing
-├── profiling_modular.py    # Performance profiling
-├── timing_utils_modular.py # Timing utilities
-├── workers_modular.py      # Parallel worker functions
+├── output_writer_modular.py # CSV/output generation
+├── plotting_modular.py      # Visualisation
+├── parallel_utils_modular.py    # Multiprocessing
+├── profiling_modular.py     # Performance profiling
+├── timing_utils_modular.py  # Timing utilities
+├── workers_modular.py       # Parallel worker functions
+├── phantom_silence_modular.py   # SDK import wrapper
 │
-└── OUTPUT/                 # Generated outputs
+└── OUTPUT/                  # Generated outputs (default)
     ├── {folder}/
-    │   ├── *_crop.png      # Droplet crops
-    │   ├── *_summary.csv   # Metadata
-    │   └── *_overlay.png   # Visualisations
+    │   ├── *_crop.png       # Droplet crops
+    │   ├── *_summary.csv    # Metadata
+    │   └── *_overlay.png    # Visualisations
     │
-    └── Focus/              # Focus classification results
+    └── Focus/               # Focus classification results
         ├── sharp_crops.csv
-        └── {folder}/       # Sharp images by folder
+        └── {folder}/        # Sharp images by folder
 ```
 
 ## Pipeline Modes
@@ -143,7 +156,7 @@ OUTPUT/
 
 ### Crop Images
 - `{droplet}{cam}_crop.png` — Grayscale droplet crop (e.g., `sphere0843g_crop.png`)
-- Standard size across all folders when using Global mode (e.g., 388×388)
+- Standard size across all folders when using Global mode (e.g., 388x388)
 
 ### Visualisation Plots (Full Output Mode)
 - `{droplet}{cam}_darkness.png` — Darkness curve showing frame selection
@@ -169,6 +182,18 @@ Each folder produces `{folder}_summary.csv`:
 | norm_laplacian | Focus metric (normalised Laplacian) |
 | energy_gradient | Focus metric (energy of gradient) |
 
+## Configuration
+
+Key parameters can be adjusted in `config_modular.py`:
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `MAX_CNN_SIZE` | 512 | Maximum crop size (pixels) |
+| `MIN_CNN_SIZE` | 64 | Minimum crop size (pixels) |
+| `CROP_SAFETY_PIXELS` | 3 | Margin between crop and sphere |
+| `N_CANDIDATES` | 20 | Candidate frames for best-frame selection |
+| `CALIBRATION_PERCENTILE` | 5.0 | Percentile for robust crop sizing |
+
 ## Troubleshooting
 
 ### "pyphantom not found"
@@ -191,10 +216,16 @@ The pipeline runs in a background thread. Check the console for progress.
 - matplotlib
 - tqdm
 - customtkinter
-- pyphantom (Phantom SDK)
+- pyphantom (Phantom SDK — from Vision Research)
+
+## License
+
+This project is licensed under the GNU General Public License v3.0 — see the [LICENSE](LICENSE) file for details.
 
 ## Citation
 
 This pipeline implements preprocessing for droplet defocus estimation based on:
 
-> Wang et al. (2022). "Three-dimensional droplet measurement using deep learning"
+> Wang, J., et al. (2022). "Three-dimensional droplet sizing and tracking based on a single deep neural network." *Experiments in Fluids*, 63, 166.
+
+If you use this software in your research, please cite appropriately.
