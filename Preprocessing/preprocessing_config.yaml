@@ -1,0 +1,61 @@
+# Preprocessing Pipeline Configuration
+# =====================================
+# All tuneable parameters for the droplet cropping pipeline.
+# Modify values here rather than editing Python code.
+
+# ------------------------------------------------------------
+# PATHS (defaults - can be changed via GUI at runtime)
+# ------------------------------------------------------------
+paths:
+  cine_root: "./data"       # Root directory containing .cine files
+  output_root: "./OUTPUT"   # Directory for processed outputs
+
+# ------------------------------------------------------------
+# CROP SIZE BOUNDS (pixels)
+# ------------------------------------------------------------
+crop:
+  max_cnn_size: 512         # Maximum crop size for CNN input
+  min_cnn_size: 64          # Minimum crop size for CNN input
+  safety_pixels: 3          # Vertical margin to keep sphere out of crop
+
+# ------------------------------------------------------------
+# SAMPLING
+# ------------------------------------------------------------
+sampling:
+  cine_step: 10             # Process every Nth droplet (1 = all)
+
+# ------------------------------------------------------------
+# GEOMETRY ANALYSIS
+# Parameters for detecting droplets and spheres in frames
+# ------------------------------------------------------------
+geometry:
+  min_area: 50              # Minimum pixels for connected component detection
+  sphere_width_ratio: 0.30  # Sphere must span this fraction of frame width
+  sphere_center_tolerance: 0.35  # Sphere center tolerance from image center
+
+# ------------------------------------------------------------
+# BEST FRAME SELECTION
+# Parameters for choosing the optimal frame from each .cine file
+# ------------------------------------------------------------
+best_frame:
+  n_candidates: 20          # Max candidate frames for geometric analysis
+  darkness_threshold_percentile: 70.0  # Darkness percentile threshold
+  darkness_weight: 0.05     # Weight of darkness vs centring error in scoring
+
+# ------------------------------------------------------------
+# CALIBRATION
+# Parameters for computing uniform crop size across dataset
+# ------------------------------------------------------------
+calibration:
+  percentile: 5.0           # Percentile for outlier-robust crop size calculation
+
+# ------------------------------------------------------------
+# FOCUS METRICS
+# Parameters for image sharpness analysis and classification
+# ------------------------------------------------------------
+focus:
+  enabled: true             # Compute focus metrics for each crop
+  primary_metric: "laplacian_var"  # Primary metric for classification
+  # Thresholds: null = auto-determine from dataset statistics
+  sharp_threshold: null     # Scores above this are "sharp"
+  blur_threshold: null      # Scores below this are "blurry"
