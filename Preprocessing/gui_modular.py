@@ -1,6 +1,6 @@
 """GUI interface for the droplet cropping pipeline.
 
-Provides a modern GUI using customtkinter with:
+Provides a GUI using tkinter/ttk with:
 - Landing screen for folder selection
 - Configuration options (execution, sampling, calibration, outputs)
 - Progress bar, log, elapsed time, and ETA
@@ -19,12 +19,13 @@ import platform
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox
+
 try:
-    import customtkinter as ctk
-    from tkinter import filedialog, messagebox
-    from PIL import Image
+    from PIL import Image, ImageTk
 except ImportError:
-    print("GUI requires: pip install customtkinter pillow")
+    print("GUI requires: pip install pillow")
     raise
 
 import config_modular
@@ -50,25 +51,25 @@ def emit_done() -> None:
     gui_queue.put(("done", None))
 
 
-class PipelineGUI(ctk.CTk):
+class PipelineGUI:
     """Main GUI window with landing + main screen."""
 
     def __init__(self) -> None:
-        super().__init__()
-
-        self.title("Droplet Cropping Pipeline")
-        self.geometry("800x700")
-        self.minsize(700, 600)
+        self.root = tk.Tk()
+        self.root.title("Droplet Cropping Pipeline")
+        self.root.geometry("800x700")
+        self.root.minsize(700, 600)
 
         # Single cell layout for swapping frames
-        self.grid_rowconfigure(0, weight=1)
-        self.grid_columnconfigure(0, weight=1)
+        self.root.grid_rowconfigure(0, weight=1)
+        self.root.grid_columnconfigure(0, weight=1)
 
         # State
         self.processing: bool = False
         self.worker_thread: Optional[threading.Thread] = None
-        self.thumbnails: List[ctk.CTkLabel] = []
+        self.thumbnails: List[ttk.Label] = []
         self.thumbnail_paths: List[str] = []
+        self.thumbnail_images: List[Optional[ImageTk.PhotoImage]] = []  # Keep references
         self.selected_root: Optional[Path] = None
         self.start_time: Optional[float] = None
         self.progress_current: int = 0
@@ -77,35 +78,83 @@ class PipelineGUI(ctk.CTk):
         # For output folder polling
         self.known_images: set = set()
         self.polling_active: bool = False
-        
+
         # For elapsed timer
         self.elapsed_timer_active: bool = False
-        
+
         # Track if selected folder has subfolders (for global mode availability)
         self.has_subfolders: bool = True
 
         # Top-level frames
-        self.landing_frame = ctk.CTkFrame(self)
+        self.landing_frame = ttk.Frame(self.root)
         self.landing_frame.grid(row=0, column=0, sticky="nsew")
 
-        self.main_frame = ctk.CTkFrame(self)
+        # Main frame with scrollable canvas
+        self.main_frame = ttk.Frame(self.root)
         self.main_frame.grid(row=0, column=0, sticky="nsew")
         self.main_frame.grid_columnconfigure(0, weight=1)
-        self.main_frame.grid_rowconfigure(4, weight=1)
+        self.main_frame.grid_rowconfigure(0, weight=1)
 
-        # Build UI
+        # Create canvas and scrollbar for scrollable content
+        self.main_canvas = tk.Canvas(self.main_frame, highlightthickness=0)
+        self.main_scrollbar = ttk.Scrollbar(self.main_frame, orient="vertical", command=self.main_canvas.yview)
+        self.main_canvas.configure(yscrollcommand=self.main_scrollbar.set)
+
+        self.main_scrollbar.grid(row=0, column=1, sticky="ns")
+        self.main_canvas.grid(row=0, column=0, sticky="nsew")
+
+        # Inner frame that holds all content
+        self.main_inner = ttk.Frame(self.main_canvas)
+        self.main_canvas_window = self.main_canvas.create_window((0, 0), window=self.main_inner, anchor="nw")
+
+        # Configure canvas scrolling
+        self.main_inner.bind("<Configure>", self._on_main_inner_configure)
+        self.main_canvas.bind("<Configure>", self._on_main_canvas_configure)
+
+        # Bind mousewheel scrolling
+        self.main_canvas.bind("<Enter>", lambda e: self._bind_mousewheel())
+        self.main_canvas.bind("<Leave>", lambda e: self._unbind_mousewheel())
+
+        # Build UI inside scrollable inner frame
         self._build_landing()
-        self._build_header(self.main_frame)
-        self._build_config(self.main_frame)
-        self._build_preview(self.main_frame)
-        self._build_log(self.main_frame)
-        self._build_controls(self.main_frame)
+        self._build_header(self.main_inner)
+        self._build_config(self.main_inner)
+        self._build_preview(self.main_inner)
+        self._build_controls(self.main_inner)
+        self._build_log(self.main_inner)
 
         # Start queue polling
-        self.after(100, self._poll_queue)
+        self.root.after(100, self._poll_queue)
 
         # Show landing first
         self._show_landing()
+
+    def mainloop(self) -> None:
+        """Start the main event loop."""
+        self.root.mainloop()
+
+    # ============================================================
+    # SCROLLING HELPERS
+    # ============================================================
+    def _on_main_inner_configure(self, event) -> None:
+        """Update scroll region when inner frame size changes."""
+        self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
+
+    def _on_main_canvas_configure(self, event) -> None:
+        """Update inner frame width when canvas is resized."""
+        self.main_canvas.itemconfig(self.main_canvas_window, width=event.width)
+
+    def _bind_mousewheel(self) -> None:
+        """Bind mousewheel to scroll."""
+        self.main_canvas.bind_all("<MouseWheel>", self._on_mousewheel)
+
+    def _unbind_mousewheel(self) -> None:
+        """Unbind mousewheel."""
+        self.main_canvas.unbind_all("<MouseWheel>")
+
+    def _on_mousewheel(self, event) -> None:
+        """Handle mousewheel scrolling."""
+        self.main_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
     # ============================================================
     # LANDING SCREEN
@@ -115,107 +164,88 @@ class PipelineGUI(ctk.CTk):
         self.landing_frame.grid_columnconfigure(0, weight=1)
         self.landing_frame.grid_rowconfigure(0, weight=1)
 
-        inner = ctk.CTkFrame(self.landing_frame)
+        inner = ttk.Frame(self.landing_frame, padding=20)
         inner.grid(row=0, column=0, padx=20, pady=20, sticky="nsew")
         inner.grid_columnconfigure(0, weight=1)
 
         # Title
-        title = ctk.CTkLabel(
+        title = ttk.Label(
             inner,
             text="DROPLET CROPPING PIPELINE",
-            font=ctk.CTkFont(size=20, weight="bold"),
+            font=("TkDefaultFont", 16, "bold"),
         )
         title.grid(row=0, column=0, pady=(30, 20), sticky="n")
 
         # ----- CINE Root Section -----
-        cine_section = ctk.CTkFrame(inner)
+        cine_section = ttk.LabelFrame(inner, text="CINE Root", padding=10)
         cine_section.grid(row=1, column=0, padx=20, pady=10, sticky="ew")
         cine_section.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(
-            cine_section,
-            text="CINE Root",
-            font=ctk.CTkFont(weight="bold"),
-        ).grid(row=0, column=0, columnspan=2, padx=10, pady=(10, 5), sticky="w")
-
-        self.landing_cine_path = ctk.CTkLabel(
+        self.landing_cine_path = ttk.Label(
             cine_section,
             text=str(config_modular.CINE_ROOT),
             wraplength=450,
             anchor="w",
         )
-        self.landing_cine_path.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+        self.landing_cine_path.grid(row=0, column=0, padx=10, pady=5, sticky="ew")
 
-        ctk.CTkButton(
+        ttk.Button(
             cine_section,
             text="Browse",
-            width=80,
+            width=10,
             command=self._select_cine_folder,
-        ).grid(row=1, column=1, padx=10, pady=5, sticky="e")
+        ).grid(row=0, column=1, padx=10, pady=5, sticky="e")
 
-        self.landing_cine_info = ctk.CTkLabel(
+        self.landing_cine_info = ttk.Label(
             cine_section,
             text="",
-            text_color="gray",
+            foreground="gray",
         )
-        self.landing_cine_info.grid(row=2, column=0, columnspan=2, padx=10, pady=(0, 10), sticky="w")
+        self.landing_cine_info.grid(row=1, column=0, columnspan=2, padx=10, pady=(0, 10), sticky="w")
 
         # ----- Output Folder Section -----
-        output_section = ctk.CTkFrame(inner)
+        output_section = ttk.LabelFrame(inner, text="Output Folder", padding=10)
         output_section.grid(row=2, column=0, padx=20, pady=10, sticky="ew")
         output_section.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(
-            output_section,
-            text="Output Folder",
-            font=ctk.CTkFont(weight="bold"),
-        ).grid(row=0, column=0, columnspan=3, padx=10, pady=(10, 5), sticky="w")
-
-        self.landing_output_path = ctk.CTkLabel(
+        self.landing_output_path = ttk.Label(
             output_section,
             text=str(config_modular.OUTPUT_ROOT),
             wraplength=350,
             anchor="w",
         )
-        self.landing_output_path.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
+        self.landing_output_path.grid(row=0, column=0, padx=10, pady=5, sticky="ew")
 
-        ctk.CTkButton(
+        ttk.Button(
             output_section,
             text="Use Default (./OUTPUT)",
-            width=150,
             command=self._use_default_output,
-        ).grid(row=1, column=1, padx=5, pady=5)
+        ).grid(row=0, column=1, padx=5, pady=5)
 
-        ctk.CTkButton(
+        ttk.Button(
             output_section,
             text="Browse",
-            width=80,
+            width=10,
             command=self._select_output_folder,
-        ).grid(row=1, column=2, padx=10, pady=5, sticky="e")
+        ).grid(row=0, column=2, padx=10, pady=5, sticky="e")
 
         # ----- Buttons Row -----
-        btn_frame = ctk.CTkFrame(inner, fg_color="transparent")
+        btn_frame = ttk.Frame(inner)
         btn_frame.grid(row=3, column=0, pady=(30, 30))
 
-        self.continue_btn = ctk.CTkButton(
+        self.continue_btn = ttk.Button(
             btn_frame,
             text="Continue →",
-            width=150,
             command=self._continue_to_main,
         )
         self.continue_btn.grid(row=0, column=0, padx=10)
 
-        about_btn = ctk.CTkButton(
+        about_btn = ttk.Button(
             btn_frame,
             text="About",
-            width=80,
-            fg_color="gray",
             command=self._show_about,
         )
         about_btn.grid(row=0, column=1, padx=10)
-
-        # Initial scan
-        self._scan_cine_folder()
 
     def _show_about(self) -> None:
         """Show About dialog with license information."""
@@ -367,61 +397,60 @@ class PipelineGUI(ctk.CTk):
             cine_folders = get_cine_folders(root)
             n_folders = len(cine_folders)
             droplets = 0
-            
+
             for folder in cine_folders:
                 groups = group_cines_by_droplet(folder)
                 droplets += len(groups)
-            
+
             # Check if we have actual subfolders (for global mode availability)
             # Global mode only makes sense with multiple folders
             self.has_subfolders = len(iter_subfolders(root)) > 0 and n_folders > 1
 
             text = f"{n_folders} folder{'s' if n_folders != 1 else ''}, ~{droplets} droplets"
-            
+
         except Exception as e:
             text = f"Scan error: {e}"
             self.has_subfolders = False
 
         self.landing_cine_info.configure(text=text)
         self.count_label.configure(text=text)
-        
+
         # Update config state (may need to disable global mode)
         self._update_config_state()
 
     # ============================================================
     # HEADER
     # ============================================================
-    def _build_header(self, parent: ctk.CTkFrame) -> None:
+    def _build_header(self, parent: ttk.Frame) -> None:
         """Build header section."""
-        frame = ctk.CTkFrame(parent)
+        frame = ttk.LabelFrame(parent, text="Pipeline", padding=10)
         frame.grid(row=0, column=0, padx=10, pady=(10, 5), sticky="ew")
         frame.grid_columnconfigure(1, weight=1)
 
-        title = ctk.CTkLabel(
+        title = ttk.Label(
             frame,
             text="DROPLET CROPPING PIPELINE",
-            font=ctk.CTkFont(size=18, weight="bold"),
+            font=("TkDefaultFont", 14, "bold"),
         )
-        title.grid(row=0, column=0, columnspan=3, pady=(10, 5))
+        title.grid(row=0, column=0, columnspan=3, pady=(5, 10))
 
         # Source info
-        ctk.CTkLabel(frame, text="Source:").grid(row=1, column=0, padx=10, sticky="w")
+        ttk.Label(frame, text="Source:").grid(row=1, column=0, padx=10, sticky="w")
         default_root = config_modular.CINE_ROOT
-        self.source_label = ctk.CTkLabel(frame, text=str(default_root))
+        self.source_label = ttk.Label(frame, text=str(default_root))
         self.source_label.grid(row=1, column=1, padx=10, sticky="w")
 
-        change_btn = ctk.CTkButton(
+        change_btn = ttk.Button(
             frame,
-            text="Change…",
-            width=80,
+            text="Change...",
             command=self._change_cine_folder,
         )
         change_btn.grid(row=1, column=2, padx=10, sticky="e")
 
         # Count info
-        ctk.CTkLabel(frame, text="Found:").grid(row=2, column=0, padx=10, sticky="w")
-        self.count_label = ctk.CTkLabel(frame, text="Scanning…")
-        self.count_label.grid(row=2, column=1, padx=10, sticky="w", pady=(0, 10))
+        ttk.Label(frame, text="Found:").grid(row=2, column=0, padx=10, sticky="w")
+        self.count_label = ttk.Label(frame, text="Scanning...")
+        self.count_label.grid(row=2, column=1, padx=10, sticky="w", pady=(0, 5))
 
         # Check SDK + initial count in background
         threading.Thread(target=self._check_sdk, daemon=True).start()
@@ -455,72 +484,60 @@ class PipelineGUI(ctk.CTk):
         def update() -> None:
             self.count_label.configure(text=text)
 
-        self.after(0, update)
+        self.root.after(0, update)
 
     # ============================================================
     # CONFIG
     # ============================================================
-    def _build_config(self, parent: ctk.CTkFrame) -> None:
-        frame = ctk.CTkFrame(parent)
+    def _build_config(self, parent: ttk.Frame) -> None:
+        frame = ttk.Frame(parent)
         frame.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
         frame.grid_columnconfigure(0, weight=1)
         frame.grid_columnconfigure(1, weight=1)
 
         # ----- Execution mode -----
-        exec_frame = ctk.CTkFrame(frame)
+        exec_frame = ttk.LabelFrame(frame, text="Execution mode", padding=10)
         exec_frame.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
         exec_frame.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(
-            exec_frame,
-            text="Execution mode",
-            font=ctk.CTkFont(weight="bold"),
-        ).grid(row=0, column=0, padx=10, pady=(8, 4), sticky="w")
+        self.mode_var = tk.StringVar(value="full")
 
-        self.mode_var = ctk.StringVar(value="full")
-
-        self.quick_radio = ctk.CTkRadioButton(
+        self.quick_radio = ttk.Radiobutton(
             exec_frame,
             text="Quick detection test (1st droplet per folder)",
             variable=self.mode_var,
             value="quick",
             command=self._update_config_state,
         )
-        self.quick_radio.grid(row=1, column=0, padx=15, pady=2, sticky="w")
+        self.quick_radio.grid(row=0, column=0, padx=5, pady=2, sticky="w")
 
-        self.full_radio = ctk.CTkRadioButton(
+        self.full_radio = ttk.Radiobutton(
             exec_frame,
             text="Full pipeline",
             variable=self.mode_var,
             value="full",
             command=self._update_config_state,
         )
-        self.full_radio.grid(row=2, column=0, padx=15, pady=(2, 8), sticky="w")
+        self.full_radio.grid(row=1, column=0, padx=5, pady=2, sticky="w")
 
         # Safe mode
-        self.safe_var = ctk.BooleanVar(value=False)
-        self.safe_check = ctk.CTkCheckBox(
+        self.safe_var = tk.BooleanVar(value=False)
+        self.safe_check = ttk.Checkbutton(
             exec_frame,
             text="Safe mode (single process, more stable)",
             variable=self.safe_var,
         )
-        self.safe_check.grid(row=3, column=0, padx=15, pady=(0, 8), sticky="w")
+        self.safe_check.grid(row=2, column=0, padx=5, pady=(5, 2), sticky="w")
 
         # ----- Sampling -----
-        sample_frame = ctk.CTkFrame(frame)
+        sample_frame = ttk.LabelFrame(frame, text="Sampling (cine step)", padding=10)
         sample_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
         sample_frame.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(
-            sample_frame,
-            text="Sampling (cine step)",
-            font=ctk.CTkFont(weight="bold"),
-        ).grid(row=0, column=0, padx=10, pady=(8, 4), sticky="w")
+        self.sample_var = tk.StringVar(value="10")
 
-        self.sample_var = ctk.StringVar(value="10")
-
-        s_row = 1
-        self.sample_radios: List[ctk.CTkRadioButton] = []
+        s_row = 0
+        self.sample_radios: List[ttk.Radiobutton] = []
         step_labels = [
             ("1", "Every cine"),
             ("2", "Every 2nd cine"),
@@ -528,22 +545,22 @@ class PipelineGUI(ctk.CTk):
             ("10", "Every 10th cine"),
         ]
         for step, label in step_labels:
-            rb = ctk.CTkRadioButton(
+            rb = ttk.Radiobutton(
                 sample_frame,
                 text=label,
                 variable=self.sample_var,
                 value=step,
             )
-            rb.grid(row=s_row, column=0, padx=15, pady=1, sticky="w")
+            rb.grid(row=s_row, column=0, padx=5, pady=1, sticky="w")
             self.sample_radios.append(rb)
             s_row += 1
 
         # Custom step
-        custom_frame = ctk.CTkFrame(sample_frame)
-        custom_frame.grid(row=s_row, column=0, padx=10, pady=(4, 10), sticky="w")
-        self.custom_step = ctk.CTkEntry(custom_frame, width=60, placeholder_text="N")
-        self.custom_step.grid(row=0, column=0, padx=(5, 5))
-        self.custom_radio = ctk.CTkRadioButton(
+        custom_frame = ttk.Frame(sample_frame)
+        custom_frame.grid(row=s_row, column=0, padx=5, pady=(4, 5), sticky="w")
+        self.custom_step = ttk.Entry(custom_frame, width=8)
+        self.custom_step.grid(row=0, column=0, padx=(0, 5))
+        self.custom_radio = ttk.Radiobutton(
             custom_frame,
             text="Every Nth cine",
             variable=self.sample_var,
@@ -551,87 +568,75 @@ class PipelineGUI(ctk.CTk):
         )
         self.custom_radio.grid(row=0, column=1, padx=(0, 5), sticky="w")
 
-        self.sampling_controls: List[ctk.CTkBaseClass] = (
+        self.sampling_controls: List[tk.Widget] = (
             self.sample_radios + [self.custom_step, self.custom_radio]
         )
 
         # ----- Calibration & Outputs (second row) -----
-        calib_frame = ctk.CTkFrame(frame)
+        calib_frame = ttk.LabelFrame(frame, text="Calibration (crop)", padding=10)
         calib_frame.grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
         calib_frame.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(
-            calib_frame,
-            text="Calibration (crop)",
-            font=ctk.CTkFont(weight="bold"),
-        ).grid(row=0, column=0, padx=10, pady=(8, 4), sticky="w")
+        self.calib_var = tk.StringVar(value="folder")
 
-        self.calib_var = ctk.StringVar(value="folder")
-
-        self.calib_folder_radio = ctk.CTkRadioButton(
+        self.calib_folder_radio = ttk.Radiobutton(
             calib_frame,
             text="Per-folder crop (each folder calibrated independently)",
             variable=self.calib_var,
             value="folder",
         )
-        self.calib_folder_radio.grid(row=1, column=0, padx=15, pady=2, sticky="w")
+        self.calib_folder_radio.grid(row=0, column=0, padx=5, pady=2, sticky="w")
 
-        self.calib_global_radio = ctk.CTkRadioButton(
+        self.calib_global_radio = ttk.Radiobutton(
             calib_frame,
             text="Global crop (calibration from all folders combined)",
             variable=self.calib_var,
             value="global",
         )
-        self.calib_global_radio.grid(row=2, column=0, padx=15, pady=(2, 8), sticky="w")
+        self.calib_global_radio.grid(row=1, column=0, padx=5, pady=2, sticky="w")
 
         self.calib_controls = [self.calib_folder_radio, self.calib_global_radio]
 
         # Outputs + profiling
-        output_frame = ctk.CTkFrame(frame)
+        output_frame = ttk.LabelFrame(frame, text="Outputs", padding=10)
         output_frame.grid(row=1, column=1, padx=5, pady=5, sticky="nsew")
         output_frame.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(
-            output_frame,
-            text="Outputs",
-            font=ctk.CTkFont(weight="bold"),
-        ).grid(row=0, column=0, padx=10, pady=(8, 4), sticky="w")
+        self.output_var = tk.StringVar(value="crops")
 
-        self.output_var = ctk.StringVar(value="crops")
-
-        self.output_crops_radio = ctk.CTkRadioButton(
+        self.output_crops_radio = ttk.Radiobutton(
             output_frame,
             text="Crops only (fastest)",
             variable=self.output_var,
             value="crops",
         )
-        self.output_crops_radio.grid(row=1, column=0, padx=15, pady=2, sticky="w")
+        self.output_crops_radio.grid(row=0, column=0, padx=5, pady=2, sticky="w")
 
-        self.output_all_radio = ctk.CTkRadioButton(
+        self.output_all_radio = ttk.Radiobutton(
             output_frame,
             text="All plots",
             variable=self.output_var,
             value="all",
         )
-        self.output_all_radio.grid(row=2, column=0, padx=15, pady=(2, 6), sticky="w")
+        self.output_all_radio.grid(row=1, column=0, padx=5, pady=2, sticky="w")
 
         self.output_controls = [self.output_crops_radio, self.output_all_radio]
 
-        self.profile_var = ctk.BooleanVar(value=False)
-        self.profile_check = ctk.CTkCheckBox(
+        self.profile_var = tk.BooleanVar(value=False)
+        self.profile_check = ttk.Checkbutton(
             output_frame,
             text="Enable profiling",
             variable=self.profile_var,
         )
-        self.profile_check.grid(row=3, column=0, padx=15, pady=(0, 4), sticky="w")
+        self.profile_check.grid(row=2, column=0, padx=5, pady=(5, 2), sticky="w")
 
-        self.focus_class_var = ctk.BooleanVar(value=True)
-        self.focus_class_check = ctk.CTkCheckBox(
+        self.focus_class_var = tk.BooleanVar(value=True)
+        self.focus_class_check = ttk.Checkbutton(
             output_frame,
             text="Focus classification (per-folder)",
             variable=self.focus_class_var,
         )
-        self.focus_class_check.grid(row=4, column=0, padx=15, pady=(0, 8), sticky="w")
+        self.focus_class_check.grid(row=3, column=0, padx=5, pady=2, sticky="w")
 
         # Keep profiling and focus classification in same disable group as outputs
         self.profile_control = self.profile_check
@@ -652,7 +657,7 @@ class PipelineGUI(ctk.CTk):
         # Calibration - also check for subfolders
         # Per-folder always available when not in quick mode
         self._set_widget_state(self.calib_folder_radio, state)
-        
+
         # Global only available if we have subfolders AND not in quick mode
         if quick or not self.has_subfolders:
             global_state = "disabled"
@@ -670,100 +675,72 @@ class PipelineGUI(ctk.CTk):
         # Profiling and focus classification
         self._set_widget_state(self.profile_control, state)
         self._set_widget_state(self.focus_class_control, state)
-    
-    def _set_widget_state(self, widget: ctk.CTkBaseClass, state: str) -> None:
-        """Set widget state with proper visual feedback for radio buttons and checkboxes.
-        
+
+    def _set_widget_state(self, widget: tk.Widget, state: str) -> None:
+        """Set widget state.
+
         Args:
             widget: The widget to update.
             state: "normal" or "disabled".
         """
         try:
             widget.configure(state=state)
-            
-            # For radio buttons, update colors for clearer visual feedback
-            if isinstance(widget, ctk.CTkRadioButton):
-                if state == "disabled":
-                    # Grey out text and the radio button indicator
-                    widget.configure(
-                        text_color="gray50",
-                        text_color_disabled="gray50",
-                        fg_color="gray50",           # The selected indicator
-                        border_color="gray50",       # The ring border
-                    )
-                else:
-                    # Reset to default theme colors
-                    widget.configure(
-                        text_color=("gray10", "gray90"),
-                        fg_color=("#3B8ED0", "#1F6AA5"),    # Default blue
-                        border_color=("#3E454A", "#949A9F"),
-                    )
-            
-            # For checkboxes, similar treatment
-            elif isinstance(widget, ctk.CTkCheckBox):
-                if state == "disabled":
-                    widget.configure(
-                        text_color="gray50",
-                        text_color_disabled="gray50",
-                        fg_color="gray50",
-                        border_color="gray50",
-                    )
-                else:
-                    widget.configure(
-                        text_color=("gray10", "gray90"),
-                        fg_color=("#3B8ED0", "#1F6AA5"),
-                        border_color=("#3E454A", "#949A9F"),
-                    )
         except Exception:
             pass
 
     # ============================================================
     # PREVIEW
     # ============================================================
-    def _build_preview(self, parent: ctk.CTkFrame) -> None:
-        frame = ctk.CTkFrame(parent)
+    def _build_preview(self, parent: ttk.Frame) -> None:
+        frame = ttk.LabelFrame(parent, text="Recent outputs (click to open)", padding=10)
         frame.grid(row=2, column=0, padx=10, pady=5, sticky="ew")
         frame.grid_columnconfigure(0, weight=1)
 
-        ctk.CTkLabel(
-            frame,
-            text="Recent outputs (click to open)",
-            font=ctk.CTkFont(weight="bold"),
-        ).grid(row=0, column=0, padx=10, pady=(8, 4), sticky="w")
-
-        thumb_row = ctk.CTkFrame(frame)
-        thumb_row.grid(row=1, column=0, padx=10, pady=(0, 8), sticky="w")
+        thumb_row = ttk.Frame(frame)
+        thumb_row.grid(row=0, column=0, padx=5, pady=5, sticky="w")
 
         # 5 thumbnails (latest on the right)
         for i in range(5):
-            lbl = ctk.CTkLabel(
+            lbl = ttk.Label(
                 thumb_row,
                 text="",
-                width=110,
-                height=110,
-                corner_radius=8,
-                fg_color=("gray15", "gray25"),
+                width=15,
+                relief="sunken",
+                anchor="center",
             )
             lbl.grid(row=0, column=i, padx=4, pady=4)
+            # Set a minimum size using a blank image
+            blank = Image.new("RGB", (110, 110), color=(200, 200, 200))
+            blank_photo = ImageTk.PhotoImage(blank)
+            lbl.configure(image=blank_photo)
+            lbl._blank_image = blank_photo  # Keep reference
             self.thumbnails.append(lbl)
+            self.thumbnail_images.append(None)
 
     # ============================================================
-    # LOG
+    # LOG (with progress bar)
     # ============================================================
-    def _build_log(self, parent: ctk.CTkFrame) -> None:
-        frame = ctk.CTkFrame(parent)
-        frame.grid(row=3, column=0, padx=10, pady=5, sticky="nsew")
+    def _build_log(self, parent: ttk.Frame) -> None:
+        frame = ttk.LabelFrame(parent, text="Log", padding=10)
+        frame.grid(row=4, column=0, padx=10, pady=(5, 10), sticky="ew")
         frame.grid_columnconfigure(0, weight=1)
-        frame.grid_rowconfigure(1, weight=1)
 
-        ctk.CTkLabel(
-            frame,
-            text="Log",
-            font=ctk.CTkFont(weight="bold"),
-        ).grid(row=0, column=0, padx=10, pady=(8, 4), sticky="w")
+        # Progress bar + label at top of log section
+        self.progress_var = tk.DoubleVar(value=0)
+        self.progress_bar = ttk.Progressbar(frame, variable=self.progress_var, maximum=100)
+        self.progress_bar.grid(row=0, column=0, columnspan=2, padx=5, pady=(5, 2), sticky="ew")
 
-        self.log_box = ctk.CTkTextbox(frame, height=160)
-        self.log_box.grid(row=1, column=0, padx=10, pady=(0, 8), sticky="nsew")
+        self.progress_label = ttk.Label(frame, text="Idle")
+        self.progress_label.grid(row=1, column=0, columnspan=2, padx=5, pady=(0, 5), sticky="w")
+
+        # Log text box
+        self.log_box = tk.Text(frame, height=10, wrap="word")
+        self.log_box.grid(row=2, column=0, padx=5, pady=5, sticky="ew")
+
+        # Add scrollbar for log
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=self.log_box.yview)
+        scrollbar.grid(row=2, column=1, sticky="ns")
+        self.log_box.configure(yscrollcommand=scrollbar.set)
 
     def _log(self, msg: str) -> None:
         """Append message to log box."""
@@ -773,42 +750,32 @@ class PipelineGUI(ctk.CTk):
     # ============================================================
     # CONTROLS
     # ============================================================
-    def _build_controls(self, parent: ctk.CTkFrame) -> None:
-        frame = ctk.CTkFrame(parent)
-        frame.grid(row=4, column=0, padx=10, pady=(5, 10), sticky="ew")
+    def _build_controls(self, parent: ttk.Frame) -> None:
+        frame = ttk.Frame(parent, padding=10)
+        frame.grid(row=3, column=0, padx=10, pady=(5, 10), sticky="ew")
         frame.grid_columnconfigure(1, weight=1)
 
-        # Run / Cancel
-        self.run_button = ctk.CTkButton(
-            frame, text="Start", command=self._on_run, width=100
+        # Run / Cancel on left
+        self.run_button = ttk.Button(
+            frame, text="Start", command=self._on_run
         )
-        self.run_button.grid(row=0, column=0, padx=(10, 5), pady=5, sticky="w")
+        self.run_button.grid(row=0, column=0, padx=(0, 5), pady=5, sticky="w")
 
-        self.cancel_button = ctk.CTkButton(
+        self.cancel_button = ttk.Button(
             frame,
             text="Cancel",
             command=self._on_cancel,
-            width=100,
             state="disabled",
         )
-        self.cancel_button.grid(row=0, column=0, padx=(120, 5), pady=5, sticky="w")
+        self.cancel_button.grid(row=0, column=1, padx=5, pady=5, sticky="w")
 
-        # Open output folder button
-        self.open_output_button = ctk.CTkButton(
+        # Open output folder button on right
+        self.open_output_button = ttk.Button(
             frame,
             text="Open Output Folder",
             command=self._open_output_folder,
-            width=160,
         )
-        self.open_output_button.grid(row=0, column=2, padx=(5, 10), pady=5, sticky="e")
-
-        # Progress bar + label
-        self.progress_bar = ctk.CTkProgressBar(frame)
-        self.progress_bar.grid(row=1, column=0, columnspan=3, padx=10, pady=(5, 2), sticky="ew")
-        self.progress_bar.set(0)
-
-        self.progress_label = ctk.CTkLabel(frame, text="Idle")
-        self.progress_label.grid(row=2, column=0, columnspan=3, padx=10, pady=(0, 8), sticky="w")
+        self.open_output_button.grid(row=0, column=2, padx=(5, 0), pady=5, sticky="e")
 
     def _open_output_folder(self) -> None:
         """Open output folder in system file explorer."""
@@ -862,7 +829,7 @@ class PipelineGUI(ctk.CTk):
         self._update_progress_display()
 
         # Schedule next tick
-        self.after(1000, self._tick_elapsed)
+        self.root.after(1000, self._tick_elapsed)
 
     def _poll_output_folder(self) -> None:
         """Check for new images in output folder."""
@@ -902,7 +869,7 @@ class PipelineGUI(ctk.CTk):
 
         # Schedule next poll
         if self.polling_active:
-            self.after(500, self._poll_output_folder)  # Poll every 500ms
+            self.root.after(500, self._poll_output_folder)  # Poll every 500ms
 
     def _add_thumbnail(self, path: str) -> None:
         """Add a new thumbnail to the display."""
@@ -921,28 +888,24 @@ class PipelineGUI(ctk.CTk):
         """Refresh all thumbnail displays."""
         # Update display (newest on right, oldest on left)
         n_paths = len(self.thumbnail_paths)
-        
+
         for i in range(5):
             thumb = self.thumbnails[i]
             # Index from paths: leftmost shows oldest, rightmost shows newest
             path_idx = i - (5 - n_paths)
-            
+
             if path_idx >= 0 and path_idx < n_paths:
                 img_path = self.thumbnail_paths[path_idx]
-                
+
                 try:
                     img = Image.open(img_path)
                     img.thumbnail((110, 110))
-                    
-                    # Create CTkImage and store reference on the label itself
-                    photo = ctk.CTkImage(light_image=img, dark_image=img, size=(110, 110))
-                    
-                    # Store multiple references to prevent garbage collection
-                    thumb._photo_ref = photo
-                    thumb._pil_ref = img
-                    
-                    thumb.configure(image=photo, text="")
-                    thumb.image = photo  # keep reference
+
+                    # Create PhotoImage and store reference
+                    photo = ImageTk.PhotoImage(img)
+                    self.thumbnail_images[i] = photo
+
+                    thumb.configure(image=photo)
 
                     # Bind click handler - use default argument to capture value
                     thumb.unbind("<Button-1>")
@@ -951,16 +914,14 @@ class PipelineGUI(ctk.CTk):
                 except Exception:
                     # Silently handle image loading errors
                     try:
-                        thumb.configure(image=None, text="?")
+                        thumb.configure(image=thumb._blank_image)
                         thumb.unbind("<Button-1>")
                     except Exception:
                         pass
             else:
                 try:
-                    thumb.configure(image=None, text="")
-                    thumb.image = None
-                    thumb._photo_ref = None
-                    thumb._pil_ref = None
+                    thumb.configure(image=thumb._blank_image)
+                    self.thumbnail_images[i] = None
                     thumb.unbind("<Button-1>")
                 except Exception:
                     pass
@@ -971,9 +932,9 @@ class PipelineGUI(ctk.CTk):
         total = self.progress_total
 
         if total > 0:
-            self.progress_bar.set(current / total)
+            self.progress_var.set((current / total) * 100)
         else:
-            self.progress_bar.set(0)
+            self.progress_var.set(0)
 
         elapsed_text = ""
         eta_text = ""
@@ -1066,14 +1027,12 @@ class PipelineGUI(ctk.CTk):
 
         # Clear state
         self.log_box.delete("1.0", "end")
-        self.progress_bar.set(0)
+        self.progress_var.set(0)
         self.progress_label.configure(text="Processing...")
         self.thumbnail_paths.clear()
-        for thumb in self.thumbnails:
-            thumb.configure(image=None, text="")
-            thumb.image = None
-            thumb._photo_ref = None
-            thumb._pil_ref = None
+        for i, thumb in enumerate(self.thumbnails):
+            thumb.configure(image=thumb._blank_image)
+            self.thumbnail_images[i] = None
             thumb.unbind("<Button-1>")
 
         # Get config
@@ -1098,7 +1057,7 @@ class PipelineGUI(ctk.CTk):
 
         # Start output folder polling for thumbnails
         self._start_output_polling()
-        
+
         # Start elapsed timer
         self._start_elapsed_timer()
 
@@ -1139,7 +1098,7 @@ class PipelineGUI(ctk.CTk):
         root = self.selected_root or config_modular.CINE_ROOT
         cine_folders = get_cine_folders(root)
         total = len(cine_folders)
-        
+
         if total == 0:
             emit_log("No folders with .cine files found!")
             return
@@ -1220,7 +1179,7 @@ class PipelineGUI(ctk.CTk):
 
         def gui_print(*args: Any, **kwargs: Any) -> None:
             text = " ".join(str(a) for a in args)
-            
+
             # Check for progress marker
             if text.startswith("__PROGRESS__:"):
                 # Parse: __PROGRESS__:current:total:desc
@@ -1228,7 +1187,7 @@ class PipelineGUI(ctk.CTk):
                 if len(parts) == 4:
                     gui_queue.put(("increment", parts[3]))
                 return  # Don't print to CLI or log
-            
+
             # Normal CLI output
             original_print(*args, **kwargs)
             # Mirror into GUI log
@@ -1280,7 +1239,7 @@ class PipelineGUI(ctk.CTk):
         self.run_button.configure(state="normal")
         self.cancel_button.configure(state="disabled")
         self.progress_label.configure(text="Complete!")
-        self.progress_bar.set(1.0)
+        self.progress_var.set(100)
 
     # ============================================================
     # THUMBNAILS + QUEUE
@@ -1315,7 +1274,7 @@ class PipelineGUI(ctk.CTk):
                     # Increment global progress counter
                     self.progress_current += 1
                     self._update_progress_display()
-                    self.update_idletasks()  # Force UI refresh
+                    self.root.update_idletasks()  # Force UI refresh
 
                 elif msg_type == "progress":
                     # Legacy format (current, total) or (current, total, desc)
@@ -1334,15 +1293,12 @@ class PipelineGUI(ctk.CTk):
             pass
 
         # Schedule next poll
-        self.after(100, self._poll_queue)
+        self.root.after(100, self._poll_queue)
 
 
 
 def run_gui() -> None:
     """Launch the GUI."""
-    ctk.set_appearance_mode("dark")
-    ctk.set_default_color_theme("blue")
-
     app = PipelineGUI()
     app.mainloop()
 
