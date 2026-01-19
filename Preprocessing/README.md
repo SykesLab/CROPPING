@@ -43,7 +43,7 @@ The Phantom SDK (pyphantom) is required to read .cine files:
 ### 3. Run Pipeline
 
 ```bash
-python gui_modular.py
+python gui.py
 ```
 
 ### 4. Configure in GUI
@@ -58,33 +58,31 @@ python gui_modular.py
 
 ```
 droplet-preprocessing/
-├── gui_modular.py           # GUI interface (main entry point)
-├── config_modular.py        # Default configuration
+├── gui.py                   # GUI interface (main entry point)
+├── config.py                # Default configuration
 ├── setup_environment.py     # Environment verification
 ├── requirements.txt         # Python dependencies
-├── README.md                # This file
-├── LICENSE                  # GPL-3.0 license
+├── README.md
+├── LICENSE
 │
 ├── pipeline_global.py       # Global calibration pipeline
 ├── pipeline_folder.py       # Per-folder pipeline
 │
-├── cine_io_modular.py       # .cine file reading
-├── darkness_analysis_modular.py   # Best frame selection
-├── geom_analysis_modular.py       # Droplet geometry
-├── crop_calibration_modular.py    # Crop size calibration
-├── cropping_modular.py      # Image cropping
-├── image_utils_modular.py   # Image utilities
+├── cine_io.py               # .cine file reading and SDK import
+├── darkness_analysis.py     # Best frame selection
+├── geom_analysis.py         # Droplet geometry
+├── crop_calibration.py      # Crop size calibration
+├── cropping.py              # Image cropping
+├── image_utils.py           # Image utilities
 │
-├── focus_metrics_modular.py # Focus quality metrics
+├── focus_metrics.py         # Focus quality metrics
 ├── focus_analysis.py        # Standalone focus analysis
 │
-├── output_writer_modular.py # CSV/output generation
-├── plotting_modular.py      # Visualisation
-├── parallel_utils_modular.py    # Multiprocessing
-├── profiling_modular.py     # Performance profiling
-├── timing_utils_modular.py  # Timing utilities
-├── workers_modular.py       # Parallel worker functions
-├── phantom_silence_modular.py   # SDK import wrapper
+├── output_writer.py         # CSV/output generation
+├── plotting.py              # Visualisation
+├── parallel_utils.py        # Multiprocessing
+├── profiling.py             # Timing and profiling utilities
+├── workers.py               # Parallel worker functions
 │
 └── OUTPUT/                  # Generated outputs (default)
     ├── {folder}/
@@ -184,7 +182,7 @@ Each folder produces `{folder}_summary.csv`:
 
 ## Configuration
 
-Key parameters can be adjusted in `config_modular.py`:
+Key parameters can be adjusted in `config.py`:
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
@@ -215,7 +213,7 @@ The pipeline runs in a background thread. Check the console for progress.
 - opencv-python
 - matplotlib
 - tqdm
-- customtkinter
+- tkinter (included with Python)
 - pyphantom (Phantom SDK — from Vision Research)
 
 ## License
