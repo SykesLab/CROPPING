@@ -1,14 +1,4 @@
-"""GUI interface for the droplet cropping pipeline.
-
-Provides a GUI using tkinter/ttk with:
-- Landing screen for folder selection
-- Configuration options (execution, sampling, calibration, outputs)
-- Progress bar, log, elapsed time, and ETA
-- Live preview of recent crops (click to open full image)
-- Button to open the output folder
-
-Uses output folder polling for thumbnails (works in both Safe and Fast modes).
-"""
+"""GUI interface for the droplet cropping pipeline."""
 
 import builtins
 import queue
@@ -133,9 +123,7 @@ class PipelineGUI:
         """Start the main event loop."""
         self.root.mainloop()
 
-    # ============================================================
-    # SCROLLING HELPERS
-    # ============================================================
+    # --- Scrolling helpers ---
     def _on_main_inner_configure(self, event) -> None:
         """Update scroll region when inner frame size changes."""
         self.main_canvas.configure(scrollregion=self.main_canvas.bbox("all"))
@@ -156,9 +144,7 @@ class PipelineGUI:
         """Handle mousewheel scrolling."""
         self.main_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
-    # ============================================================
-    # LANDING SCREEN
-    # ============================================================
+    # --- Landing screen ---
     def _build_landing(self) -> None:
         """Build landing page with CINE root and Output folder selection."""
         self.landing_frame.grid_columnconfigure(0, weight=1)
@@ -418,9 +404,7 @@ class PipelineGUI:
         # Update config state (may need to disable global mode)
         self._update_config_state()
 
-    # ============================================================
-    # HEADER
-    # ============================================================
+    # --- Header ---
     def _build_header(self, parent: ttk.Frame) -> None:
         """Build header section."""
         frame = ttk.LabelFrame(parent, text="Pipeline", padding=10)
@@ -486,9 +470,7 @@ class PipelineGUI:
 
         self.root.after(0, update)
 
-    # ============================================================
-    # CONFIG
-    # ============================================================
+    # --- Config panel ---
     def _build_config(self, parent: ttk.Frame) -> None:
         frame = ttk.Frame(parent)
         frame.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
@@ -677,20 +659,13 @@ class PipelineGUI:
         self._set_widget_state(self.focus_class_control, state)
 
     def _set_widget_state(self, widget: tk.Widget, state: str) -> None:
-        """Set widget state.
-
-        Args:
-            widget: The widget to update.
-            state: "normal" or "disabled".
-        """
+        """Set widget state to 'normal' or 'disabled'."""
         try:
             widget.configure(state=state)
         except Exception:
             pass
 
-    # ============================================================
-    # PREVIEW
-    # ============================================================
+    # --- Preview thumbnails ---
     def _build_preview(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="Recent outputs (click to open)", padding=10)
         frame.grid(row=2, column=0, padx=10, pady=5, sticky="ew")
@@ -717,9 +692,7 @@ class PipelineGUI:
             self.thumbnails.append(lbl)
             self.thumbnail_images.append(None)
 
-    # ============================================================
-    # LOG (with progress bar)
-    # ============================================================
+    # --- Log panel ---
     def _build_log(self, parent: ttk.Frame) -> None:
         frame = ttk.LabelFrame(parent, text="Log", padding=10)
         frame.grid(row=4, column=0, padx=10, pady=(5, 10), sticky="ew")
@@ -747,9 +720,7 @@ class PipelineGUI:
         self.log_box.insert("end", msg + "\n")
         self.log_box.see("end")
 
-    # ============================================================
-    # CONTROLS
-    # ============================================================
+    # --- Control buttons ---
     def _build_controls(self, parent: ttk.Frame) -> None:
         frame = ttk.Frame(parent, padding=10)
         frame.grid(row=3, column=0, padx=10, pady=(5, 10), sticky="ew")
@@ -790,9 +761,7 @@ class PipelineGUI:
         except Exception as e:
             messagebox.showerror("Error", f"Could not open folder:\n{e}")
 
-    # ============================================================
-    # OUTPUT FOLDER POLLING (for thumbnails)
-    # ============================================================
+    # --- Output folder polling ---
     def _start_output_polling(self) -> None:
         """Start polling output folder for new images."""
         self.known_images = set()
@@ -953,9 +922,7 @@ class PipelineGUI:
             text=f"Processing: {current}/{total}{elapsed_text}{eta_text}"
         )
 
-    # ============================================================
-    # RUNTIME / WORKER
-    # ============================================================
+    # --- Worker thread ---
     def _get_config(self) -> Dict[str, Any]:
         """Collect config from widgets."""
         config: Dict[str, Any] = {}
@@ -1241,9 +1208,7 @@ class PipelineGUI:
         self.progress_label.configure(text="Complete!")
         self.progress_var.set(100)
 
-    # ============================================================
-    # THUMBNAILS + QUEUE
-    # ============================================================
+    # --- Queue polling ---
     def _open_image(self, path: str) -> None:
         """Open a single image in the system viewer."""
         try:
