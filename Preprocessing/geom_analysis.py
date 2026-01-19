@@ -11,8 +11,8 @@ from typing import Any, Dict, List, Optional
 import cv2
 import numpy as np
 
-from config_modular import GEOM_MIN_AREA, SPHERE_CENTER_TOLERANCE, SPHERE_WIDTH_RATIO
-from image_utils_modular import load_frame_gray, otsu_mask
+from config import GEOM_MIN_AREA, SPHERE_CENTER_TOLERANCE, SPHERE_WIDTH_RATIO
+from image_utils import load_frame_gray, otsu_mask
 
 
 def analyze_frame_geometric(

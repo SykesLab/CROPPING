@@ -13,23 +13,23 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from cine_io_modular import group_cines_by_droplet, get_cine_folders, safe_load_cine
-import config_modular
-from config_modular import CINE_ROOT, CROP_SAFETY_PIXELS, OUTPUT_ROOT
-from crop_calibration_modular import compute_crop_size
-from darkness_analysis_modular import (
+from cine_io import group_cines_by_droplet, get_cine_folders, safe_load_cine
+import config
+from config import CINE_ROOT, CROP_SAFETY_PIXELS, OUTPUT_ROOT
+from crop_calibration import compute_crop_size
+from darkness_analysis import (
     analyze_cine_darkness,
     choose_best_frame_geometry_only,
     choose_best_frame_with_geo,
 )
-from focus_metrics_modular import classify_folder_focus
-from image_utils_modular import otsu_mask
-from output_writer_modular import generate_droplet_outputs, write_folder_csv
-from parallel_utils_modular import run_parallel
-from plotting_modular import save_darkness_plot, save_geometric_overlay
-from profiling_modular import aggregate_timings, print_global_summary, save_profile_json
-from timing_utils_modular import Timer, format_time
-from workers_modular import analyze_droplet_crops_only, analyze_droplet_full
+from focus_metrics import classify_folder_focus
+from image_utils import otsu_mask
+from output_writer import generate_droplet_outputs, write_folder_csv
+from parallel_utils import run_parallel
+from plotting import save_darkness_plot, save_geometric_overlay
+from profiling import aggregate_timings, print_global_summary, save_profile_json
+from profiling import Timer, format_time
+from workers import analyze_droplet_crops_only, analyze_droplet_full
 
 logger = logging.getLogger(__name__)
 
@@ -75,7 +75,7 @@ def process_per_folder(
     output_str = "full output" if full_output else "crops only"
     if profile:
         mode_str += " + PROFILING"
-    step = config_modular.CINE_STEP
+    step = config.CINE_STEP
 
     logger.info(f"Per-folder mode: {mode_str}, {output_str}, step={step}")
     print(f"\n[PER-FOLDER MODE] {mode_str}, {output_str}, step={step}")
@@ -127,7 +127,7 @@ def process_per_folder(
     if profile:
         save_profile_json(OUTPUT_ROOT, "profiling_perfolder.json", {
             "mode": "per-folder", "safe_mode": safe_mode, "full_output": full_output,
-            "step": config_modular.CINE_STEP, "total_seconds": total_sec,
+            "step": config.CINE_STEP, "total_seconds": total_sec,
             "global_analysis_timing": global_analysis_timing,
             "global_output_timing": global_output_timing, "folders": folder_profiles,
         })
@@ -138,7 +138,7 @@ def _count_total_droplets(subfolders: List[Path]) -> int:
     total = 0
     for sub in subfolders:
         groups = group_cines_by_droplet(sub)
-        total += len(range(0, len(groups), config_modular.CINE_STEP))
+        total += len(range(0, len(groups), config.CINE_STEP))
     return total
 
 
@@ -160,7 +160,7 @@ def _process_single_folder(
         print("  [INFO] No droplets in this folder.")
         return None
 
-    selected_indices = list(range(0, n_groups, config_modular.CINE_STEP))
+    selected_indices = list(range(0, n_groups, config.CINE_STEP))
     droplets_to_process = [(groups[idx][0], groups[idx][1]) for idx in selected_indices]
 
     # Phase 1: Analysis

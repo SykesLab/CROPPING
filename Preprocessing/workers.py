@@ -9,14 +9,14 @@ import time
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
-from cine_io_modular import group_cines_by_droplet, safe_load_cine
-from crop_calibration_modular import maybe_add_calibration_sample
-from darkness_analysis_modular import (
+from cine_io import group_cines_by_droplet, safe_load_cine
+from crop_calibration import maybe_add_calibration_sample
+from darkness_analysis import (
     analyze_cine_darkness,
     choose_best_frame_geometry_only,
     choose_best_frame_with_geo,
 )
-from geom_analysis_modular import extract_geometry_info
+from geom_analysis import extract_geometry_info
 
 # Type aliases
 DropletResult = Tuple[str, Dict[str, Dict[str, Any]], List[float], List[float], Dict[str, float]]

@@ -3,14 +3,52 @@ CINE file I/O and grouping utilities.
 
 Handles loading .cine files via the Phantom SDK and grouping them
 by droplet ID based on filename patterns (e.g. sphere0843g.cine).
+
+Includes silent pyphantom import to suppress SDK banner on worker spawn.
 """
 
+import os
 import re
+import sys
+from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, Generator, List, Optional, Tuple
 
-from phantom_silence_modular import cine
 
+# --- Silent pyphantom import ---
+
+@contextmanager
+def _suppress_output() -> Generator[None, None, None]:
+    """Context manager to silence stdout and stderr."""
+    saved_out = sys.stdout
+    saved_err = sys.stderr
+    devnull = open(os.devnull, "w")
+    sys.stdout = devnull
+    sys.stderr = devnull
+    try:
+        yield
+    finally:
+        sys.stdout = saved_out
+        sys.stderr = saved_err
+        devnull.close()
+
+
+# Load pyphantom components silently
+with _suppress_output():
+    from pyphantom import cine, utils
+
+    ph: Optional[Any] = None
+    try:
+        from pyphantom import Phantom
+        ph = Phantom(init_camera=False)
+    except Exception:
+        try:
+            ph = Phantom()
+        except Exception:
+            ph = None
+
+
+# --- CINE loading and grouping ---
 
 def safe_load_cine(path: Path) -> Optional[Any]:
     """Load a .cine file, returning None on failure."""

@@ -1,11 +1,48 @@
-"""Timing aggregation and profiling utilities."""
+"""Timing and profiling utilities."""
 
 import json
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Union
 
-from timing_utils_modular import format_time
 
+# --- Timer utilities ---
+
+def format_time(seconds: float) -> str:
+    """Format seconds as human-readable string (e.g. '2h 15m 30s')."""
+    if seconds < 60:
+        return f"{seconds:.1f}s"
+
+    total_secs = int(seconds)
+    hours = total_secs // 3600
+    mins = (total_secs % 3600) // 60
+    secs = total_secs % 60
+
+    if hours > 0:
+        return f"{hours}h {mins}m {secs}s"
+    else:
+        return f"{mins}m {secs}s"
+
+
+class Timer:
+    """Wall-clock timer with formatted output."""
+
+    def __init__(self) -> None:
+        self.start_time: float = time.time()
+
+    def reset(self) -> None:
+        self.start_time = time.time()
+
+    @property
+    def seconds(self) -> float:
+        return time.time() - self.start_time
+
+    @property
+    def elapsed(self) -> str:
+        return format_time(self.seconds)
+
+
+# --- Profiling aggregation ---
 
 def aggregate_timings(
     timing_list: List[Dict[str, float]],
@@ -36,7 +73,6 @@ def print_global_summary(
     phase_times: Optional[Dict[str, float]] = None,
 ) -> None:
     """Print global timing summary."""
-    # Calculate total elapsed time
     total_elapsed = 0.0
     if phase_times:
         total_elapsed = (

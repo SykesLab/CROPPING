@@ -18,9 +18,9 @@ except ImportError:
     print("GUI requires: pip install pillow")
     raise
 
-import config_modular
-from phantom_silence_modular import cine
-from timing_utils_modular import format_time
+import config
+from cine_io import cine
+from profiling import format_time
 
 # Queue for worker -> GUI communication (logs, progress, done signals)
 gui_queue: queue.Queue = queue.Queue()
@@ -169,7 +169,7 @@ class PipelineGUI:
 
         self.landing_cine_path = ttk.Label(
             cine_section,
-            text=str(config_modular.CINE_ROOT),
+            text=str(config.CINE_ROOT),
             wraplength=450,
             anchor="w",
         )
@@ -196,7 +196,7 @@ class PipelineGUI:
 
         self.landing_output_path = ttk.Label(
             output_section,
-            text=str(config_modular.OUTPUT_ROOT),
+            text=str(config.OUTPUT_ROOT),
             wraplength=350,
             anchor="w",
         )
@@ -276,16 +276,16 @@ class PipelineGUI:
             messagebox.showerror("Invalid folder", "Selected folder does not exist.")
             return
 
-        config_modular.CINE_ROOT = root
+        config.CINE_ROOT = root
         self.selected_root = root
         self.landing_cine_path.configure(text=str(root))
         self._scan_cine_folder()
 
     def _scan_cine_folder(self) -> None:
         """Scan CINE folder and update info label."""
-        root = config_modular.CINE_ROOT
+        root = config.CINE_ROOT
         try:
-            from cine_io_modular import get_cine_folders, iter_subfolders, group_cines_by_droplet
+            from cine_io import get_cine_folders, iter_subfolders, group_cines_by_droplet
 
             cine_folders = get_cine_folders(root)
             n_folders = len(cine_folders)
@@ -317,22 +317,22 @@ class PipelineGUI:
             return
 
         root = Path(folder)
-        config_modular.OUTPUT_ROOT = root
+        config.OUTPUT_ROOT = root
         root.mkdir(parents=True, exist_ok=True)
         self.landing_output_path.configure(text=str(root))
 
     def _use_default_output(self) -> None:
         """Set output folder to default ./OUTPUT."""
-        default = config_modular.PROJECT_ROOT / "OUTPUT"
-        config_modular.OUTPUT_ROOT = default
+        default = config.PROJECT_ROOT / "OUTPUT"
+        config.OUTPUT_ROOT = default
         default.mkdir(parents=True, exist_ok=True)
         self.landing_output_path.configure(text=str(default))
 
     def _continue_to_main(self) -> None:
         """Validate selections and proceed to main screen."""
         # Check CINE root has files
-        from cine_io_modular import get_cine_folders
-        cine_folders = get_cine_folders(config_modular.CINE_ROOT)
+        from cine_io import get_cine_folders
+        cine_folders = get_cine_folders(config.CINE_ROOT)
 
         if not cine_folders:
             messagebox.showwarning(
@@ -343,11 +343,11 @@ class PipelineGUI:
             return
 
         # Ensure output folder exists
-        config_modular.OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+        config.OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
 
         # Update main screen header
-        self.source_label.configure(text=str(config_modular.CINE_ROOT))
-        self._rescan_counts_for_root(config_modular.CINE_ROOT)
+        self.source_label.configure(text=str(config.CINE_ROOT))
+        self._rescan_counts_for_root(config.CINE_ROOT)
 
         # Go to main screen
         self._show_main()
@@ -365,7 +365,7 @@ class PipelineGUI:
             messagebox.showerror("Invalid folder", "Selected folder does not exist.")
             return
 
-        config_modular.CINE_ROOT = root
+        config.CINE_ROOT = root
         self.selected_root = root
 
         # Update displays
@@ -378,7 +378,7 @@ class PipelineGUI:
     def _rescan_counts_for_root(self, root: Path) -> None:
         """Scan cine root and update counts on both landing + header."""
         try:
-            from cine_io_modular import get_cine_folders, iter_subfolders, group_cines_by_droplet
+            from cine_io import get_cine_folders, iter_subfolders, group_cines_by_droplet
 
             cine_folders = get_cine_folders(root)
             n_folders = len(cine_folders)
@@ -420,7 +420,7 @@ class PipelineGUI:
 
         # Source info
         ttk.Label(frame, text="Source:").grid(row=1, column=0, padx=10, sticky="w")
-        default_root = config_modular.CINE_ROOT
+        default_root = config.CINE_ROOT
         self.source_label = ttk.Label(frame, text=str(default_root))
         self.source_label.grid(row=1, column=1, padx=10, sticky="w")
 
@@ -448,9 +448,9 @@ class PipelineGUI:
             sdk_ok = False
 
         # Basic cine count from whichever root is current
-        root = self.selected_root or config_modular.CINE_ROOT
+        root = self.selected_root or config.CINE_ROOT
         try:
-            from cine_io_modular import get_cine_folders, group_cines_by_droplet
+            from cine_io import get_cine_folders, group_cines_by_droplet
 
             cine_folders = get_cine_folders(root)
             n_folders = len(cine_folders)
@@ -750,7 +750,7 @@ class PipelineGUI:
 
     def _open_output_folder(self) -> None:
         """Open output folder in system file explorer."""
-        root = config_modular.OUTPUT_ROOT
+        root = config.OUTPUT_ROOT
         try:
             if platform.system() == "Windows":
                 subprocess.Popen(["explorer", str(root)])
@@ -767,9 +767,9 @@ class PipelineGUI:
         self.known_images = set()
         # Scan existing images so we don't show old ones
         try:
-            for img_path in config_modular.OUTPUT_ROOT.rglob("*_crop.png"):
+            for img_path in config.OUTPUT_ROOT.rglob("*_crop.png"):
                 self.known_images.add(str(img_path))
-            for img_path in config_modular.OUTPUT_ROOT.rglob("*_overlay.png"):
+            for img_path in config.OUTPUT_ROOT.rglob("*_overlay.png"):
                 self.known_images.add(str(img_path))
         except Exception:
             pass
@@ -808,14 +808,14 @@ class PipelineGUI:
         try:
             # Check for new crop images
             new_images = []
-            for img_path in config_modular.OUTPUT_ROOT.rglob("*_crop.png"):
+            for img_path in config.OUTPUT_ROOT.rglob("*_crop.png"):
                 path_str = str(img_path)
                 if path_str not in self.known_images:
                     self.known_images.add(path_str)
                     new_images.append((img_path.stat().st_mtime, path_str))
 
             # Also check overlay images
-            for img_path in config_modular.OUTPUT_ROOT.rglob("*_overlay.png"):
+            for img_path in config.OUTPUT_ROOT.rglob("*_overlay.png"):
                 path_str = str(img_path)
                 if path_str not in self.known_images:
                     self.known_images.add(path_str)
@@ -965,8 +965,8 @@ class PipelineGUI:
     def _estimate_total_units(self, step: int) -> int:
         """Estimate total units for progress (approx droplets * 2 cameras)."""
         try:
-            root = self.selected_root or config_modular.CINE_ROOT
-            from cine_io_modular import get_cine_folders, group_cines_by_droplet
+            root = self.selected_root or config.CINE_ROOT
+            from cine_io import get_cine_folders, group_cines_by_droplet
 
             cine_folders = get_cine_folders(root)
             droplets = 0
@@ -1016,8 +1016,8 @@ class PipelineGUI:
         else:
             # For quick test, total is number of folders
             try:
-                from cine_io_modular import get_cine_folders
-                root = self.selected_root or config_modular.CINE_ROOT
+                from cine_io import get_cine_folders
+                root = self.selected_root or config.CINE_ROOT
                 self.progress_total = len(get_cine_folders(root))
             except Exception:
                 self.progress_total = 1
@@ -1050,19 +1050,19 @@ class PipelineGUI:
 
     def _run_quick_test(self, safe_mode: bool) -> None:
         """Run quick detection test (1st droplet per folder)."""
-        from cine_io_modular import (
+        from cine_io import (
             group_cines_by_droplet,
             get_cine_folders,
             safe_load_cine,
         )
-        from darkness_analysis_modular import (
+        from darkness_analysis import (
             analyze_cine_darkness,
             choose_best_frame_with_geo,
         )
-        from image_utils_modular import otsu_mask
-        from plotting_modular import save_darkness_plot, save_geometric_overlay
+        from image_utils import otsu_mask
+        from plotting import save_darkness_plot, save_geometric_overlay
 
-        root = self.selected_root or config_modular.CINE_ROOT
+        root = self.selected_root or config.CINE_ROOT
         cine_folders = get_cine_folders(root)
         total = len(cine_folders)
 
@@ -1097,7 +1097,7 @@ class PipelineGUI:
 
             best_idx, geo = choose_best_frame_with_geo(cine_obj, curve)
 
-            out_sub = config_modular.OUTPUT_ROOT / sub.name
+            out_sub = config.OUTPUT_ROOT / sub.name
             out_sub.mkdir(parents=True, exist_ok=True)
 
             save_darkness_plot(
@@ -1133,7 +1133,7 @@ class PipelineGUI:
         from pipeline_global import process_global
 
         # Apply step to config module
-        config_modular.CINE_STEP = config["step"]
+        config.CINE_STEP = config["step"]
 
         emit_log(
             f"Cine step: {config['step']}, "

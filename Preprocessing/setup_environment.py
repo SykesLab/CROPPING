@@ -138,14 +138,14 @@ def print_phantom_instructions():
 def create_directories() -> None:
     """Create necessary output directories."""
     try:
-        from config_modular import OUTPUT_ROOT, CINE_ROOT
+        from config import OUTPUT_ROOT, CINE_ROOT
         
         print(f"  Default output: {OUTPUT_ROOT}")
         print(f"  Default CINE root: {CINE_ROOT}")
         print(f"  (You can change these in the GUI)")
             
     except ImportError:
-        print("  ⚠ Could not import config_modular - skipping directory check")
+        print("  ⚠ Could not import config - skipping directory check")
 
 
 def verify_environment(auto_install: bool = False) -> bool:

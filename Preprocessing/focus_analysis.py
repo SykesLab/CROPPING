@@ -20,8 +20,8 @@ from tqdm import tqdm
 # Add parent to path for imports
 sys.path.insert(0, str(Path(__file__).parent))
 
-from config_modular import OUTPUT_ROOT
-from focus_metrics_modular import (
+from config import OUTPUT_ROOT
+from focus_metrics import (
     classify_folder_focus,
     compute_all_focus_metrics,
     compute_dataset_statistics,

@@ -15,28 +15,28 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-import config_modular
+import config
 
 logger = logging.getLogger(__name__)
-from cine_io_modular import group_cines_by_droplet, get_cine_folders, iter_subfolders, safe_load_cine
-from config_modular import CINE_ROOT, CROP_SAFETY_PIXELS, OUTPUT_ROOT
-from crop_calibration_modular import compute_crop_size, maybe_add_calibration_sample
-from darkness_analysis_modular import (
+from cine_io import group_cines_by_droplet, get_cine_folders, iter_subfolders, safe_load_cine
+from config import CINE_ROOT, CROP_SAFETY_PIXELS, OUTPUT_ROOT
+from crop_calibration import compute_crop_size, maybe_add_calibration_sample
+from darkness_analysis import (
     analyze_cine_darkness,
     choose_best_frame_geometry_only,
     choose_best_frame_with_geo,
 )
-from geom_analysis_modular import extract_geometry_info
-from focus_metrics_modular import classify_folder_focus, suggest_thresholds
-from image_utils_modular import otsu_mask
-from parallel_utils_modular import run_parallel
-from plotting_modular import save_darkness_plot, save_geometric_overlay
-from profiling_modular import (
+from geom_analysis import extract_geometry_info
+from focus_metrics import classify_folder_focus, suggest_thresholds
+from image_utils import otsu_mask
+from parallel_utils import run_parallel
+from plotting import save_darkness_plot, save_geometric_overlay
+from profiling import (
     aggregate_timings,
     print_global_summary,
     save_profile_json,
 )
-from timing_utils_modular import Timer, format_time
+from profiling import Timer, format_time
 
 
 # --- Droplet-level workers for global pipeline ---
@@ -153,10 +153,10 @@ def _generate_droplet_output_global(
 ) -> Tuple[str, Dict[str, float]]:
     """Generate output for single droplet (global mode)."""
     import cv2
-    from config_modular import FOCUS_METRICS_ENABLED
-    from cropping_modular import crop_droplet_with_sphere_guard
-    from focus_metrics_modular import compute_all_focus_metrics
-    from image_utils_modular import load_frame_gray, otsu_mask
+    from config import FOCUS_METRICS_ENABLED
+    from cropping import crop_droplet_with_sphere_guard
+    from focus_metrics import compute_all_focus_metrics
+    from image_utils import load_frame_gray, otsu_mask
     
     folder_name, droplet_id, cam_data, cnn_size = args
     
@@ -280,7 +280,7 @@ def process_global(
         return
 
     # Get step from config (set by main_runner)
-    step = config_modular.CINE_STEP
+    step = config.CINE_STEP
 
     mode_str = "SAFE" if safe_mode else "FAST"
     output_str = "full output" if full_output else "crops only"
@@ -640,10 +640,10 @@ def _write_global_csvs(
     """Write summary CSV for each folder with droplet metadata and focus metrics."""
     logger.debug("Writing summary CSVs for all folders...")
     import cv2
-    from config_modular import FOCUS_METRICS_ENABLED
-    from cropping_modular import crop_droplet_with_sphere_guard
-    from focus_metrics_modular import compute_all_focus_metrics
-    from image_utils_modular import load_frame_gray
+    from config import FOCUS_METRICS_ENABLED
+    from cropping import crop_droplet_with_sphere_guard
+    from focus_metrics import compute_all_focus_metrics
+    from image_utils import load_frame_gray
 
     for folder_name, droplets in folder_analyses.items():
         out_sub = OUTPUT_ROOT / folder_name
@@ -843,7 +843,7 @@ def _quick_test_global(
                     folder_timing["darkness_plot"] += time.perf_counter() - t0
 
                     t0 = time.perf_counter()
-                    from image_utils_modular import load_frame_gray
+                    from image_utils import load_frame_gray
                     frame = load_frame_gray(cine_obj, best_idx)
                     _, mask = otsu_mask(frame)
                     geo_for_plot = {

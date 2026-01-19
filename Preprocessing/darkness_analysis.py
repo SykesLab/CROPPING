@@ -15,9 +15,9 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
-from config_modular import DARKNESS_THRESHOLD_PERCENTILE, DARKNESS_WEIGHT, N_CANDIDATES
-from geom_analysis_modular import analyze_frame_geometric
-from image_utils_modular import load_frame_gray
+from config import DARKNESS_THRESHOLD_PERCENTILE, DARKNESS_WEIGHT, N_CANDIDATES
+from geom_analysis import analyze_frame_geometric
+from image_utils import load_frame_gray
 
 
 def get_dark_fraction(cine_obj: Any, idx: int) -> float:

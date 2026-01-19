@@ -9,7 +9,7 @@ from typing import Any, Dict, List
 
 import numpy as np
 
-from config_modular import CALIBRATION_PERCENTILE, MAX_CNN_SIZE, MIN_CNN_SIZE
+from config import CALIBRATION_PERCENTILE, MAX_CNN_SIZE, MIN_CNN_SIZE
 
 
 def maybe_add_calibration_sample(

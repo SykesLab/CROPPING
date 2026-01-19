@@ -12,12 +12,12 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import cv2
 
-from cine_io_modular import group_cines_by_droplet, safe_load_cine
-from config_modular import CROP_SAFETY_PIXELS, OUTPUT_ROOT, FOCUS_METRICS_ENABLED
-from cropping_modular import crop_droplet_with_sphere_guard
-from focus_metrics_modular import compute_all_focus_metrics
-from image_utils_modular import load_frame_gray, otsu_mask
-from plotting_modular import save_darkness_plot, save_geometric_overlay
+from cine_io import group_cines_by_droplet, safe_load_cine
+from config import CROP_SAFETY_PIXELS, OUTPUT_ROOT, FOCUS_METRICS_ENABLED
+from cropping import crop_droplet_with_sphere_guard
+from focus_metrics import compute_all_focus_metrics
+from image_utils import load_frame_gray, otsu_mask
+from plotting import save_darkness_plot, save_geometric_overlay
 
 logger = logging.getLogger(__name__)
 
