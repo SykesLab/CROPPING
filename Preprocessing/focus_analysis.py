@@ -1,26 +1,8 @@
-"""Focus quality analysis and visualisation.
+"""
+Focus quality analysis and visualisation.
 
-Standalone script to analyse focus metrics from:
-    1. Existing CSV output (if metrics already computed)
-    2. Crop images directly (computes metrics on the fly)
-
-Supports two classification modes:
-    - Global: Single threshold for entire dataset (original behaviour)
-    - Per-folder: Each folder gets its own thresholds (for diverse datasets)
-
-Generates:
-    - Distribution histograms
-    - Suggested thresholds
-    - Focus quality report
-    - Ranked lists of sharpest/blurriest crops
-    - Focus/ folder with sharp images copied (per-folder mode)
-
-Usage:
-    python focus_analysis.py                      # Scan OUTPUT_ROOT for crops
-    python focus_analysis.py <folder>             # Scan folder for crop PNGs
-    python focus_analysis.py --from-csv <csv>     # Read pre-computed from CSV
-    python focus_analysis.py --per-folder         # Use per-folder thresholds
-    python focus_analysis.py --copy-sharp         # Copy sharp images to Focus/
+Analyses focus metrics from existing CSVs or computes them from crop images.
+Supports global or per-folder classification thresholds.
 """
 
 import argparse
@@ -51,15 +33,7 @@ def compute_metrics_from_crops(
     root: Path,
     pattern: str = "*_crop.png",
 ) -> pd.DataFrame:
-    """Scan folder for crop images and compute focus metrics.
-
-    Args:
-        root: Root directory to scan (recursive).
-        pattern: Glob pattern for crop files.
-
-    Returns:
-        DataFrame with crop paths and computed metrics.
-    """
+    """Scan folder for crop images and compute focus metrics."""
     crop_files = list(root.rglob(pattern))
     
     # Exclude Focus folder
@@ -104,14 +78,7 @@ def compute_metrics_from_crops(
 
 
 def load_all_csvs(root: Path) -> pd.DataFrame:
-    """Load and concatenate all summary CSVs from output folder.
-
-    Args:
-        root: Output root directory.
-
-    Returns:
-        Combined DataFrame with all crops.
-    """
+    """Load and concatenate all summary CSVs from output folder."""
     csv_files = list(root.rglob("*_summary.csv"))
     
     # Exclude Focus folder
@@ -141,15 +108,7 @@ def analyse_focus_distribution(
     df: pd.DataFrame,
     metric: str = "laplacian_var",
 ) -> Dict[str, float]:
-    """Analyse distribution of a focus metric.
-
-    Args:
-        df: DataFrame with focus metrics.
-        metric: Column name to analyse.
-
-    Returns:
-        Statistics dictionary.
-    """
+    """Analyse distribution of a focus metric."""
     # Drop NaN values
     values = df[metric].dropna().values
     
@@ -168,15 +127,7 @@ def plot_focus_distribution(
     sharp_thresh: Optional[float] = None,
     blur_thresh: Optional[float] = None,
 ) -> None:
-    """Plot histogram of focus metric distribution.
-
-    Args:
-        df: DataFrame with focus metrics.
-        metric: Column name to plot.
-        save_path: Where to save plot (None = show).
-        sharp_thresh: Threshold for "sharp" classification.
-        blur_thresh: Threshold for "blurry" classification.
-    """
+    """Plot histogram of focus metric distribution."""
     values = df[metric].dropna().values
     
     if len(values) == 0:
@@ -231,13 +182,7 @@ def plot_metric_comparison(
     metrics: List[str] = None,
     save_path: Optional[Path] = None,
 ) -> None:
-    """Plot correlation between different focus metrics.
-
-    Args:
-        df: DataFrame with focus metrics.
-        metrics: List of metric columns to compare.
-        save_path: Where to save plot (None = show).
-    """
+    """Plot correlation between different focus metrics."""
     if metrics is None:
         metrics = [
             "laplacian_var",
@@ -302,17 +247,7 @@ def classify_global(
     sharp_percentile: float = 75.0,
     blur_percentile: float = 25.0,
 ) -> Tuple[pd.DataFrame, Dict[str, int]]:
-    """Classify crops using global thresholds.
-
-    Args:
-        df: DataFrame with focus metrics.
-        metric: Metric to use for classification.
-        sharp_percentile: Percentile above which images are "sharp".
-        blur_percentile: Percentile below which images are "blurry".
-
-    Returns:
-        Tuple of (classified DataFrame, counts dict).
-    """
+    """Classify crops using global thresholds."""
     values = df[metric].dropna()
     
     sharp_thresh, blur_thresh = suggest_thresholds(
@@ -356,17 +291,7 @@ def classify_per_folder(
     sharp_percentile: float = 75.0,
     blur_percentile: float = 25.0,
 ) -> Tuple[pd.DataFrame, pd.DataFrame, Dict[str, int]]:
-    """Classify crops using per-folder thresholds.
-
-    Args:
-        df: DataFrame with focus metrics and 'folder' column.
-        metric: Metric to use for classification.
-        sharp_percentile: Percentile above which images are "sharp".
-        blur_percentile: Percentile below which images are "blurry".
-
-    Returns:
-        Tuple of (classified DataFrame, folder stats DataFrame, counts dict).
-    """
+    """Classify crops using per-folder thresholds."""
     if "folder" not in df.columns:
         raise ValueError("DataFrame must have 'folder' column for per-folder classification")
     
@@ -435,15 +360,7 @@ def copy_sharp_images(
     df: pd.DataFrame,
     output_root: Path,
 ) -> int:
-    """Copy sharp images to Focus/{folder}/ directory.
-
-    Args:
-        df: Classified DataFrame with 'focus_class' and 'crop_path' columns.
-        output_root: Output root directory.
-
-    Returns:
-        Number of images copied.
-    """
+    """Copy sharp images to Focus/{folder}/ directory."""
     focus_dir = output_root / "Focus"
     focus_dir.mkdir(parents=True, exist_ok=True)
     
@@ -479,13 +396,7 @@ def show_extreme_crops(
     metric: str = "laplacian_var",
     n: int = 5,
 ) -> None:
-    """Print paths of sharpest and blurriest crops.
-
-    Args:
-        df: DataFrame with focus metrics and crop_path.
-        metric: Metric to sort by.
-        n: Number of examples to show.
-    """
+    """Print paths of sharpest and blurriest crops."""
     # Filter to rows with valid metric and crop path
     valid = df[df[metric].notna()].copy()
     if "crop_path" in valid.columns:
@@ -519,13 +430,7 @@ def generate_summary_plot(
     stats_df: pd.DataFrame,
     save_path: Path,
 ) -> None:
-    """Generate summary visualisation for per-folder classification.
-
-    Args:
-        df: Classified DataFrame.
-        stats_df: Folder statistics DataFrame.
-        save_path: Where to save the plot.
-    """
+    """Generate summary visualisation for per-folder classification."""
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     
     # Left: Classification pie chart

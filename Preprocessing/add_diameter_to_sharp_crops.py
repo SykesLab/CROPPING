@@ -1,19 +1,7 @@
-"""Add diameter_px column to existing sharp_crops.csv retrospectively.
+"""
+Add diameter_px column to existing sharp_crops.csv retrospectively.
 
-Reads the sharp_crops.csv and merges geometry data from the summary CSVs
-to compute diameter_px = y_bottom - y_top for each crop.
-
-Functions:
-    load_sharp_crops: Load sharp crops CSV with validation.
-    find_summary_csvs: Locate all summary CSV files.
-    load_and_combine_summaries: Load and combine all summary CSVs.
-    merge_diameter_data: Merge geometry data to add diameter_px.
-    reorder_columns: Reorder columns to place diameter_px after y_sphere.
-    save_with_backup: Save updated CSV with backup of original.
-    main: Entry point for the script.
-
-Usage:
-    python add_diameter_to_sharp_crops.py
+Merges geometry data from summary CSVs to compute diameter_px = y_bottom - y_top.
 """
 
 import logging
@@ -33,19 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 def load_sharp_crops(csv_path: Path) -> pd.DataFrame:
-    """Load sharp crops CSV with validation.
-
-    Args:
-        csv_path: Path to sharp_crops.csv file.
-
-    Returns:
-        DataFrame with sharp crops data.
-
-    Raises:
-        FileNotFoundError: If CSV file doesn't exist.
-        pd.errors.EmptyDataError: If CSV is empty.
-        ValueError: If CSV cannot be parsed.
-    """
+    """Load sharp crops CSV with validation."""
     if not csv_path.exists():
         raise FileNotFoundError(f"Sharp crops CSV not found: {csv_path}")
 
@@ -66,14 +42,7 @@ def load_sharp_crops(csv_path: Path) -> pd.DataFrame:
 
 
 def find_summary_csvs(output_root: Path) -> List[Path]:
-    """Find all summary CSV files in output directory.
-
-    Args:
-        output_root: Root output directory to search.
-
-    Returns:
-        List of paths to summary CSV files.
-    """
+    """Find all summary CSV files in output directory."""
     if not output_root.exists():
         logger.warning(f"Output directory does not exist: {output_root}")
         return []
@@ -84,17 +53,7 @@ def find_summary_csvs(output_root: Path) -> List[Path]:
 
 
 def load_and_combine_summaries(summary_paths: List[Path]) -> pd.DataFrame:
-    """Load and combine all summary CSVs.
-
-    Args:
-        summary_paths: List of paths to summary CSV files.
-
-    Returns:
-        Combined DataFrame from all summaries.
-
-    Raises:
-        ValueError: If no valid summary CSVs could be loaded.
-    """
+    """Load and combine all summary CSVs."""
     if not summary_paths:
         raise ValueError("No summary CSV files provided")
 
@@ -127,18 +86,7 @@ def merge_diameter_data(
     sharp_df: pd.DataFrame,
     summary_df: pd.DataFrame,
 ) -> pd.DataFrame:
-    """Merge geometry data to add diameter_px column.
-
-    Args:
-        sharp_df: Sharp crops DataFrame.
-        summary_df: Combined summary DataFrame with geometry.
-
-    Returns:
-        Merged DataFrame with diameter_px column.
-
-    Raises:
-        ValueError: If required columns are missing.
-    """
+    """Merge geometry data to add diameter_px column."""
     # Validate required columns
     required_sharp_cols = ['crop_path']
     required_summary_cols = ['crop_path', 'y_top', 'y_bottom']
@@ -179,14 +127,7 @@ def merge_diameter_data(
 
 
 def reorder_columns(df: pd.DataFrame) -> pd.DataFrame:
-    """Reorder columns to place diameter_px after y_sphere.
-
-    Args:
-        df: DataFrame with diameter_px column.
-
-    Returns:
-        DataFrame with reordered columns.
-    """
+    """Reorder columns to place diameter_px after y_sphere."""
     if 'diameter_px' not in df.columns:
         return df
 
@@ -208,16 +149,7 @@ def save_with_backup(
     original_path: Path,
     backup_suffix: str = "_backup",
 ) -> None:
-    """Save updated CSV with backup of original.
-
-    Args:
-        df: DataFrame to save.
-        original_path: Path to original file (will be backed up and replaced).
-        backup_suffix: Suffix for backup file name.
-
-    Raises:
-        IOError: If file operations fail.
-    """
+    """Save updated CSV with backup of original."""
     parent_dir = original_path.parent
     stem = original_path.stem
     suffix = original_path.suffix
@@ -254,11 +186,7 @@ def save_with_backup(
 
 
 def print_statistics(df: pd.DataFrame) -> None:
-    """Print diameter statistics.
-
-    Args:
-        df: DataFrame with diameter_px column.
-    """
+    """Print diameter statistics."""
     if 'diameter_px' not in df.columns:
         logger.warning("No diameter_px column found for statistics")
         return
@@ -279,16 +207,7 @@ def main(
     preprocessing_root: Optional[Path] = None,
     dry_run: bool = False,
 ) -> int:
-    """Main entry point for diameter addition script.
-
-    Args:
-        preprocessing_root: Root directory of preprocessing pipeline.
-                          If None, uses script's parent directory.
-        dry_run: If True, don't modify files (just show what would happen).
-
-    Returns:
-        Exit code (0 for success, non-zero for errors).
-    """
+    """Main entry point for diameter addition script."""
     if preprocessing_root is None:
         preprocessing_root = Path(__file__).parent
 

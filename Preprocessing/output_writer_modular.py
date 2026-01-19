@@ -1,13 +1,7 @@
-"""Output generation: crops, plots, and CSV writing.
+"""
+Output generation: crops, plots, and CSV writing.
 
-Memory-optimised: frames are reloaded when needed rather than stored.
-Now includes focus metrics computation for each crop.
-
-Functions:
-    set_image_callback: Set callback for image save notifications.
-    generate_droplet_outputs: Generate outputs for a single droplet.
-    generate_folder_outputs: Generate outputs for all droplets in folder.
-    write_folder_csv: Write CSV summary for a folder.
+Memory-optimised - frames are reloaded when needed rather than stored.
 """
 
 import csv
@@ -33,11 +27,7 @@ _on_image_saved: Optional[Callable[[Path], None]] = None
 
 
 def set_image_callback(callback: Optional[Callable[[Path], None]]) -> None:
-    """Set callback to be called when an image is saved.
-    
-    Args:
-        callback: Function that takes a Path, or None to disable.
-    """
+    """Set callback to be called when an image is saved (for GUI notifications)."""
     global _on_image_saved
     _on_image_saved = callback
 
@@ -55,15 +45,7 @@ def _reload_frame_and_mask(
     path: Path,
     best_idx: int,
 ) -> Tuple[Optional[Any], Optional[Any]]:
-    """Reload frame and compute mask for output generation.
-
-    Args:
-        path: Path to cine file.
-        best_idx: Frame index to load.
-
-    Returns:
-        Tuple of (frame, mask) or (None, None) on failure.
-    """
+    """Reload frame and compute Otsu mask for output generation."""
     cine_obj = safe_load_cine(path)
     if cine_obj is None:
         return None, None
@@ -77,14 +59,7 @@ def _reload_frame_and_mask(
 def generate_droplet_outputs(
     args: Tuple[str, Dict[str, Dict[str, Any]], int, str],
 ) -> Tuple[str, Dict[str, float]]:
-    """Generate outputs for single droplet (both cameras).
-
-    Args:
-        args: Tuple of (droplet_id, cam_data, cnn_size, out_sub_path).
-
-    Returns:
-        Tuple of (message, timing_dict).
-    """
+    """Generate outputs for single droplet (both cameras)."""
     droplet_id, cam_data, cnn_size, out_sub_path = args
     out_sub_path = Path(out_sub_path)
 
@@ -184,14 +159,7 @@ def generate_droplet_outputs(
 def generate_folder_outputs(
     args: Tuple[str, Dict[Tuple[str, str], Dict[str, Any]], int, int],
 ) -> Tuple[str, Dict[str, float]]:
-    """Generate outputs for all droplets in a folder.
-
-    Args:
-        args: Tuple of (sub_path, analyses_dict, cnn_size, step).
-
-    Returns:
-        Tuple of (message, timing_dict).
-    """
+    """Generate outputs for all droplets in a folder."""
     sub_path, analyses_dict, cnn_size, step = args
     sub = Path(sub_path)
 
@@ -380,17 +348,7 @@ def write_folder_csv(
     out_sub: Path,
     cnn_size: int,
 ) -> bool:
-    """Write CSV summary for a folder.
-
-    Args:
-        csv_path: Output CSV path.
-        folder_analyses: Dict of {droplet_id: {cam: info}}.
-        out_sub: Output subfolder path.
-        cnn_size: Crop size used.
-
-    Returns:
-        True if CSV was written successfully, False otherwise.
-    """
+    """Write CSV summary for a folder."""
     try:
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
