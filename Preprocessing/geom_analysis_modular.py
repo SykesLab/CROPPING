@@ -1,7 +1,9 @@
-"""Geometric analysis for sphere and droplet detection.
+"""
+Geometric analysis for sphere and droplet detection using connected components.
 
-Analyses individual frames to detect sphere and droplet positions
-using connected component analysis.
+The sphere sits at the bottom of the frame (injection needle tip) and the
+droplet hangs above it. We use size, position, and border-touching rules
+to distinguish between them.
 """
 
 from typing import Any, Dict, List, Optional
@@ -9,11 +11,7 @@ from typing import Any, Dict, List, Optional
 import cv2
 import numpy as np
 
-from config_modular import (
-    GEOM_MIN_AREA,
-    SPHERE_CENTER_TOLERANCE,
-    SPHERE_WIDTH_RATIO,
-)
+from config_modular import GEOM_MIN_AREA, SPHERE_CENTER_TOLERANCE, SPHERE_WIDTH_RATIO
 from image_utils_modular import load_frame_gray, otsu_mask
 
 
@@ -22,27 +20,14 @@ def analyze_frame_geometric(
     frame_idx: int,
     min_area: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Perform geometric analysis for sphere and droplet detection.
+    """
+    Detect sphere and droplet positions in a single frame.
 
-    Detection rules:
-        - Droplet must NOT touch left/right image borders.
-        - Sphere CAN touch borders.
-        - Sphere is identified as large, wide, central component near bottom.
-        - Droplet is identified as highest component above sphere.
+    The sphere is identified as a large, wide component near the image centre.
+    The droplet is the highest component above the sphere that doesn't touch
+    the left/right borders (to exclude partial frames or artefacts).
 
-    Args:
-        cine_obj: Loaded cine object.
-        frame_idx: Absolute frame index to analyse.
-        min_area: Minimum component area in pixels (default from config).
-
-    Returns:
-        Dictionary containing:
-            - frame: Grayscale frame (uint8)
-            - mask: Boolean dark mask
-            - y_top: Droplet top row (int or None)
-            - y_bottom: Droplet bottom row (int or None)
-            - y_bottom_sphere: Sphere top row (int or None)
-            - cx: Droplet centre x (float, defaults to W/2)
+    Returns dict with: frame, mask, y_top, y_bottom, y_bottom_sphere, cx
     """
     if min_area is None:
         min_area = GEOM_MIN_AREA
@@ -51,18 +36,16 @@ def analyze_frame_geometric(
     height, width = gray.shape
     gray, dark_mask = otsu_mask(gray)
 
-    # Connected components analysis
     num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
         dark_mask.astype(np.uint8), connectivity=8
     )
 
-    # Build component list (skip background label 0)
+    # Collect components (skip background label 0)
     components: List[Dict[str, Any]] = []
     for label_id in range(1, num_labels):
         x, y, w, h, area = stats[label_id]
         if area < min_area:
             continue
-
         components.append({
             "label": label_id,
             "x": x,
@@ -73,7 +56,6 @@ def analyze_frame_geometric(
             "area": area,
         })
 
-    # No components found
     if not components:
         return {
             "frame": gray,
@@ -84,15 +66,15 @@ def analyze_frame_geometric(
             "cx": width / 2.0,
         }
 
-    # Find sphere: large, wide, roughly central
+    # Sphere: large, spans significant width, roughly centred
     sphere_candidates = [
-        comp for comp in components
-        if (comp["area"] > min_area * 5
-            and comp["w"] / width > SPHERE_WIDTH_RATIO
-            and abs(comp["cx"] - width / 2.0) < width * SPHERE_CENTER_TOLERANCE)
+        c for c in components
+        if (c["area"] > min_area * 5
+            and c["w"] / width > SPHERE_WIDTH_RATIO
+            and abs(c["cx"] - width / 2.0) < width * SPHERE_CENTER_TOLERANCE)
     ]
 
-    # Fallback: take lowest component if no candidates
+    # Fall back to lowest component if no clear sphere candidate
     if sphere_candidates:
         sphere = max(sphere_candidates, key=lambda c: c["y_top"])
     else:
@@ -100,12 +82,12 @@ def analyze_frame_geometric(
 
     y_sphere = int(sphere["y_top"])
 
-    # Find droplet: above sphere, not touching left/right borders
+    # Droplet: above sphere, not touching left/right edges
     droplet_candidates = [
-        comp for comp in components
-        if (comp["y_bottom"] < y_sphere
-            and comp["x"] != 0
-            and comp["x"] + comp["w"] != width)
+        c for c in components
+        if (c["y_bottom"] < y_sphere
+            and c["x"] != 0
+            and c["x"] + c["w"] != width)
     ]
 
     if not droplet_candidates:
@@ -118,7 +100,6 @@ def analyze_frame_geometric(
             "cx": width / 2.0,
         }
 
-    # Droplet is highest component above sphere
     droplet = min(droplet_candidates, key=lambda c: c["y_top"])
 
     return {
@@ -132,16 +113,7 @@ def analyze_frame_geometric(
 
 
 def extract_geometry_info(geo: Dict[str, Any]) -> Dict[str, Any]:
-    """Extract essential geometry info without frame/mask.
-
-    Used for memory-efficient storage between analysis and output phases.
-
-    Args:
-        geo: Full geometry dict from analyze_frame_geometric.
-
-    Returns:
-        Dict with only y_top, y_bottom, y_bottom_sphere, cx.
-    """
+    """Extract just the coordinate info (without frame/mask) for storage."""
     return {
         "y_top": geo["y_top"],
         "y_bottom": geo["y_bottom"],

@@ -1,7 +1,8 @@
-"""Worker functions for droplet and folder analysis.
+"""
+Worker functions for droplet and folder analysis.
 
-Provides worker functions for both per-folder and global pipelines.
-Memory-optimised: workers do NOT store frames in results.
+These are the parallel worker functions used by both pipeline modes.
+They're memory-optimised: only geometry info is stored, not full frames.
 """
 
 import time
@@ -17,49 +18,21 @@ from darkness_analysis_modular import (
 )
 from geom_analysis_modular import extract_geometry_info
 
-
-# Type aliases for clarity
-DropletResult = Tuple[
-    str,                        # droplet_id
-    Dict[str, Dict[str, Any]],  # folder_results
-    List[float],                # diams
-    List[float],                # gaps
-    Dict[str, float],           # timing
-]
-
-FolderResult = Tuple[
-    str,                        # folder_name
-    Dict[Tuple[str, str], Dict[str, Any]],  # folder_analyses
-    List[float],                # diams
-    List[float],                # gaps
-    Dict[str, float],           # timing
-]
+# Type aliases
+DropletResult = Tuple[str, Dict[str, Dict[str, Any]], List[float], List[float], Dict[str, float]]
+FolderResult = Tuple[str, Dict[Tuple[str, str], Dict[str, Any]], List[float], List[float], Dict[str, float]]
 
 
-# ============================================================
-# PER-DROPLET WORKERS (used by per-folder pipeline)
-# ============================================================
+# --- Per-droplet workers (for per-folder pipeline) ---
 
 def analyze_droplet_full(args: Tuple[str, Dict[str, Any]]) -> DropletResult:
-    """Analyse single droplet with full darkness curve.
-
-    Args:
-        args: Tuple of (droplet_id, cams_dict).
-
-    Returns:
-        Tuple of (droplet_id, results, diams, gaps, timing).
-    """
+    """Analyse single droplet with full darkness curve computation."""
     droplet_id, cams = args
     folder_results: Dict[str, Dict[str, Any]] = {}
     diams: List[float] = []
     gaps: List[float] = []
 
-    timing = {
-        "load_cine": 0.0,
-        "darkness_curve": 0.0,
-        "best_frame": 0.0,
-        "n_frames": 0,
-    }
+    timing = {"load_cine": 0.0, "darkness_curve": 0.0, "best_frame": 0.0, "n_frames": 0}
 
     for cam in ("g", "v"):
         path = cams.get(cam)
@@ -94,31 +67,19 @@ def analyze_droplet_full(args: Tuple[str, Dict[str, Any]]) -> DropletResult:
             "best": best_idx,
             "geo": extract_geometry_info(geo),
         }
-
         maybe_add_calibration_sample(diams, gaps, geo)
 
     return (droplet_id, folder_results, diams, gaps, timing)
 
 
 def analyze_droplet_crops_only(args: Tuple[str, Dict[str, Any]]) -> DropletResult:
-    """Analyse single droplet with geometry-only scan.
-
-    Args:
-        args: Tuple of (droplet_id, cams_dict).
-
-    Returns:
-        Tuple of (droplet_id, results, diams, gaps, timing).
-    """
+    """Analyse single droplet with geometry-only scan (faster, no darkness curve)."""
     droplet_id, cams = args
     folder_results: Dict[str, Dict[str, Any]] = {}
     diams: List[float] = []
     gaps: List[float] = []
 
-    timing = {
-        "load_cine": 0.0,
-        "geometry_scan": 0.0,
-        "n_frames": 0,
-    }
+    timing = {"load_cine": 0.0, "geometry_scan": 0.0, "n_frames": 0}
 
     for cam in ("g", "v"):
         path = cams.get(cam)
@@ -147,37 +108,21 @@ def analyze_droplet_crops_only(args: Tuple[str, Dict[str, Any]]) -> DropletResul
             "best": best_idx,
             "geo": extract_geometry_info(geo),
         }
-
         maybe_add_calibration_sample(diams, gaps, geo)
 
     return (droplet_id, folder_results, diams, gaps, timing)
 
 
-# ============================================================
-# PER-FOLDER WORKERS (used by global pipeline)
-# ============================================================
+# --- Per-folder workers (for global pipeline) ---
 
 def analyze_folder_full(args: Tuple[Path, int]) -> FolderResult:
-    """Analyse all selected droplets in folder with full darkness curve.
-
-    Args:
-        args: Tuple of (path_to_folder, step).
-
-    Returns:
-        Tuple of (folder_name, analyses, diams, gaps, timing).
-    """
+    """Analyse all selected droplets in folder with full darkness curve."""
     sub, step = args
     sub = Path(sub)
     groups = group_cines_by_droplet(sub)
     n_groups = len(groups)
 
-    timing = {
-        "load_cine": 0.0,
-        "darkness_curve": 0.0,
-        "best_frame": 0.0,
-        "n_frames": 0,
-        "n_cines": 0,
-    }
+    timing = {"load_cine": 0.0, "darkness_curve": 0.0, "best_frame": 0.0, "n_frames": 0, "n_cines": 0}
 
     if n_groups == 0:
         return (sub.name, {}, [], [], timing)
@@ -224,32 +169,19 @@ def analyze_folder_full(args: Tuple[Path, int]) -> FolderResult:
                 "best": best_idx,
                 "geo": extract_geometry_info(geo),
             }
-
             maybe_add_calibration_sample(diams, gaps, geo)
 
     return (sub.name, folder_analyses, diams, gaps, timing)
 
 
 def analyze_folder_crops_only(args: Tuple[Path, int]) -> FolderResult:
-    """Analyse all selected droplets in folder with geometry-only scan.
-
-    Args:
-        args: Tuple of (path_to_folder, step).
-
-    Returns:
-        Tuple of (folder_name, analyses, diams, gaps, timing).
-    """
+    """Analyse all selected droplets in folder with geometry-only scan."""
     sub, step = args
     sub = Path(sub)
     groups = group_cines_by_droplet(sub)
     n_groups = len(groups)
 
-    timing = {
-        "load_cine": 0.0,
-        "geometry_scan": 0.0,
-        "n_frames": 0,
-        "n_cines": 0,
-    }
+    timing = {"load_cine": 0.0, "geometry_scan": 0.0, "n_frames": 0, "n_cines": 0}
 
     if n_groups == 0:
         return (sub.name, {}, [], [], timing)
@@ -290,7 +222,6 @@ def analyze_folder_crops_only(args: Tuple[Path, int]) -> FolderResult:
                 "best": best_idx,
                 "geo": extract_geometry_info(geo),
             }
-
             maybe_add_calibration_sample(diams, gaps, geo)
 
     return (sub.name, folder_analyses, diams, gaps, timing)

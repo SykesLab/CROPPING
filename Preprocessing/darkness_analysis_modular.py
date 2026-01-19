@@ -1,8 +1,13 @@
-"""Darkness curve computation and best-frame selection.
+"""
+Darkness curve computation and best-frame selection.
 
-Provides two modes:
-    - FULL OUTPUT: Darkness curve + candidate-based geometry (for plots)
-    - CROPS ONLY: Single-pass geometry scan (faster, no darkness curve)
+The "darkness" of a frame indicates how much of the droplet is visible.
+We use this to find the optimal pre-collision frame where the droplet
+is fully formed but hasn't yet hit the sphere.
+
+Two modes:
+  - Full output: Compute darkness curve, use it to pick candidate frames
+  - Crops only: Skip the curve, scan all frames for best geometry
 """
 
 from typing import Any, Dict, List, Optional, Tuple
@@ -10,69 +15,40 @@ from typing import Any, Dict, List, Optional, Tuple
 import cv2
 import numpy as np
 
-from config_modular import (
-    DARKNESS_THRESHOLD_PERCENTILE,
-    DARKNESS_WEIGHT,
-    N_CANDIDATES,
-)
+from config_modular import DARKNESS_THRESHOLD_PERCENTILE, DARKNESS_WEIGHT, N_CANDIDATES
 from geom_analysis_modular import analyze_frame_geometric
 from image_utils_modular import load_frame_gray
 
 
 def get_dark_fraction(cine_obj: Any, idx: int) -> float:
-    """Calculate fraction of dark pixels in a frame, excluding vignetting.
+    """
+    Calculate fraction of dark pixels in a frame, ignoring vignetting.
 
-    Uses connected components to filter out dark regions touching the
-    left/right borders (typically vignetting/corner shadows). Only counts
-    dark regions floating in the middle of the frame.
-
-    Args:
-        cine_obj: Loaded cine object.
-        idx: Frame index.
-
-    Returns:
-        Fraction of image area occupied by non-border dark regions.
+    Dark regions touching the left/right borders are excluded since they're
+    typically vignetting or corner shadows rather than the actual droplet.
     """
     gray = load_frame_gray(cine_obj, idx)
     h, w = gray.shape
     total_pixels = h * w
 
-    _, mask = cv2.threshold(
-        gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU
-    )
+    _, mask = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)
     dark_mask = (mask == 0).astype(np.uint8)
 
-    # Connected components analysis
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(
-        dark_mask, connectivity=8
-    )
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(dark_mask, connectivity=8)
 
-    # Sum area of components NOT touching left/right borders
+    # Only count dark regions not touching the image borders
     valid_area = 0
-    for i in range(1, num_labels):  # Skip background (label 0)
+    for i in range(1, num_labels):
         x, y, bw, bh, area = stats[i]
-        touches_left = (x == 0)
-        touches_right = (x + bw >= w)
-        if touches_left or touches_right:
-            continue  # Skip vignetting
+        if x == 0 or x + bw >= w:
+            continue
         valid_area += area
 
     return float(valid_area) / float(total_pixels)
 
 
 def analyze_cine_darkness(cine_obj: Any) -> Dict[str, Any]:
-    """Compute darkness curve for entire cine.
-
-    Args:
-        cine_obj: Loaded cine object.
-
-    Returns:
-        Dictionary containing:
-            - first_frame: First frame index
-            - last_frame: Last frame index
-            - darkness_curve: numpy array of dark fractions
-            - total_frames: Number of frames
-    """
+    """Compute darkness fraction for every frame in the cine."""
     first, last = cine_obj.range
     curve = [get_dark_fraction(cine_obj, i) for i in range(first, last + 1)]
 
@@ -84,19 +60,12 @@ def analyze_cine_darkness(cine_obj: Any) -> Dict[str, Any]:
     }
 
 
-def choose_best_frame_geometry_only(
-    cine_obj: Any,
-) -> Tuple[int, Dict[str, Any]]:
-    """Find best frame using geometry-only scan (crops-only mode).
+def choose_best_frame_geometry_only(cine_obj: Any) -> Tuple[int, Dict[str, Any]]:
+    """
+    Find best frame by scanning all frames for optimal geometry (crops-only mode).
 
-    Scans all frames and selects the best pre-collision frame based on
-    droplet centring within the frame.
-
-    Args:
-        cine_obj: Loaded cine object.
-
-    Returns:
-        Tuple of (best_frame_index, geometry_dict).
+    Selects the pre-collision frame where the droplet is best centred
+    between the top of the image and the sphere.
     """
     first_frame, last_frame = cine_obj.range
 
@@ -111,15 +80,14 @@ def choose_best_frame_geometry_only(
         y_bottom = geo["y_bottom"]
         y_sphere = geo["y_bottom_sphere"]
 
-        # Require complete geometry
         if y_top is None or y_bottom is None or y_sphere is None:
             continue
 
-        # Pre-collision constraint: droplet entirely above sphere
+        # Must be pre-collision (droplet above sphere)
         if y_bottom >= y_sphere:
             continue
 
-        # Score: minimise centring error
+        # Score by how well centred the droplet is
         top_margin = float(y_top)
         bottom_gap = float(y_sphere - y_bottom)
         centring_error = abs(top_margin - bottom_gap)
@@ -130,7 +98,6 @@ def choose_best_frame_geometry_only(
             best_score = score
             best_geo = geo
 
-    # Fallback to middle frame if no valid frame found
     if best_frame is None:
         mid_frame = (first_frame + last_frame) // 2
         best_frame = mid_frame
@@ -145,17 +112,7 @@ def _find_candidate_frames(
     n_candidates: Optional[int] = None,
     threshold_percentile: Optional[float] = None,
 ) -> List[int]:
-    """Find candidate frames with high darkness values.
-
-    Args:
-        curve: Darkness curve array.
-        first_frame: First frame index (for offset calculation).
-        n_candidates: Max candidates to return.
-        threshold_percentile: Only consider frames above this percentile.
-
-    Returns:
-        List of absolute frame indices.
-    """
+    """Get indices of frames with high darkness values."""
     if n_candidates is None:
         n_candidates = N_CANDIDATES
     if threshold_percentile is None:
@@ -168,7 +125,6 @@ def _find_candidate_frames(
         peak_idx = int(np.argmax(curve))
         return [first_frame + peak_idx]
 
-    # Sort by darkness (descending) and take top candidates
     sorted_by_darkness = sorted(above_thresh, key=lambda i: -curve[i])
     selected = sorted_by_darkness[:n_candidates]
 
@@ -181,19 +137,11 @@ def choose_best_frame_with_geo(
     n_candidates: Optional[int] = None,
     threshold_percentile: Optional[float] = None,
 ) -> Tuple[int, Dict[str, Any]]:
-    """Find best frame using darkness curve and geometry (full output mode).
+    """
+    Find best frame using darkness curve + geometry (full output mode).
 
-    Uses darkness curve to identify candidate frames, then performs
-    geometric analysis only on those candidates for efficiency.
-
-    Args:
-        cine_obj: Loaded cine object.
-        curve: Darkness curve from analyze_cine_darkness().
-        n_candidates: Max candidate frames to analyse.
-        threshold_percentile: Darkness threshold percentile.
-
-    Returns:
-        Tuple of (best_frame_index, geometry_dict).
+    Only analyses geometry on candidate frames (those with high darkness)
+    for efficiency. The score balances centring quality with darkness.
     """
     if n_candidates is None:
         n_candidates = N_CANDIDATES
@@ -202,7 +150,6 @@ def choose_best_frame_with_geo(
 
     first_frame, last_frame = cine_obj.range
 
-    # Normalisation for darkness scoring
     dmin = float(curve.min())
     dmax = float(curve.max())
     dspan = max(1e-6, dmax - dmin)
@@ -212,7 +159,7 @@ def choose_best_frame_with_geo(
         n_candidates=n_candidates,
         threshold_percentile=threshold_percentile,
     )
-    candidates_set = set(candidates)  # For O(1) lookup in fallback
+    candidates_set = set(candidates)
 
     best_frame: Optional[int] = None
     best_score: Optional[float] = None
@@ -227,7 +174,6 @@ def choose_best_frame_with_geo(
 
         if y_top is None or y_bottom is None or y_sphere is None:
             continue
-
         if y_bottom >= y_sphere:
             continue
 
@@ -243,11 +189,9 @@ def choose_best_frame_with_geo(
             best_score = score
             best_geo = geo
 
-    # Fallback: expand search if no valid frame found
+    # Fallback: expand search if no valid frame in candidates
     if best_frame is None:
-        threshold = np.percentile(
-            curve, max(50, threshold_percentile - 20)
-        )
+        threshold = np.percentile(curve, max(50, threshold_percentile - 20))
         all_above = np.where(curve >= threshold)[0]
 
         for rel_idx in all_above:
@@ -277,7 +221,7 @@ def choose_best_frame_with_geo(
                 best_score = score
                 best_geo = geo
 
-    # Final fallback
+    # Final fallback: just use the darkest frame
     if best_frame is None:
         best_frame = first_frame + int(curve.argmax())
         best_geo = analyze_frame_geometric(cine_obj, best_frame)
