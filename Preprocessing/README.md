@@ -7,13 +7,15 @@ Automated preprocessing of high-speed camera footage for droplet analysis. Extra
 
 ## Features
 
-- **Automatic droplet detection** — Finds droplets and spheres using connected component analysis
-- **Best frame selection** — Identifies optimal pre-collision frames using darkness curves
-- **Smart cropping** — Sphere-excluding crops with consistent sizing across folders
-- **Focus quality metrics** — Six edge-based sharpness measures (Laplacian, Tenengrad, Brenner, etc.)
-- **Per-folder classification** — Adaptive thresholds ensure diverse training data from varying conditions
-- **GUI interface** — Easy-to-use interface with live preview and progress tracking
-- **Parallel processing** — Multi-core support for faster batch processing
+- **Automatic droplet detection** — Connected component analysis identifies droplets and spheres, with vignetting exclusion and robust filtering
+- **Intelligent frame selection** — Weighted scoring balances droplet centring (gap symmetry between droplet-to-sphere and droplet-to-image-top) with darkness, ensuring pre-collision frames with optimal geometry
+- **Sphere-excluding crops** — Crops shift upward automatically to exclude the injection sphere while maintaining consistent dimensions for CNN input
+- **Global crop calibration** — Conservative percentile-based sizing ensures uniform crops across all folders
+- **Six focus quality metrics** — Laplacian variance, Tenengrad, Brenner gradient, and three additional edge-based measures
+- **Adaptive focus classification** — Per-folder percentile thresholds (75th/25th) ensure balanced sharp/medium/blurry distribution regardless of optical conditions
+- **GUI with live preview** — Real-time thumbnail display, progress tracking with ETA, and configurable processing options
+- **Flexible execution modes** — Quick test (validation), safe mode (single-process), step sampling (every Nth droplet), and profiling output
+- **Parallel processing** — Droplet-level parallelisation across all CPU cores for maximum throughput
 
 ## Quick Start
 
@@ -189,8 +191,10 @@ Key parameters can be adjusted in `config.py`:
 | `MAX_CNN_SIZE` | 512 | Maximum crop size (pixels) |
 | `MIN_CNN_SIZE` | 64 | Minimum crop size (pixels) |
 | `CROP_SAFETY_PIXELS` | 3 | Margin between crop and sphere |
-| `N_CANDIDATES` | 20 | Candidate frames for best-frame selection |
+| `N_CANDIDATES` | 20 | Candidate frames for geometry analysis |
 | `CALIBRATION_PERCENTILE` | 5.0 | Percentile for robust crop sizing |
+| `DARKNESS_THRESHOLD_PERCENTILE` | 70.0 | Darkness percentile for candidate filtering |
+| `DARKNESS_WEIGHT` | 0.05 | Weight of darkness vs centring in frame scoring |
 
 ## Troubleshooting
 
