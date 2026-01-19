@@ -1,18 +1,15 @@
-"""Crop size calibration based on droplet geometry.
+"""
+Crop size calibration based on observed droplet geometry.
 
-Computes optimal crop size using observed droplet diameters and
-sphere gaps, with outlier-robust percentile-based estimation.
+Computes the optimal crop size from measured diameters and sphere gaps,
+using percentile-based estimation for outlier robustness.
 """
 
 from typing import Any, Dict, List
 
 import numpy as np
 
-from config_modular import (
-    CALIBRATION_PERCENTILE,
-    MAX_CNN_SIZE,
-    MIN_CNN_SIZE,
-)
+from config_modular import CALIBRATION_PERCENTILE, MAX_CNN_SIZE, MIN_CNN_SIZE
 
 
 def maybe_add_calibration_sample(
@@ -20,15 +17,7 @@ def maybe_add_calibration_sample(
     gaps: List[float],
     geo: Dict[str, Any],
 ) -> None:
-    """Add geometry sample to calibration lists if valid.
-
-    A sample is valid if the droplet is entirely above the sphere.
-
-    Args:
-        diams: List to append diameter to (modified in place).
-        gaps: List to append gap to (modified in place).
-        geo: Geometry dict from analyze_frame_geometric.
-    """
+    """Add a geometry sample to the calibration lists if valid (droplet above sphere)."""
     y_top = geo.get("y_top")
     y_bottom = geo.get("y_bottom")
     y_sphere = geo.get("y_bottom_sphere")
@@ -51,21 +40,14 @@ def compute_crop_size(
     safety_pixels: float,
     fallback: int = 128,
 ) -> int:
-    """Compute optimal crop size from calibration samples.
+    """
+    Compute optimal crop size from calibration samples.
 
-    For each (diameter, gap) pair, the maximum safe crop height is:
+    For each sample, the maximum safe crop height is:
         allowed_h = diameter + 2 * max(0, gap - safety_pixels)
 
-    Uses percentile-based estimation for outlier robustness.
-
-    Args:
-        diams: List of droplet diameters.
-        gaps: List of sphere gaps.
-        safety_pixels: Minimum gap to maintain between crop and sphere.
-        fallback: Default size if calibration fails.
-
-    Returns:
-        Computed crop size in pixels, bounded by MIN/MAX_CNN_SIZE.
+    Uses a low percentile (from config) to be conservative and avoid
+    crops that would include the sphere.
     """
     if not diams or not gaps or len(diams) != len(gaps):
         return fallback
@@ -81,11 +63,6 @@ def compute_crop_size(
     if not allowed_heights:
         return fallback
 
-    # Use percentile for outlier robustness
     crop_h = int(np.percentile(allowed_heights, CALIBRATION_PERCENTILE))
-
-    # Apply bounds
     crop_h = min(crop_h, MAX_CNN_SIZE)
-
-    # Prefer MIN_CNN_SIZE but don't violate geometry constraints
     return max(crop_h, MIN_CNN_SIZE) if crop_h >= MIN_CNN_SIZE else crop_h
