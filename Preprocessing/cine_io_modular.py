@@ -1,6 +1,8 @@
-"""Cine file I/O and grouping utilities.
+"""
+CINE file I/O and grouping utilities.
 
-Handles safe loading of .cine files and grouping by droplet ID.
+Handles loading .cine files via the Phantom SDK and grouping them
+by droplet ID based on filename patterns (e.g. sphere0843g.cine).
 """
 
 import re
@@ -11,91 +13,56 @@ from phantom_silence_modular import cine
 
 
 def safe_load_cine(path: Path) -> Optional[Any]:
-    """Safely load a .cine file.
-
-    Args:
-        path: Path to the .cine file.
-
-    Returns:
-        Loaded cine object, or None if loading failed.
-    """
+    """Load a .cine file, returning None on failure."""
     try:
         cine_obj = cine.Cine.from_filepath(str(path))
         if cine_obj is None:
             return None
-
-        # Access range to force handle initialisation
-        _ = cine_obj.range
+        _ = cine_obj.range  # Force handle init
         return cine_obj
-
     except Exception as e:
         print(f"[CINE LOAD ERROR] {path.name}: {e}")
         return None
 
 
 def iter_subfolders(root: Path) -> List[Path]:
-    """Get sorted list of subdirectories.
-
-    Args:
-        root: Root directory to scan.
-
-    Returns:
-        Sorted list of subdirectory paths.
-    """
+    """Get sorted list of subdirectories."""
     return [p for p in sorted(root.iterdir()) if p.is_dir()]
 
 
 def get_cine_folders(root: Path) -> List[Path]:
-    """Get list of folders containing .cine files.
-    
-    Handles two cases:
-    1. Root has subfolders containing .cine files → returns subfolders
-    2. Root itself contains .cine files → returns [root]
-    
-    Args:
-        root: Root directory to scan.
-        
-    Returns:
-        List of folders to process.
+    """
+    Get folders containing .cine files.
+
+    If root has subfolders with cines, returns those.
+    Otherwise if root itself has cines, returns [root].
     """
     root = Path(root)
-    
-    # First try subfolders
+
     subfolders = iter_subfolders(root)
-    
     if subfolders:
-        # Filter to only subfolders that actually contain .cine files
         cine_folders = [sf for sf in subfolders if list(sf.glob("*.cine"))]
         if cine_folders:
             return cine_folders
-    
-    # No subfolders with cines - check if root itself has cines
+
     if list(root.glob("*.cine")):
         return [root]
-    
+
     return []
 
 
-def group_cines_by_droplet(
-    folder: Path,
-) -> List[Tuple[str, Dict[str, Optional[Path]]]]:
-    """Group .cine files by droplet ID and camera.
+def group_cines_by_droplet(folder: Path) -> List[Tuple[str, Dict[str, Optional[Path]]]]:
+    """
+    Group .cine files by droplet ID and camera.
 
-    Expected filename pattern: sphere0843g.cine -> ID=0843, cam=g
-
-    Args:
-        folder: Folder containing .cine files.
-
-    Returns:
-        List of (droplet_id, {"g": path_or_None, "v": path_or_None}) tuples,
-        sorted numerically by droplet ID.
+    Filename pattern: sphere0843g.cine -> droplet_id=0843, camera=g
+    Returns list of (droplet_id, {"g": path, "v": path}) sorted by ID.
     """
     folder = Path(folder)
     groups: Dict[str, Dict[str, Optional[Path]]] = {}
 
     for path in sorted(folder.glob("*.cine")):
-        stem = path.stem
-        match = re.search(r"(\d+)([gv])$", stem, re.IGNORECASE)
+        match = re.search(r"(\d+)([gv])$", path.stem, re.IGNORECASE)
         if not match:
             continue
 
@@ -104,9 +71,7 @@ def group_cines_by_droplet(
 
         if droplet_id not in groups:
             groups[droplet_id] = {"g": None, "v": None}
-
         groups[droplet_id][cam] = path
 
-    # Sort numerically by droplet ID
     sorted_ids = sorted(groups.keys(), key=lambda x: int(x))
     return [(did, groups[did]) for did in sorted_ids]
