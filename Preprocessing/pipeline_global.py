@@ -1,19 +1,9 @@
-"""Global pipeline orchestration.
+"""
+Global pipeline orchestration.
 
 Calibrates crop size across ALL folders before processing, ensuring
-uniform crop dimensions across the entire dataset.
-
-This mode parallelizes at DROPLET level (not folder level) for:
-    - Fine-grained progress tracking
-    - Better CPU utilization across folders
-    - Continuous progress bar updates
-
-Functions:
-    process_global: Main entry point for global pipeline.
-
-Example:
-    >>> from pipeline_global import process_global
-    >>> process_global(safe_mode=False, full_output=True)
+uniform crop dimensions across the entire dataset. Parallelises at the
+droplet level for finer progress tracking and better CPU utilisation.
 """
 
 import csv
@@ -49,21 +39,12 @@ from profiling_modular import (
 from timing_utils_modular import Timer, format_time
 
 
-# ============================================================
-# DROPLET-LEVEL WORKERS FOR GLOBAL PIPELINE
-# ============================================================
+# --- Droplet-level workers for global pipeline ---
 
 def _analyze_droplet_global_full(
     args: Tuple[Path, str, Dict[str, Path]],
 ) -> Tuple[str, str, Dict[str, Dict[str, Any]], List[float], List[float], Dict[str, float]]:
-    """Analyse single droplet with full darkness curve (global mode).
-
-    Args:
-        args: Tuple of (folder_path, droplet_id, cams_dict).
-
-    Returns:
-        Tuple of (folder_name, droplet_id, cam_results, diams, gaps, timing).
-    """
+    """Analyse single droplet with full darkness curve (global mode)."""
     folder_path, droplet_id, cams = args
     folder_name = folder_path.name
     
@@ -120,14 +101,7 @@ def _analyze_droplet_global_full(
 def _analyze_droplet_global_crops_only(
     args: Tuple[Path, str, Dict[str, Path]],
 ) -> Tuple[str, str, Dict[str, Dict[str, Any]], List[float], List[float], Dict[str, float]]:
-    """Analyse single droplet with geometry-only scan (global mode).
-
-    Args:
-        args: Tuple of (folder_path, droplet_id, cams_dict).
-
-    Returns:
-        Tuple of (folder_name, droplet_id, cam_results, diams, gaps, timing).
-    """
+    """Analyse single droplet with geometry-only scan (global mode)."""
     folder_path, droplet_id, cams = args
     folder_name = folder_path.name
     
@@ -177,14 +151,7 @@ def _analyze_droplet_global_crops_only(
 def _generate_droplet_output_global(
     args: Tuple[str, str, Dict[str, Dict[str, Any]], int],
 ) -> Tuple[str, Dict[str, float]]:
-    """Generate output for single droplet (global mode).
-
-    Args:
-        args: Tuple of (folder_name, droplet_id, cam_data, cnn_size).
-
-    Returns:
-        Tuple of (message, timing_dict).
-    """
+    """Generate output for single droplet (global mode)."""
     import cv2
     from config_modular import FOCUS_METRICS_ENABLED
     from cropping_modular import crop_droplet_with_sphere_guard
@@ -289,9 +256,7 @@ def _generate_droplet_output_global(
     return (f"{folder_name}/{droplet_id}", timing)
 
 
-# ============================================================
-# MAIN PIPELINE
-# ============================================================
+# --- Main pipeline ---
 
 def process_global(
     safe_mode: bool = False,
@@ -301,24 +266,11 @@ def process_global(
     gui_mode: bool = False,
     focus_classification: bool = True,
 ) -> None:
-    """Execute global pipeline with droplet-level parallelization.
+    """
+    Execute global pipeline with droplet-level parallelisation.
 
     Calibrates crop size across ALL folders, then processes all droplets
-    with a uniform crop size. Progress tracks individual droplets, not folders.
-
-    Args:
-        safe_mode: If True, run single-process for debugging.
-        profile: If True, save profiling JSON with timing breakdown.
-        quick_test: If True, process only first droplet per folder.
-        full_output: If True, generate darkness plots and overlays.
-                    If False, generate crops only (faster).
-        gui_mode: If True, emit progress markers for GUI instead of tqdm.
-        focus_classification: If True, run per-folder focus classification
-                            after processing is complete.
-
-    Example:
-        >>> process_global(safe_mode=True, full_output=False)
-        # Processes all folders in safe mode, crops only
+    with a uniform crop size. Progress tracks individual droplets.
     """
     if quick_test:
         _quick_test_global(
@@ -346,9 +298,7 @@ def process_global(
         print("[GLOBAL] No folders with .cine files found!")
         return
 
-    # ============================================================
-    # COLLECT ALL DROPLETS FROM ALL FOLDERS
-    # ============================================================
+    # Collect all droplets from all folders
     print("[GLOBAL] Collecting droplets from all folders...")
     all_droplets: List[Tuple[Path, str, Dict[str, Path]]] = []
     folder_droplet_counts: Dict[str, int] = {}
@@ -388,9 +338,7 @@ def process_global(
     # Phase 2 (calibration) is instant, doesn't count
     total_work = total_droplets * 2
 
-    # ============================================================
-    # PHASE 1: Analyse all droplets (parallelized at droplet level)
-    # ============================================================
+    # Phase 1: Analyse all droplets
     print(f"\n[GLOBAL] Phase 1: Analysing {total_droplets} droplets...")
     phase1_timer = Timer()
 
@@ -425,9 +373,7 @@ def process_global(
     for k, v in p1_timing_totals.items():
         global_analysis_timing[k] = global_analysis_timing.get(k, 0.0) + v
 
-    # ============================================================
-    # PHASE 2: Crop calibration
-    # ============================================================
+    # Phase 2: Crop calibration
     phase2_start = time.time()
     cnn_size = compute_crop_size(
         all_diams, all_gaps, safety_pixels=CROP_SAFETY_PIXELS
@@ -437,9 +383,7 @@ def process_global(
     print(f"\n[GLOBAL] Crop size = {cnn_size}×{cnn_size}")
     print(f"[GLOBAL] Phase 2 (calibration) — {format_time(phase2_sec)}\n")
 
-    # ============================================================
-    # PHASE 3: Generate outputs (parallelized at droplet level)
-    # ============================================================
+    # Phase 3: Generate outputs
     print(f"[GLOBAL] Phase 3: Generating {total_droplets} outputs...")
     phase3_timer = Timer()
 
@@ -472,15 +416,11 @@ def process_global(
 
     print(f"\n[GLOBAL] Phase 3 complete — {phase3_timer.elapsed}")
 
-    # ============================================================
-    # WRITE SUMMARY CSVs (one per folder)
-    # ============================================================
+    # Write summary CSVs (one per folder)
     print("\n[GLOBAL] Writing summary CSVs...")
     _write_global_csvs(folder_analyses, cnn_size)
 
-    # ============================================================
-    # FOCUS CLASSIFICATION (per-folder)
-    # ============================================================
+    # Focus classification (per-folder)
     if focus_classification:
         logger.info("Running per-folder focus classification...")
         print("\n[GLOBAL] Running per-folder focus classification...")
@@ -523,27 +463,18 @@ def process_global(
 
 
 def _run_focus_classification() -> None:
-    """Run per-folder focus classification on all summary CSVs.
+    """
+    Run per-folder focus classification on all summary CSVs.
 
     Uses per-folder percentile thresholds (25th/75th) to classify crops
-    as sharp, medium, or blurry based on Laplacian variance scores.
+    as sharp, medium, or blurry based on Laplacian variance. This ensures
+    balanced classification even when folders have different optical setups.
 
-    This approach ensures balanced classification even when different
-    folders have different optical characteristics or focus quality.
-
-    Steps:
-        1. Load each folder's summary CSV
-        2. Compute per-folder p25/p75 thresholds from laplacian_var
-        3. Classify each crop as sharp/medium/blurry
-        4. Save updated CSV with focus_class column
-        5. Copy sharp images to Focus/{folder}/ directory
-        6. Generate combined dataset CSVs for training
-
-    Output files (in OUTPUT/Focus/):
+    Outputs saved to OUTPUT/Focus/:
         - focus_classified_all.csv: All crops with classifications
         - sharp_crops.csv: Only sharp crops (for CNN training)
         - focus_folder_stats.csv: Per-folder threshold statistics
-        - focus_classification_summary.png: Visualization
+        - focus_classification_summary.png: Visualisation
     """
     logger.info("Starting focus classification...")
     import shutil
@@ -706,23 +637,7 @@ def _write_global_csvs(
     folder_analyses: Dict[str, Dict[str, Dict[str, Dict[str, Any]]]],
     cnn_size: int,
 ) -> None:
-    """Write summary CSV for each folder.
-
-    Creates one CSV per folder containing metadata for all processed
-    droplets, including geometry, focus metrics, and crop paths.
-
-    Args:
-        folder_analyses: Nested dict of {folder: {droplet: {cam: info}}}.
-        cnn_size: Crop size used for all crops.
-
-    CSV columns:
-        - droplet_id, camera, cine_file
-        - first_frame, last_frame, best_frame
-        - dark_fraction (if full_output mode)
-        - y_top, y_bottom, y_sphere (geometry)
-        - crop_size_px, crop_path
-        - Focus metrics (if enabled): laplacian_var, tenengrad, etc.
-    """
+    """Write summary CSV for each folder with droplet metadata and focus metrics."""
     logger.debug("Writing summary CSVs for all folders...")
     import cv2
     from config_modular import FOCUS_METRICS_ENABLED

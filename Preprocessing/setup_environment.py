@@ -1,12 +1,4 @@
-"""Environment setup and verification for Droplet Preprocessing Pipeline.
-
-Run this script to set up and verify your environment:
-    python setup_environment.py
-
-Or import and call from main_runner:
-    from setup_environment import verify_environment
-    verify_environment()
-"""
+"""Environment setup and verification for Droplet Preprocessing Pipeline."""
 
 import subprocess
 import sys
@@ -34,11 +26,7 @@ OPTIONAL_PACKAGES: Dict[str, str] = {
 
 
 def check_python_version() -> Tuple[bool, str]:
-    """Check if Python version meets minimum requirements.
-    
-    Returns:
-        Tuple of (success, message).
-    """
+    """Check if Python version meets minimum requirements."""
     current = sys.version_info[:2]
     if current >= MIN_PYTHON:
         return True, f"✓ Python {current[0]}.{current[1]} (>= {MIN_PYTHON[0]}.{MIN_PYTHON[1]} required)"
@@ -47,14 +35,7 @@ def check_python_version() -> Tuple[bool, str]:
 
 
 def check_package(import_name: str) -> Tuple[bool, str]:
-    """Check if a package can be imported.
-    
-    Args:
-        import_name: The name used to import the package.
-        
-    Returns:
-        Tuple of (success, version_or_error).
-    """
+    """Check if a package can be imported."""
     try:
         module = __import__(import_name)
         version = getattr(module, "__version__", "unknown")
@@ -64,11 +45,7 @@ def check_package(import_name: str) -> Tuple[bool, str]:
 
 
 def check_all_packages() -> Tuple[List[str], List[str], List[str]]:
-    """Check all required and optional packages.
-    
-    Returns:
-        Tuple of (installed, missing_required, missing_optional).
-    """
+    """Check all required and optional packages."""
     installed = []
     missing_required = []
     missing_optional = []
@@ -97,14 +74,7 @@ def check_all_packages() -> Tuple[List[str], List[str], List[str]]:
 
 
 def install_requirements(requirements_path: Path = None) -> bool:
-    """Install packages from requirements.txt.
-    
-    Args:
-        requirements_path: Path to requirements.txt (default: same directory).
-        
-    Returns:
-        True if successful.
-    """
+    """Install packages from requirements.txt."""
     if requirements_path is None:
         requirements_path = Path(__file__).parent / "requirements.txt"
     
@@ -125,11 +95,7 @@ def install_requirements(requirements_path: Path = None) -> bool:
 
 
 def check_phantom_sdk() -> Tuple[bool, str]:
-    """Check if Phantom SDK (pyphantom) is installed and working.
-    
-    Returns:
-        Tuple of (success, message).
-    """
+    """Check if Phantom SDK (pyphantom) is installed and working."""
     try:
         import pyphantom
         # Try to access the Cine class
@@ -183,14 +149,7 @@ def create_directories() -> None:
 
 
 def verify_environment(auto_install: bool = False) -> bool:
-    """Verify the environment is set up correctly.
-    
-    Args:
-        auto_install: If True, automatically install missing packages.
-        
-    Returns:
-        True if environment is ready.
-    """
+    """Verify the environment is set up correctly."""
     print("=" * 60)
     print("DROPLET PREPROCESSING PIPELINE - ENVIRONMENT CHECK")
     print("=" * 60)

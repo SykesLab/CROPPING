@@ -11,15 +11,7 @@ def aggregate_timings(
     timing_list: List[Dict[str, float]],
     label: str = "",
 ) -> Dict[str, float]:
-    """Aggregate timing dictionaries and print summary.
-
-    Args:
-        timing_list: List of timing dicts from workers.
-        label: Label for printed output.
-
-    Returns:
-        Dictionary with summed totals.
-    """
+    """Aggregate timing dictionaries and print summary."""
     if not timing_list:
         return {}
 
@@ -43,13 +35,7 @@ def print_global_summary(
     output_timing: Dict[str, float],
     phase_times: Optional[Dict[str, float]] = None,
 ) -> None:
-    """Print global timing summary.
-
-    Args:
-        analysis_timing: Analysis phase timing dict.
-        output_timing: Output phase timing dict.
-        phase_times: Optional dict with phase1_sec, phase2_sec, phase3_sec.
-    """
+    """Print global timing summary."""
     # Calculate total elapsed time
     total_elapsed = 0.0
     if phase_times:
@@ -95,13 +81,7 @@ def save_profile_json(
     filename: str,
     data: Dict[str, Any],
 ) -> None:
-    """Save profiling data to JSON file.
-
-    Args:
-        output_root: Output directory path.
-        filename: JSON filename.
-        data: Data to serialize.
-    """
+    """Save profiling data to JSON file."""
     prof_path = Path(output_root) / filename
     with open(prof_path, "w") as f:
         json.dump(data, f, indent=2)
@@ -133,14 +113,7 @@ def accumulate_timings(
     target: Dict[str, float],
     source: Dict[str, float],
 ) -> None:
-    """Accumulate source values into target dict.
-
-    Only adds keys that exist in target.
-
-    Args:
-        target: Target dict (modified in place).
-        source: Source dict with values to add.
-    """
+    """Accumulate source values into target dict (only keys that exist in target)."""
     for k, v in source.items():
         if k in target:
             target[k] += v

@@ -1,12 +1,4 @@
-"""Visualisation utilities for darkness curves and geometry overlays.
-
-Provides functions for plotting darkness curves and saving annotated
-geometry overlays for debugging and quality assurance.
-
-Functions:
-    save_darkness_plot: Save darkness curve with best frame marker.
-    save_geometric_overlay: Save frame with geometry annotations.
-"""
+"""Visualisation utilities for darkness curves and geometry overlays."""
 
 import logging
 from pathlib import Path
@@ -21,16 +13,7 @@ logger = logging.getLogger(__name__)
 
 
 def _filter_border_touching(mask: np.ndarray) -> np.ndarray:
-    """Remove components touching left/right borders from mask.
-
-    Used to exclude vignetting from overlay visualisation.
-
-    Args:
-        mask: Boolean mask (True = dark pixels).
-
-    Returns:
-        Filtered mask with border-touching components removed.
-    """
+    """Remove components touching left/right borders (excludes vignetting)."""
     h, w = mask.shape
     mask_uint8 = mask.astype(np.uint8)
 
@@ -58,19 +41,7 @@ def save_darkness_plot(
     best: int,
     name: str,
 ) -> bool:
-    """Save darkness curve plot with best frame marker.
-
-    Args:
-        out_path: Output file path.
-        curve: Darkness curve array.
-        first: First frame index.
-        last: Last frame index.
-        best: Best frame index.
-        name: Title suffix (typically filename).
-
-    Returns:
-        True if plot was saved successfully, False otherwise.
-    """
+    """Save darkness curve plot with best frame marker."""
     if curve is None or len(curve) == 0:
         logger.warning(f"Empty darkness curve for {name}, skipping plot")
         return False
@@ -104,23 +75,7 @@ def save_geometric_overlay(
     cnn_size: Optional[int] = None,
     safety: int = 3,
 ) -> bool:
-    """Save frame with geometry annotations overlaid.
-
-    Args:
-        out_path: Output file path.
-        geo: Geometry dict containing frame, mask, and coordinates.
-            Required keys: 'frame', 'mask'
-            Optional keys: 'y_top', 'y_bottom', 'y_bottom_sphere', 'cx'
-        best_idx: Frame index for title.
-        cnn_size: Crop size to display (optional).
-        safety: Safety margin for crop rectangle.
-
-    Returns:
-        True if overlay was saved successfully, False otherwise.
-
-    Raises:
-        ValueError: If geo dict is missing required keys.
-    """
+    """Save frame with geometry annotations overlaid."""
     # Validate required keys
     if "frame" not in geo:
         logger.error("Geometry dict missing required 'frame' key")
