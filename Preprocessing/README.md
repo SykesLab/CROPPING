@@ -3,19 +3,19 @@
 [![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
-Automated preprocessing of high-speed camera footage for droplet analysis. Extracts droplet crops from Phantom .cine files with focus quality assessment.
+Extracts droplet crops from Phantom .cine files for CNN training. Handles frame selection, cropping, and focus-based filtering.
 
 ## Features
 
-- **Automatic droplet detection** — Connected component analysis identifies droplets and spheres, with vignetting exclusion and robust filtering
-- **Intelligent frame selection** — Weighted scoring balances droplet centring (gap symmetry between droplet-to-sphere and droplet-to-image-top) with darkness, ensuring pre-collision frames with optimal geometry
-- **Sphere-excluding crops** — Crops shift upward automatically to exclude the injection sphere while maintaining consistent dimensions for CNN input
-- **Global crop calibration** — Conservative percentile-based sizing ensures uniform crops across all folders
-- **Six focus quality metrics** — Laplacian variance, Tenengrad, Brenner gradient, and three additional edge-based measures
-- **Adaptive focus classification** — Per-folder percentile thresholds (75th/25th) ensure balanced sharp/medium/blurry distribution regardless of optical conditions
-- **GUI with live preview** — Real-time thumbnail display, progress tracking with ETA, and configurable processing options
-- **Flexible execution modes** — Quick test (validation), safe mode (single-process), step sampling (every Nth droplet), and profiling output
-- **Parallel processing** — Droplet-level parallelisation across all CPU cores for maximum throughput
+- **Droplet detection** — Finds droplets and spheres via connected components, filters out vignetting
+- **Frame selection** — Picks pre-collision frames where the droplet is centred between image top and sphere, with darkness as a tiebreaker
+- **Sphere-excluding crops** — Shifts crops upward to cut out the sphere while keeping a fixed size for the CNN
+- **Global calibration** — Uses a low percentile across all folders so crops are consistently sized
+- **Focus metrics** — Laplacian, Tenengrad, Brenner, plus three others
+- **Focus classification** — Per-folder 75th/25th percentile thresholds, so each folder contributes ~25% sharp crops regardless of lighting
+- **GUI** — Live thumbnails, progress bar, ETA
+- **Modes** — Quick test, safe mode (single process), step sampling, profiling
+- **Parallel** — Runs across all CPU cores
 
 ## Quick Start
 
@@ -121,10 +121,9 @@ When enabled, the pipeline automatically:
 
 ### Per-Folder Thresholds
 
-Focus classification uses per-folder thresholds to ensure diverse training data:
-- Each folder contributes its sharpest ~25% to the training set
-- Handles varying optical conditions between sessions
-- Produces robust models that generalise to new setups
+Each folder gets its own threshold based on its own distribution:
+- Sharpest ~25% from each folder goes to training
+- Accounts for different lighting/focus between sessions
 
 ### Standalone Analysis
 
@@ -226,7 +225,7 @@ This project is licensed under the GNU General Public License v3.0 — see the [
 
 ## Citation
 
-This pipeline implements preprocessing for droplet defocus estimation based on:
+Based on:
 
 > Wang, Z. et al. (2022). "Three-dimensional measurement of the droplets out of focus in shadowgraphy systems via deep learning-based image-processing method." *Physics of Fluids*, 34(7), 073301.
 
