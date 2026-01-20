@@ -228,6 +228,19 @@ This project is licensed under the GNU General Public License v3.0 — see the [
 
 This pipeline implements preprocessing for droplet defocus estimation based on:
 
-> Wang, J., et al. (2022). "Three-dimensional droplet sizing and tracking based on a single deep neural network." *Experiments in Fluids*, 63, 166.
+> Wang, Z. et al. (2022). "Three-dimensional measurement of the droplets out of focus in shadowgraphy systems via deep learning-based image-processing method." *Physics of Fluids*, 34(7), 073301.
 
-If you use this software in your research, please cite appropriately.
+If you use this software in your research, please cite:
+
+```bibtex
+@article{wang2022three,
+  title={Three-dimensional measurement of the droplets out of focus in shadowgraphy systems via deep learning-based image-processing method},
+  author={Wang, Zhendong and others},
+  journal={Physics of Fluids},
+  volume={34},
+  number={7},
+  pages={073301},
+  year={2022},
+  publisher={AIP Publishing}
+}
+```
