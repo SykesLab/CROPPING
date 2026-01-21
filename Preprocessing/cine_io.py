@@ -33,25 +33,38 @@ def _suppress_output() -> Generator[None, None, None]:
         devnull.close()
 
 
-# Load pyphantom components silently
-with _suppress_output():
-    from pyphantom import cine, utils
+# Load pyphantom components silently (optional)
+cine: Optional[Any] = None
+utils: Optional[Any] = None
+ph: Optional[Any] = None
+PYPHANTOM_AVAILABLE = False
 
-    ph: Optional[Any] = None
-    try:
-        from pyphantom import Phantom
-        ph = Phantom(init_camera=False)
-    except Exception:
+try:
+    with _suppress_output():
+        from pyphantom import cine, utils
+        PYPHANTOM_AVAILABLE = True
+
         try:
-            ph = Phantom()
+            from pyphantom import Phantom
+            ph = Phantom(init_camera=False)
         except Exception:
-            ph = None
+            try:
+                ph = Phantom()
+            except Exception:
+                ph = None
+except ImportError:
+    # pyphantom not installed - this is OK, just can't read .cine files
+    pass
 
 
 # --- CINE loading and grouping ---
 
 def safe_load_cine(path: Path) -> Optional[Any]:
     """Load a .cine file, returning None on failure."""
+    if not PYPHANTOM_AVAILABLE or cine is None:
+        print(f"[CINE LOAD ERROR] {path.name}: pyphantom not available")
+        return None
+
     try:
         cine_obj = cine.Cine.from_filepath(str(path))
         if cine_obj is None:

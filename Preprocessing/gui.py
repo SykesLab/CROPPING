@@ -19,7 +19,7 @@ except ImportError:
     raise
 
 import config
-from cine_io import cine
+from cine_io import cine, PYPHANTOM_AVAILABLE
 from profiling import format_time
 
 # Queue for worker -> GUI communication (logs, progress, done signals)
@@ -441,11 +441,7 @@ class PipelineGUI:
 
     def _check_sdk(self) -> None:
         """Check Photron SDK availability and update counts."""
-        try:
-            _ = cine  # imported at top
-            sdk_ok = True
-        except Exception:
-            sdk_ok = False
+        sdk_ok = PYPHANTOM_AVAILABLE and cine is not None
 
         # Basic cine count from whichever root is current
         root = self.selected_root or config.CINE_ROOT
