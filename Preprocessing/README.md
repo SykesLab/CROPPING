@@ -203,7 +203,6 @@ The pipeline runs in a background thread. Check the console for progress.
 - matplotlib
 - tqdm
 - PyYAML
-- customtkinter
 - tkinter (included with Python)
 - pyphantom (Phantom SDK, from Vision Research)
 

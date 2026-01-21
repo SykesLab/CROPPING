@@ -18,7 +18,6 @@ REQUIRED_PACKAGES: Dict[str, str] = {
     "matplotlib": "matplotlib",
     "tqdm": "tqdm",
     "PyYAML": "yaml",
-    "customtkinter": "customtkinter",
 }
 
 # Optional packages

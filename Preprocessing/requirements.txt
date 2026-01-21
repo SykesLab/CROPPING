@@ -19,8 +19,5 @@ tqdm>=4.60.0
 # Configuration
 PyYAML>=5.4.0
 
-# GUI
-customtkinter>=5.0.0
-
 # Note: pyphantom (Phantom SDK) must be installed separately
 # See setup_environment.py for instructions
