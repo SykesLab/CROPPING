@@ -1046,6 +1046,15 @@ class PipelineGUI:
 
     def _run_quick_test(self, safe_mode: bool) -> None:
         """Run quick detection test (1st droplet per folder)."""
+        if not PYPHANTOM_AVAILABLE:
+            emit_log("="*60)
+            emit_log("ERROR: Phantom SDK (pyphantom) not installed!")
+            emit_log("")
+            emit_log("The pipeline cannot process .cine files without the Phantom SDK.")
+            emit_log("Please install pyphantom to continue.")
+            emit_log("="*60)
+            return
+
         from cine_io import (
             group_cines_by_droplet,
             get_cine_folders,

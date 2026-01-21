@@ -48,6 +48,20 @@ def process_per_folder(
     Each folder is calibrated and processed independently. Parallelisation
     happens within each folder at the droplet level.
     """
+    # Check if pyphantom is available
+    from cine_io import PYPHANTOM_AVAILABLE
+    if not PYPHANTOM_AVAILABLE:
+        error_msg = (
+            "\n" + "="*60 + "\n"
+            "ERROR: Phantom SDK (pyphantom) not installed!\n\n"
+            "The pipeline cannot process .cine files without the Phantom SDK.\n"
+            "Please install pyphantom to continue.\n"
+            "="*60 + "\n"
+        )
+        logger.error(error_msg)
+        print(error_msg)
+        return
+
     if quick_test:
         _quick_test_per_folder(safe_mode=safe_mode, profile=profile, full_output=full_output, gui_mode=gui_mode)
         return

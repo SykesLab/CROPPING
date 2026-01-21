@@ -272,6 +272,19 @@ def process_global(
     Calibrates crop size across ALL folders, then processes all droplets
     with a uniform crop size. Progress tracks individual droplets.
     """
+    # Check if pyphantom is available
+    from cine_io import PYPHANTOM_AVAILABLE
+    if not PYPHANTOM_AVAILABLE:
+        error_msg = (
+            "\n" + "="*60 + "\n"
+            "ERROR: Phantom SDK (pyphantom) not installed!\n\n"
+            "The pipeline cannot process .cine files without the Phantom SDK.\n"
+            "Please install pyphantom to continue.\n"
+            "="*60 + "\n"
+        )
+        print(error_msg)
+        return
+
     if quick_test:
         _quick_test_global(
             safe_mode=safe_mode, profile=profile, full_output=full_output,
