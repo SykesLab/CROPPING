@@ -199,9 +199,11 @@ The pipeline runs in a background thread. Check the console for progress.
 
 - Python 3.8+
 - numpy, pandas, scipy
-- opencv-python
+- opencv-python, Pillow
 - matplotlib
 - tqdm
+- PyYAML
+- customtkinter
 - tkinter (included with Python)
 - pyphantom (Phantom SDK, from Vision Research)
 

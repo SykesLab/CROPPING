@@ -14,8 +14,10 @@ REQUIRED_PACKAGES: Dict[str, str] = {
     "pandas": "pandas",
     "scipy": "scipy",
     "opencv-python": "cv2",
+    "Pillow": "PIL",
     "matplotlib": "matplotlib",
     "tqdm": "tqdm",
+    "PyYAML": "yaml",
     "customtkinter": "customtkinter",
 }
 

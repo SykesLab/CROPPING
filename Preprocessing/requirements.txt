@@ -8,12 +8,16 @@ scipy>=1.7.0
 
 # Image processing
 opencv-python>=4.5.0
+Pillow>=8.0.0
 
 # Plotting
 matplotlib>=3.4.0
 
 # Progress bars
 tqdm>=4.60.0
+
+# Configuration
+PyYAML>=5.4.0
 
 # GUI
 customtkinter>=5.0.0
