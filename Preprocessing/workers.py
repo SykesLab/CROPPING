@@ -3,10 +3,6 @@ Worker functions for droplet and folder analysis.
 
 These are the parallel worker functions used by both pipeline modes.
 They're memory-optimised: only geometry info is stored, not full frames.
-
-Exception handling wraps all worker functions to convert non-picklable
-SDK exceptions (e.g., PhSDK.error) into standard RuntimeError for
-multiprocessing compatibility.
 """
 
 import time
@@ -27,22 +23,117 @@ DropletResult = Tuple[str, Dict[str, Dict[str, Any]], List[float], List[float], 
 FolderResult = Tuple[str, Dict[Tuple[str, str], Dict[str, Any]], List[float], List[float], Dict[str, float]]
 
 
-def _reraise_as_picklable(e: Exception, context: str) -> None:
-    """Convert non-picklable exceptions to RuntimeError for multiprocessing."""
-    raise RuntimeError(f"{context}: {type(e).__name__}: {e}") from None
-
-
 # --- Per-droplet workers (for per-folder pipeline) ---
 
 def analyze_droplet_full(args: Tuple[str, Dict[str, Any]]) -> DropletResult:
     """Analyse single droplet with full darkness curve computation."""
     droplet_id, cams = args
-    try:
-        folder_results: Dict[str, Dict[str, Any]] = {}
-        diams: List[float] = []
-        gaps: List[float] = []
+    folder_results: Dict[str, Dict[str, Any]] = {}
+    diams: List[float] = []
+    gaps: List[float] = []
 
-        timing = {"load_cine": 0.0, "darkness_curve": 0.0, "best_frame": 0.0, "n_frames": 0}
+    timing = {"load_cine": 0.0, "darkness_curve": 0.0, "best_frame": 0.0, "n_frames": 0}
+
+    for cam in ("g", "v"):
+        path = cams.get(cam)
+        if path is None:
+            continue
+
+        t0 = time.perf_counter()
+        cine_obj = safe_load_cine(path)
+        timing["load_cine"] += time.perf_counter() - t0
+
+        if cine_obj is None:
+            continue
+
+        first, last = cine_obj.range
+        timing["n_frames"] += last - first + 1
+
+        t0 = time.perf_counter()
+        dark = analyze_cine_darkness(cine_obj)
+        timing["darkness_curve"] += time.perf_counter() - t0
+
+        curve = dark["darkness_curve"]
+
+        t0 = time.perf_counter()
+        best_idx, geo = choose_best_frame_with_geo(cine_obj, curve)
+        timing["best_frame"] += time.perf_counter() - t0
+
+        folder_results[cam] = {
+            "path": path,
+            "first": first,
+            "last": last,
+            "curve": curve,
+            "best": best_idx,
+            "geo": extract_geometry_info(geo),
+        }
+        maybe_add_calibration_sample(diams, gaps, geo)
+
+    return (droplet_id, folder_results, diams, gaps, timing)
+
+
+def analyze_droplet_crops_only(args: Tuple[str, Dict[str, Any]]) -> DropletResult:
+    """Analyse single droplet with geometry-only scan (faster, no darkness curve)."""
+    droplet_id, cams = args
+    folder_results: Dict[str, Dict[str, Any]] = {}
+    diams: List[float] = []
+    gaps: List[float] = []
+
+    timing = {"load_cine": 0.0, "geometry_scan": 0.0, "n_frames": 0}
+
+    for cam in ("g", "v"):
+        path = cams.get(cam)
+        if path is None:
+            continue
+
+        t0 = time.perf_counter()
+        cine_obj = safe_load_cine(path)
+        timing["load_cine"] += time.perf_counter() - t0
+
+        if cine_obj is None:
+            continue
+
+        first, last = cine_obj.range
+        timing["n_frames"] += last - first + 1
+
+        t0 = time.perf_counter()
+        best_idx, geo = choose_best_frame_geometry_only(cine_obj)
+        timing["geometry_scan"] += time.perf_counter() - t0
+
+        folder_results[cam] = {
+            "path": path,
+            "first": first,
+            "last": last,
+            "curve": None,
+            "best": best_idx,
+            "geo": extract_geometry_info(geo),
+        }
+        maybe_add_calibration_sample(diams, gaps, geo)
+
+    return (droplet_id, folder_results, diams, gaps, timing)
+
+
+# --- Per-folder workers (for global pipeline) ---
+
+def analyze_folder_full(args: Tuple[Path, int]) -> FolderResult:
+    """Analyse all selected droplets in folder with full darkness curve."""
+    sub, step = args
+    sub = Path(sub)
+    groups = group_cines_by_droplet(sub)
+    n_groups = len(groups)
+
+    timing = {"load_cine": 0.0, "darkness_curve": 0.0, "best_frame": 0.0, "n_frames": 0, "n_cines": 0}
+
+    if n_groups == 0:
+        return (sub.name, {}, [], [], timing)
+
+    selected = list(range(0, n_groups, step))
+    folder_analyses: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    diams: List[float] = []
+    gaps: List[float] = []
+
+    for g_index in selected:
+        droplet_id, cams = groups[g_index]
 
         for cam in ("g", "v"):
             path = cams.get(cam)
@@ -56,6 +147,7 @@ def analyze_droplet_full(args: Tuple[str, Dict[str, Any]]) -> DropletResult:
             if cine_obj is None:
                 continue
 
+            timing["n_cines"] += 1
             first, last = cine_obj.range
             timing["n_frames"] += last - first + 1
 
@@ -69,7 +161,7 @@ def analyze_droplet_full(args: Tuple[str, Dict[str, Any]]) -> DropletResult:
             best_idx, geo = choose_best_frame_with_geo(cine_obj, curve)
             timing["best_frame"] += time.perf_counter() - t0
 
-            folder_results[cam] = {
+            folder_analyses[(droplet_id, cam)] = {
                 "path": path,
                 "first": first,
                 "last": last,
@@ -79,20 +171,28 @@ def analyze_droplet_full(args: Tuple[str, Dict[str, Any]]) -> DropletResult:
             }
             maybe_add_calibration_sample(diams, gaps, geo)
 
-        return (droplet_id, folder_results, diams, gaps, timing)
-    except Exception as e:
-        _reraise_as_picklable(e, f"analyze_droplet_full({droplet_id})")
+    return (sub.name, folder_analyses, diams, gaps, timing)
 
 
-def analyze_droplet_crops_only(args: Tuple[str, Dict[str, Any]]) -> DropletResult:
-    """Analyse single droplet with geometry-only scan (faster, no darkness curve)."""
-    droplet_id, cams = args
-    try:
-        folder_results: Dict[str, Dict[str, Any]] = {}
-        diams: List[float] = []
-        gaps: List[float] = []
+def analyze_folder_crops_only(args: Tuple[Path, int]) -> FolderResult:
+    """Analyse all selected droplets in folder with geometry-only scan."""
+    sub, step = args
+    sub = Path(sub)
+    groups = group_cines_by_droplet(sub)
+    n_groups = len(groups)
 
-        timing = {"load_cine": 0.0, "geometry_scan": 0.0, "n_frames": 0}
+    timing = {"load_cine": 0.0, "geometry_scan": 0.0, "n_frames": 0, "n_cines": 0}
+
+    if n_groups == 0:
+        return (sub.name, {}, [], [], timing)
+
+    selected = list(range(0, n_groups, step))
+    folder_analyses: Dict[Tuple[str, str], Dict[str, Any]] = {}
+    diams: List[float] = []
+    gaps: List[float] = []
+
+    for g_index in selected:
+        droplet_id, cams = groups[g_index]
 
         for cam in ("g", "v"):
             path = cams.get(cam)
@@ -106,6 +206,7 @@ def analyze_droplet_crops_only(args: Tuple[str, Dict[str, Any]]) -> DropletResul
             if cine_obj is None:
                 continue
 
+            timing["n_cines"] += 1
             first, last = cine_obj.range
             timing["n_frames"] += last - first + 1
 
@@ -113,7 +214,7 @@ def analyze_droplet_crops_only(args: Tuple[str, Dict[str, Any]]) -> DropletResul
             best_idx, geo = choose_best_frame_geometry_only(cine_obj)
             timing["geometry_scan"] += time.perf_counter() - t0
 
-            folder_results[cam] = {
+            folder_analyses[(droplet_id, cam)] = {
                 "path": path,
                 "first": first,
                 "last": last,
@@ -123,126 +224,4 @@ def analyze_droplet_crops_only(args: Tuple[str, Dict[str, Any]]) -> DropletResul
             }
             maybe_add_calibration_sample(diams, gaps, geo)
 
-        return (droplet_id, folder_results, diams, gaps, timing)
-    except Exception as e:
-        _reraise_as_picklable(e, f"analyze_droplet_crops_only({droplet_id})")
-
-
-# --- Per-folder workers (for global pipeline) ---
-
-def analyze_folder_full(args: Tuple[Path, int]) -> FolderResult:
-    """Analyse all selected droplets in folder with full darkness curve."""
-    sub, step = args
-    sub = Path(sub)
-    try:
-        groups = group_cines_by_droplet(sub)
-        n_groups = len(groups)
-
-        timing = {"load_cine": 0.0, "darkness_curve": 0.0, "best_frame": 0.0, "n_frames": 0, "n_cines": 0}
-
-        if n_groups == 0:
-            return (sub.name, {}, [], [], timing)
-
-        selected = list(range(0, n_groups, step))
-        folder_analyses: Dict[Tuple[str, str], Dict[str, Any]] = {}
-        diams: List[float] = []
-        gaps: List[float] = []
-
-        for g_index in selected:
-            droplet_id, cams = groups[g_index]
-
-            for cam in ("g", "v"):
-                path = cams.get(cam)
-                if path is None:
-                    continue
-
-                t0 = time.perf_counter()
-                cine_obj = safe_load_cine(path)
-                timing["load_cine"] += time.perf_counter() - t0
-
-                if cine_obj is None:
-                    continue
-
-                timing["n_cines"] += 1
-                first, last = cine_obj.range
-                timing["n_frames"] += last - first + 1
-
-                t0 = time.perf_counter()
-                dark = analyze_cine_darkness(cine_obj)
-                timing["darkness_curve"] += time.perf_counter() - t0
-
-                curve = dark["darkness_curve"]
-
-                t0 = time.perf_counter()
-                best_idx, geo = choose_best_frame_with_geo(cine_obj, curve)
-                timing["best_frame"] += time.perf_counter() - t0
-
-                folder_analyses[(droplet_id, cam)] = {
-                    "path": path,
-                    "first": first,
-                    "last": last,
-                    "curve": curve,
-                    "best": best_idx,
-                    "geo": extract_geometry_info(geo),
-                }
-                maybe_add_calibration_sample(diams, gaps, geo)
-
-        return (sub.name, folder_analyses, diams, gaps, timing)
-    except Exception as e:
-        _reraise_as_picklable(e, f"analyze_folder_full({sub.name})")
-
-
-def analyze_folder_crops_only(args: Tuple[Path, int]) -> FolderResult:
-    """Analyse all selected droplets in folder with geometry-only scan."""
-    sub, step = args
-    sub = Path(sub)
-    try:
-        groups = group_cines_by_droplet(sub)
-        n_groups = len(groups)
-
-        timing = {"load_cine": 0.0, "geometry_scan": 0.0, "n_frames": 0, "n_cines": 0}
-
-        if n_groups == 0:
-            return (sub.name, {}, [], [], timing)
-
-        selected = list(range(0, n_groups, step))
-        folder_analyses: Dict[Tuple[str, str], Dict[str, Any]] = {}
-        diams: List[float] = []
-        gaps: List[float] = []
-
-        for g_index in selected:
-            droplet_id, cams = groups[g_index]
-
-            for cam in ("g", "v"):
-                path = cams.get(cam)
-                if path is None:
-                    continue
-
-                t0 = time.perf_counter()
-                cine_obj = safe_load_cine(path)
-                timing["load_cine"] += time.perf_counter() - t0
-
-                if cine_obj is None:
-                    continue
-
-                timing["n_cines"] += 1
-                first, last = cine_obj.range
-                timing["n_frames"] += last - first + 1
-
-                t0 = time.perf_counter()
-                best_idx, geo = choose_best_frame_geometry_only(cine_obj)
-                timing["geometry_scan"] += time.perf_counter() - t0
-
-                folder_analyses[(droplet_id, cam)] = {
-                    "path": path,
-                    "first": first,
-                    "last": last,
-                    "curve": None,
-                    "best": best_idx,
-                    "geo": extract_geometry_info(geo),
-                }
-                maybe_add_calibration_sample(diams, gaps, geo)
-
-        return (sub.name, folder_analyses, diams, gaps, timing)
-    except Exception as e:
-        _reraise_as_picklable(e, f"analyze_folder_crops_only({sub.name})")
+    return (sub.name, folder_analyses, diams, gaps, timing)
