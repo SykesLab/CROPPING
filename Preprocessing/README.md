@@ -5,17 +5,17 @@
 
 Extracts droplet crops from Phantom .cine files for CNN training. Handles frame selection, cropping, and focus-based filtering.
 
-## Features
+## How It Works
 
-- **Droplet detection** — Finds droplets and spheres via connected components, filters out vignetting
-- **Frame selection** — Picks pre-collision frames where the droplet is centred between image top and sphere, with darkness as a tiebreaker
-- **Sphere-excluding crops** — Shifts crops upward to cut out the sphere while keeping a fixed size for the CNN
-- **Global calibration** — Uses a low percentile across all folders so crops are consistently sized
-- **Focus metrics** — Laplacian, Tenengrad, Brenner, plus three others
-- **Focus classification** — Per-folder 75th/25th percentile thresholds, so each folder contributes ~25% sharp crops regardless of lighting
-- **GUI** — Live thumbnails, progress bar, ETA
-- **Modes** — Quick test, safe mode (single process), step sampling, profiling
-- **Parallel** — Runs across all CPU cores
+Each .cine file contains a high-speed recording of a droplet falling onto a sphere. The pipeline finds the best frame to crop from, where "best" means the droplet is fully visible, hasn't yet collided with the sphere, and is roughly centred in the frame.
+
+Frame selection uses connected component analysis to locate the droplet and sphere in each frame. It scores frames by how symmetric the gaps are (droplet-to-image-top vs droplet-to-sphere), with a small weight on darkness to prefer frames where the droplet is more opaque. Frames where the droplet has already touched the sphere are rejected.
+
+Crops are sized to fit the droplet while excluding the sphere. If the crop would include the sphere, it shifts upward. When processing multiple folders, a global calibration pass sets a single crop size (using a conservative low percentile) so all outputs are the same dimensions for CNN training.
+
+Focus quality is measured using six edge-based metrics (Laplacian variance, Tenengrad, Brenner, etc). Classification into sharp/medium/blurry uses per-folder thresholds at the 75th and 25th percentiles, so each folder contributes its sharpest ~25% regardless of lighting conditions.
+
+The GUI shows live thumbnails, progress, and ETA. Processing runs in parallel across all CPU cores, with options for quick validation runs, single-process mode for debugging, and step sampling to process every Nth droplet.
 
 ## Quick Start
 
@@ -50,10 +50,8 @@ python gui.py
 
 ### 4. Configure in GUI
 
-1. **CINE Root** — Browse to either:
-   - A parent folder containing subfolders with .cine files, OR
-   - A single folder directly containing .cine files
-2. **Output Folder** — Use default `./OUTPUT` or browse to custom location
+1. **CINE Root**: either a parent folder containing subfolders with .cine files, or a single folder with .cine files directly
+2. **Output Folder**: defaults to `./OUTPUT`
 3. Click **Continue**, configure options, then **Run Pipeline**
 
 ## Project Structure
@@ -99,25 +97,13 @@ droplet-preprocessing/
 
 ## Pipeline Modes
 
-### Global Mode
-- Calibrates crop size across ALL folders
-- Consistent crop dimensions for CNN training
-- Better for large datasets with multiple folders
-- **Only available when selecting a parent folder with multiple subfolders**
+**Global mode** calibrates crop size across all folders, so every crop has the same dimensions. Only available when you select a parent folder with multiple subfolders.
 
-### Per-Folder Mode
-- Independent processing per folder
-- Crop sizes may vary between folders
-- **Automatically selected when processing a single folder**
+**Per-folder mode** processes each folder independently. Crop sizes may vary between folders. Automatically selected when processing a single folder.
 
 ## Focus Classification
 
-Focus classification is **built into the pipeline** — enable "Focus classification" checkbox in the GUI.
-
-When enabled, the pipeline automatically:
-- Computes focus metrics (Laplacian, Tenengrad, Brenner) for each crop
-- Classifies crops as sharp/medium/blurry using per-folder thresholds
-- Copies sharp crops to `OUTPUT/Focus/{folder}/` for CNN training
+Enable the "Focus classification" checkbox in the GUI. This computes focus metrics for each crop, classifies them as sharp/medium/blurry, and copies the sharp ones to `OUTPUT/Focus/{folder}/`.
 
 ### Per-Folder Thresholds
 
@@ -154,12 +140,14 @@ OUTPUT/
 ```
 
 ### Crop Images
-- `{droplet}{cam}_crop.png` — Grayscale droplet crop (e.g., `sphere0843g_crop.png`)
-- Standard size across all folders when using Global mode (e.g., 388x388)
+
+Grayscale droplet crops, e.g. `sphere0843g_crop.png`. In Global mode, all crops are the same size (e.g. 388x388).
 
 ### Visualisation Plots (Full Output Mode)
-- `{droplet}{cam}_darkness.png` — Darkness curve showing frame selection
-- `{droplet}{cam}_overlay.png` — Geometric overlay showing detected droplet boundaries
+
+Only generated when "All plots" is selected:
+- `*_darkness.png`: darkness curve with the selected frame marked
+- `*_overlay.png`: detected droplet/sphere boundaries
 
 ### Summary CSV
 Each folder produces `{folder}_summary.csv`:
@@ -217,11 +205,11 @@ The pipeline runs in a background thread. Check the console for progress.
 - matplotlib
 - tqdm
 - tkinter (included with Python)
-- pyphantom (Phantom SDK — from Vision Research)
+- pyphantom (Phantom SDK, from Vision Research)
 
 ## License
 
-This project is licensed under the GNU General Public License v3.0 — see the [LICENSE](LICENSE) file for details.
+GPL-3.0. See [LICENSE](LICENSE).
 
 ## Citation
 
