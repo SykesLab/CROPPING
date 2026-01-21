@@ -1,6 +1,6 @@
 # Droplet Preprocessing Pipeline
 
-[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.x](https://img.shields.io/badge/python-3.x-blue.svg)](https://www.python.org/downloads/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 Extracts droplet crops from Phantom .cine files for CNN training. Handles frame selection, cropping, and focus-based filtering.
@@ -19,39 +19,39 @@ The GUI shows live thumbnails, progress, and ETA. Processing runs in parallel ac
 
 ## Quick Start
 
-### 1. Install Python 3.11
+### 1. Install Python
 
-**IMPORTANT:** This project requires Python 3.11.x due to pyphantom compatibility.
+**IMPORTANT:** Python version requirements depend on your Phantom SDK version. Check your SDK documentation.
 
-Download Python 3.11.9 from [python.org](https://www.python.org/downloads/release/python-3119/)
+Example: Many SDK versions require Python 3.11.x
+
+Download from [python.org](https://www.python.org/downloads/)
 
 During installation, make sure to check "Add Python to PATH".
 
 ### 2. Install Phantom SDK (pyphantom)
 
-The Phantom SDK (pyphantom) is required to read .cine files. It's not publicly available - check with your department, camera owner, or contact Vision Research directly.
+The Phantom SDK (pyphantom) is required to read .cine files. It's not publicly available - obtain from Vision Research or your institution.
 
-Once you have the Phantom SDK:
+**Installation varies by SDK version.** Typically:
+1. Install the pyphantom wheel from your SDK's Python folder
+2. Add the SDK's DLL directory to your system PATH (Windows: `PhantomSDK\Bin\Win64`)
+3. Install Visual C++ Redistributable if needed (usually in SDK's Bin folder)
 
 ```bash
-# Install pyphantom from the SDK wheel file
-pip install "path/to/PhSDK11/Python/pyphantom-3.11.11.806-py311-none-any.whl"
+# Example installation (paths vary by SDK version)
+pip install "path/to/PhantomSDK/Python/pyphantom*.whl"
 
-# Verify installation
+# Verify
 python -c "import pyphantom; print('OK')"
 ```
 
-**Windows users:** You may need to add the Phantom SDK DLLs to your system PATH and install Visual C++ Redistributable:
-
+**Windows PATH setup example:**
 ```powershell
-# Add to PATH (PowerShell, run as user)
-[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User) + ";C:\path\to\PhSDK11\Bin\Win64", [EnvironmentVariableTarget]::User)
-
-# Install Visual C++ Redistributable (if needed)
-# Located at: PhSDK11\Bin\Win64\VC_redist.x64.exe
+[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User) + ";C:\path\to\PhantomSDK\Bin\Win64", [EnvironmentVariableTarget]::User)
 ```
 
-After adding to PATH, restart your terminal/IDE.
+After setup, restart your terminal/IDE.
 
 ### 3. Set Up Environment
 
@@ -213,19 +213,19 @@ Install the Phantom SDK from Vision Research. See installation instructions abov
 
 ### "DLL load failed" or "The specified module could not be found"
 1. Ensure the Phantom SDK DLLs are in your system PATH (see installation steps above)
-2. Install Visual C++ Redistributable: `PhSDK11\Bin\Win64\VC_redist.x64.exe`
+2. Install Visual C++ Redistributable (usually located in SDK's Bin folder)
 3. Restart your terminal/IDE after making PATH changes
 
 ### "numpy.core.multiarray failed to import" or "_ARRAY_API not found"
-pyphantom requires NumPy 1.x. Downgrade NumPy:
+Check your SDK's NumPy compatibility. Some SDK versions require NumPy 1.x:
 ```bash
 pip install "numpy<2"
 ```
 
 ### Wrong Python version
-pyphantom requires Python 3.11.x. Check your version:
+Check your SDK's Python version requirements. Common requirement: Python 3.11.x
 ```bash
-python --version  # Must show 3.11.x
+python --version
 ```
 
 ### "No .cine files found"
@@ -239,8 +239,10 @@ The pipeline runs in a background thread. Check the console for progress.
 
 ## Dependencies
 
-- **Python 3.11.x** (required for pyphantom)
-- **numpy <2.0** (pyphantom compatibility)
+**Note:** Python and NumPy version requirements depend on your Phantom SDK version.
+
+- Python 3.x (check your SDK requirements - commonly 3.11.x)
+- numpy (version depends on SDK - commonly requires <2.0)
 - pandas, scipy
 - opencv-python, Pillow
 - matplotlib
@@ -249,7 +251,7 @@ The pipeline runs in a background thread. Check the console for progress.
 - tkinter (included with Python)
 - **pyphantom** (Phantom SDK, from Vision Research)
 
-See `requirements.txt` for specific version constraints.
+See `requirements.txt` for core project dependencies.
 
 ## License
 
