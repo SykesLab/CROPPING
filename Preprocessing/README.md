@@ -36,11 +36,9 @@ python setup_environment.py
 
 ### 2. Install Phantom SDK
 
-The Phantom SDK (pyphantom) is required to read .cine files:
+The Phantom SDK (pyphantom) is required to read .cine files. It's not publicly available - check with your department, camera owner, or contact Vision Research directly.
 
-1. Download from [Vision Research](https://www.phantomhighspeed.com/resourcesandsupport/)
-2. Install following their instructions
-3. Verify: `python -c "import pyphantom; print('OK')"`
+Verify installation: `python -c "import pyphantom; print('OK')"`
 
 ### 3. Run Pipeline
 
