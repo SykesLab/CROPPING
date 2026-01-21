@@ -2,9 +2,9 @@
 
 import builtins
 import queue
+import subprocess
 import threading
 import time
-import subprocess
 import platform
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -19,7 +19,8 @@ except ImportError:
     raise
 
 import config
-from cine_io import cine, PYPHANTOM_AVAILABLE
+# Import cine_io module but don't check SDK status yet - will be configured in GUI
+import cine_io
 from profiling import format_time
 
 # Queue for worker -> GUI communication (logs, progress, done signals)
@@ -441,7 +442,7 @@ class PipelineGUI:
 
     def _check_sdk(self) -> None:
         """Check Photron SDK availability and update counts."""
-        sdk_ok = PYPHANTOM_AVAILABLE and cine is not None
+        sdk_ok = cine_io.PYPHANTOM_AVAILABLE and cine_io.cine is not None
 
         # Basic cine count from whichever root is current
         root = self.selected_root or config.CINE_ROOT
@@ -1046,7 +1047,7 @@ class PipelineGUI:
 
     def _run_quick_test(self, safe_mode: bool) -> None:
         """Run quick detection test (1st droplet per folder)."""
-        if not PYPHANTOM_AVAILABLE:
+        if not cine_io.PYPHANTOM_AVAILABLE:
             emit_log("="*60)
             emit_log("ERROR: Phantom SDK (pyphantom) not installed!")
             emit_log("")

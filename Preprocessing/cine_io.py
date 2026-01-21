@@ -39,6 +39,7 @@ utils: Optional[Any] = None
 ph: Optional[Any] = None
 PYPHANTOM_AVAILABLE = False
 
+# Try to import pyphantom silently
 try:
     with _suppress_output():
         from pyphantom import cine, utils

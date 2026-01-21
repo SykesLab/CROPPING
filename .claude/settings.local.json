@@ -1,0 +1,16 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(py -3.11:*)",
+      "Bash(py install:*)",
+      "Bash(droplet_envScriptspython.exe -m pip install --upgrade pip)",
+      "Bash(droplet_envScriptspip.exe install -r requirements.txt)",
+      "Bash(./droplet_env/Scripts/python.exe -m pip install:*)",
+      "Bash(./droplet_env/Scripts/pip.exe install:*)",
+      "Bash(./droplet_env/Scripts/python.exe -c \"import pyphantom; print\\(''pyphantom OK''\\)\")",
+      "Bash(./droplet_env/Scripts/python.exe:*)",
+      "Bash(ls:*)",
+      "Bash(./droplet_env/Scripts/pip.exe:*)"
+    ]
+  }
+}

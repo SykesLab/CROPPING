@@ -1,6 +1,6 @@
 # Droplet Preprocessing Pipeline
 
-[![Python 3.8+](https://img.shields.io/badge/python-3.8+-blue.svg)](https://www.python.org/downloads/)
+[![Python 3.11](https://img.shields.io/badge/python-3.11-blue.svg)](https://www.python.org/downloads/)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
 
 Extracts droplet crops from Phantom .cine files for CNN training. Handles frame selection, cropping, and focus-based filtering.
@@ -19,7 +19,41 @@ The GUI shows live thumbnails, progress, and ETA. Processing runs in parallel ac
 
 ## Quick Start
 
-### 1. Set Up Environment
+### 1. Install Python 3.11
+
+**IMPORTANT:** This project requires Python 3.11.x due to pyphantom compatibility.
+
+Download Python 3.11.9 from [python.org](https://www.python.org/downloads/release/python-3119/)
+
+During installation, make sure to check "Add Python to PATH".
+
+### 2. Install Phantom SDK (pyphantom)
+
+The Phantom SDK (pyphantom) is required to read .cine files. It's not publicly available - check with your department, camera owner, or contact Vision Research directly.
+
+Once you have the Phantom SDK:
+
+```bash
+# Install pyphantom from the SDK wheel file
+pip install "path/to/PhSDK11/Python/pyphantom-3.11.11.806-py311-none-any.whl"
+
+# Verify installation
+python -c "import pyphantom; print('OK')"
+```
+
+**Windows users:** You may need to add the Phantom SDK DLLs to your system PATH and install Visual C++ Redistributable:
+
+```powershell
+# Add to PATH (PowerShell, run as user)
+[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User) + ";C:\path\to\PhSDK11\Bin\Win64", [EnvironmentVariableTarget]::User)
+
+# Install Visual C++ Redistributable (if needed)
+# Located at: PhSDK11\Bin\Win64\VC_redist.x64.exe
+```
+
+After adding to PATH, restart your terminal/IDE.
+
+### 3. Set Up Environment
 
 ```bash
 # Create virtual environment (recommended)
@@ -29,24 +63,15 @@ droplet_env\Scripts\activate  # Windows
 
 # Install dependencies
 pip install -r requirements.txt
-
-# Verify setup
-python setup_environment.py
 ```
 
-### 2. Install Phantom SDK
-
-The Phantom SDK (pyphantom) is required to read .cine files. It's not publicly available - check with your department, camera owner, or contact Vision Research directly.
-
-Verify installation: `python -c "import pyphantom; print('OK')"`
-
-### 3. Run Pipeline
+### 4. Run Pipeline
 
 ```bash
 python gui.py
 ```
 
-### 4. Configure in GUI
+### 5. Configure in GUI
 
 1. **CINE Root**: either a parent folder containing subfolders with .cine files, or a single folder with .cine files directly
 2. **Output Folder**: defaults to `./OUTPUT`
@@ -184,7 +209,24 @@ Key parameters can be adjusted in `config.py`:
 ## Troubleshooting
 
 ### "pyphantom not found"
-Install the Phantom SDK from Vision Research.
+Install the Phantom SDK from Vision Research. See installation instructions above.
+
+### "DLL load failed" or "The specified module could not be found"
+1. Ensure the Phantom SDK DLLs are in your system PATH (see installation steps above)
+2. Install Visual C++ Redistributable: `PhSDK11\Bin\Win64\VC_redist.x64.exe`
+3. Restart your terminal/IDE after making PATH changes
+
+### "numpy.core.multiarray failed to import" or "_ARRAY_API not found"
+pyphantom requires NumPy 1.x. Downgrade NumPy:
+```bash
+pip install "numpy<2"
+```
+
+### Wrong Python version
+pyphantom requires Python 3.11.x. Check your version:
+```bash
+python --version  # Must show 3.11.x
+```
 
 ### "No .cine files found"
 Check your CINE Root path in the GUI points to folders containing .cine files.
@@ -197,14 +239,17 @@ The pipeline runs in a background thread. Check the console for progress.
 
 ## Dependencies
 
-- Python 3.8+
-- numpy, pandas, scipy
+- **Python 3.11.x** (required for pyphantom)
+- **numpy <2.0** (pyphantom compatibility)
+- pandas, scipy
 - opencv-python, Pillow
 - matplotlib
 - tqdm
 - PyYAML
 - tkinter (included with Python)
-- pyphantom (Phantom SDK, from Vision Research)
+- **pyphantom** (Phantom SDK, from Vision Research)
+
+See `requirements.txt` for specific version constraints.
 
 ## License
 

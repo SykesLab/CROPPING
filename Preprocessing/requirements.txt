@@ -2,7 +2,8 @@
 # Install with: pip install -r requirements.txt
 
 # Core scientific computing
-numpy>=1.21.0
+# IMPORTANT: NumPy must be <2.0 for pyphantom compatibility
+numpy>=1.21.0,<2.0
 pandas>=1.3.0
 scipy>=1.7.0
 
@@ -20,4 +21,5 @@ tqdm>=4.60.0
 PyYAML>=5.4.0
 
 # Note: pyphantom (Phantom SDK) must be installed separately
-# See setup_environment.py for instructions
+# It requires Python 3.11.x and is NOT available on PyPI
+# See SETUP_GUIDE.md for installation instructions
