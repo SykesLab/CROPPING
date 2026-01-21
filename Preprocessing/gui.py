@@ -1127,18 +1127,18 @@ class PipelineGUI:
 
         emit_log("Quick detection test complete!")
 
-    def _run_full_pipeline(self, config: Dict[str, Any]) -> None:
+    def _run_full_pipeline(self, run_config: Dict[str, Any]) -> None:
         """Run full pipeline (global or per-folder) with GUI logs."""
         from pipeline_folder import process_per_folder
         from pipeline_global import process_global
 
         # Apply step to config module
-        config.CINE_STEP = config["step"]
+        config.CINE_STEP = run_config["step"]
 
         emit_log(
-            f"Cine step: {config['step']}, "
-            f"Mode: {'Global' if config['global_mode'] else 'Per-folder'}, "
-            f"Outputs: {'All plots' if config['full_output'] else 'Crops only'}"
+            f"Cine step: {run_config['step']}, "
+            f"Mode: {'Global' if run_config['global_mode'] else 'Per-folder'}, "
+            f"Outputs: {'All plots' if run_config['full_output'] else 'Crops only'}"
         )
 
         # --- Mirror all prints to GUI log as well ---
@@ -1166,23 +1166,23 @@ class PipelineGUI:
         builtins.print = gui_print
 
         try:
-            if config["global_mode"]:
+            if run_config["global_mode"]:
                 process_global(
-                    safe_mode=config["safe_mode"],
-                    profile=config["profile"],
+                    safe_mode=run_config["safe_mode"],
+                    profile=run_config["profile"],
                     quick_test=False,
-                    full_output=config["full_output"],
+                    full_output=run_config["full_output"],
                     gui_mode=True,
-                    focus_classification=config["focus_classification"],
+                    focus_classification=run_config["focus_classification"],
                 )
             else:
                 process_per_folder(
-                    safe_mode=config["safe_mode"],
-                    profile=config["profile"],
+                    safe_mode=run_config["safe_mode"],
+                    profile=run_config["profile"],
                     quick_test=False,
-                    full_output=config["full_output"],
+                    full_output=run_config["full_output"],
                     gui_mode=True,
-                    focus_classification=config["focus_classification"],
+                    focus_classification=run_config["focus_classification"],
                 )
         finally:
             # Restore print
