@@ -9,7 +9,6 @@ Includes silent pyphantom import to suppress SDK banner on worker spawn.
 
 import os
 import re
-import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional, Tuple
@@ -19,18 +18,26 @@ from typing import Any, Dict, Generator, List, Optional, Tuple
 
 @contextmanager
 def _suppress_output() -> Generator[None, None, None]:
-    """Context manager to silence stdout and stderr."""
-    saved_out = sys.stdout
-    saved_err = sys.stderr
-    devnull = open(os.devnull, "w")
-    sys.stdout = devnull
-    sys.stderr = devnull
+    """Context manager to silence stdout and stderr at the OS level.
+
+    Uses low-level file descriptor manipulation to suppress output from
+    C extensions that bypass Python's sys.stdout/stderr.
+    """
+    old_stdout_fd = os.dup(1)
+    old_stderr_fd = os.dup(2)
+    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+
+    os.dup2(devnull_fd, 1)
+    os.dup2(devnull_fd, 2)
+
     try:
         yield
     finally:
-        sys.stdout = saved_out
-        sys.stderr = saved_err
-        devnull.close()
+        os.dup2(old_stdout_fd, 1)
+        os.dup2(old_stderr_fd, 2)
+        os.close(devnull_fd)
+        os.close(old_stdout_fd)
+        os.close(old_stderr_fd)
 
 
 # Load pyphantom components silently (optional)
