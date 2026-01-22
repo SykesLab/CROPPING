@@ -2,11 +2,35 @@
 Parallel processing utilities with progress bars.
 """
 
+import os
 import time
 from multiprocessing import Pool
 from typing import Any, Callable, List, Optional
 
 from tqdm import tqdm
+
+
+def _worker_init() -> None:
+    """Initialize worker process with suppressed stdout/stderr.
+
+    This runs once per worker before any tasks, preventing the
+    pyphantom SDK banner from printing on each worker spawn.
+    """
+    import sys
+    devnull = open(os.devnull, "w")
+    sys.stdout = devnull
+    sys.stderr = devnull
+
+    # Import pyphantom while suppressed to trigger its banner silently
+    try:
+        import pyphantom  # noqa: F401
+    except ImportError:
+        pass
+
+    # Restore stdout/stderr for actual work
+    sys.stdout = sys.__stdout__
+    sys.stderr = sys.__stderr__
+    devnull.close()
 
 
 def run_parallel(
@@ -38,7 +62,7 @@ def run_parallel(
                 _emit_gui_progress(i + 1, total, desc, start_time, last_print_pct)
                 last_print_pct = _update_last_print_pct(i + 1, total, last_print_pct)
         else:
-            with Pool(processes=processes) as pool:
+            with Pool(processes=processes, initializer=_worker_init) as pool:
                 for i, result in enumerate(pool.imap(func, items)):
                     results.append(result)
                     _emit_gui_progress(i + 1, total, desc, start_time, last_print_pct)
@@ -51,7 +75,7 @@ def run_parallel(
             results.append(func(item))
         return results
 
-    with Pool(processes=processes) as pool:
+    with Pool(processes=processes, initializer=_worker_init) as pool:
         results = list(tqdm(pool.imap(func, items), total=total, desc=desc, dynamic_ncols=True, smoothing=0.1, unit="item"))
 
     return results
