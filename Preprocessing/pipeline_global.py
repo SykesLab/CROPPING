@@ -278,12 +278,18 @@ def process_global(
     quick_test: bool = False,
     full_output: bool = True,
     gui_mode: bool = False,
+    use_darkness: bool = False,
 ) -> None:
     """
     Execute global pipeline with droplet-level parallelisation.
 
     Calibrates crop size across ALL folders, then processes all droplets
     with a uniform crop size. Progress tracks individual droplets.
+
+    Args:
+        use_darkness: If True, compute darkness curves for frame selection weighting
+                      and enable darkness plot generation. If False, use faster
+                      geometry-only frame selection (no darkness plots).
     """
     # Check if pyphantom is available
     from cine_io import PYPHANTOM_AVAILABLE
@@ -355,8 +361,10 @@ def process_global(
         "n_outputs": 0,
     }
 
-    # Select worker based on output mode
-    worker_func = _analyze_droplet_global_full if full_output else _analyze_droplet_global_crops_only
+    # Select worker based on darkness mode
+    # Use darkness analysis if enabled (slower but provides darkness weighting)
+    # Otherwise use geometry-only frame selection (faster)
+    worker_func = _analyze_droplet_global_full if use_darkness else _analyze_droplet_global_crops_only
 
     # Total work = Phase 1 (analysis) + Phase 3 (outputs)
     # Phase 2 (calibration) is instant, doesn't count

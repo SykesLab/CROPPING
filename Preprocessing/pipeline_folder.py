@@ -40,12 +40,18 @@ def process_per_folder(
     quick_test: bool = False,
     full_output: bool = True,
     gui_mode: bool = False,
+    use_darkness: bool = False,
 ) -> None:
     """
     Execute per-folder pipeline.
 
     Each folder is calibrated and processed independently. Parallelisation
     happens within each folder at the droplet level.
+
+    Args:
+        use_darkness: If True, compute darkness curves for frame selection weighting
+                      and enable darkness plot generation. If False, use faster
+                      geometry-only frame selection (no darkness plots).
     """
     # Check if pyphantom is available
     from cine_io import PYPHANTOM_AVAILABLE
@@ -94,7 +100,9 @@ def process_per_folder(
     print(f"\n[PER-FOLDER MODE] {mode_str}, {output_str}, step={step}")
     print(f"Found {total_folders} subfolders.\n")
 
-    worker_func = analyze_droplet_full if full_output else analyze_droplet_crops_only
+    # Use darkness analysis if enabled (slower but provides darkness weighting)
+    # Otherwise use geometry-only frame selection (faster)
+    worker_func = analyze_droplet_full if use_darkness else analyze_droplet_crops_only
 
     for f_idx, sub in enumerate(subfolders, start=1):
         folder_result = _process_single_folder(

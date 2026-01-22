@@ -19,7 +19,7 @@ except ImportError:
     raise
 
 import config
-# Import cine_io module but don't check SDK status yet - will be configured in GUI
+# Import cine_io modu6le but don't check SDK status yet - will be configured in GUI
 import cine_io
 from profiling import format_time
 
@@ -612,6 +612,21 @@ class PipelineGUI:
         # Keep profiling in same disable group as outputs
         self.profile_control = self.profile_check
 
+        # ----- Frame Selection (third row) -----
+        frame_sel_frame = ttk.LabelFrame(frame, text="Frame Selection", padding=10)
+        frame_sel_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky="nsew")
+        frame_sel_frame.grid_columnconfigure(0, weight=1)
+
+        self.darkness_var = tk.BooleanVar(value=False)
+        self.darkness_check = ttk.Checkbutton(
+            frame_sel_frame,
+            text="Use darkness weighting (slower, enables darkness curve plots)",
+            variable=self.darkness_var,
+        )
+        self.darkness_check.grid(row=0, column=0, padx=5, pady=2, sticky="w")
+
+        self.frame_sel_controls = [self.darkness_check]
+
         # Initialise enable/disable state
         self._update_config_state()
 
@@ -644,6 +659,10 @@ class PipelineGUI:
 
         # Profiling
         self._set_widget_state(self.profile_control, state)
+
+        # Frame selection
+        for w in self.frame_sel_controls:
+            self._set_widget_state(w, state)
 
     def _set_widget_state(self, widget: tk.Widget, state: str) -> None:
         """Set widget state to 'normal' or 'disabled'."""
@@ -936,12 +955,16 @@ class PipelineGUI:
 
             # Profiling
             config["profile"] = self.profile_var.get()
+
+            # Frame selection
+            config["use_darkness"] = self.darkness_var.get()
         else:
             # Defaults that won't actually be used in quick mode
             config["step"] = 10
             config["global_mode"] = True
             config["full_output"] = False
             config["profile"] = False
+            config["use_darkness"] = False
 
         return config
 
@@ -1165,6 +1188,7 @@ class PipelineGUI:
                     quick_test=False,
                     full_output=run_config["full_output"],
                     gui_mode=True,
+                    use_darkness=run_config["use_darkness"],
                 )
             else:
                 process_per_folder(
@@ -1173,6 +1197,7 @@ class PipelineGUI:
                     quick_test=False,
                     full_output=run_config["full_output"],
                     gui_mode=True,
+                    use_darkness=run_config["use_darkness"],
                 )
         finally:
             # Restore print
