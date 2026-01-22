@@ -361,8 +361,6 @@ def process_global(
         desc="Analysing droplets",
         safe_mode=safe_mode,
         gui_mode=gui_mode,
-        progress_offset=0,
-        progress_total=total_work,
     )
     phase1_sec = phase1_timer.seconds
     print(f"[GLOBAL] Phase 1 complete — {phase1_timer.elapsed}")
@@ -412,8 +410,6 @@ def process_global(
         desc="Generating outputs",
         safe_mode=safe_mode,
         gui_mode=gui_mode,
-        progress_offset=total_droplets,  # Continue from Phase 1
-        progress_total=total_work,
     )
     phase3_sec = phase3_timer.seconds
 
