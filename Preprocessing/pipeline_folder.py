@@ -311,11 +311,10 @@ def _quick_test_single_folder(sub: Path, f_idx: int, total_folders: int,
     out_sub = OUTPUT_ROOT / sub.name
     out_sub.mkdir(parents=True, exist_ok=True)
 
-    # Create camera subfolders with visualizations/ inside each
+    # Camera visualization paths (created on-demand when needed)
     cam_viz_dirs: Dict[str, Path] = {}
     for cam in ("g", "v", "m"):
         cam_viz_dirs[cam] = out_sub / cam / "visualizations"
-        cam_viz_dirs[cam].mkdir(parents=True, exist_ok=True)
 
     for cam in ("g", "v", "m"):
         path = cams.get(cam)
@@ -343,7 +342,9 @@ def _quick_test_single_folder(sub: Path, f_idx: int, total_folders: int,
             best_idx, geo = choose_best_frame_with_geo(cine_obj, curve)
             folder_timing["best_frame"] += time.perf_counter() - t0
 
+            # Create visualization folder on first use
             viz_dir = cam_viz_dirs[cam]
+            viz_dir.mkdir(parents=True, exist_ok=True)
 
             t0 = time.perf_counter()
             save_darkness_plot(viz_dir / f"{path.stem}_darkness.png", curve, first, last, best_idx, path.name)
