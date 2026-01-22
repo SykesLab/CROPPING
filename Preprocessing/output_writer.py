@@ -378,6 +378,11 @@ def write_folder_csv(
     cnn_size: int,
 ) -> bool:
     """Write CSV summary for a folder."""
+    # Camera crop paths
+    cam_crop_dirs: Dict[str, Path] = {}
+    for cam in ("g", "v", "m"):
+        cam_crop_dirs[cam] = out_sub / cam / "crops"
+
     try:
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
@@ -423,7 +428,8 @@ def write_folder_csv(
                         except (IndexError, TypeError):
                             logger.warning(f"Invalid curve index for {droplet_id}/{cam}")
 
-                    crop_path_str = str(out_sub / f"{path.stem}_crop.png")
+                    # Use camera subfolder path
+                    crop_path_str = str(cam_crop_dirs[cam] / f"{path.stem}_crop.png")
 
                     # Compute focus metrics from saved crop
                     focus_metrics: Dict[str, float] = {}
