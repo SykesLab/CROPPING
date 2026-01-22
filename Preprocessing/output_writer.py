@@ -59,7 +59,7 @@ def _reload_frame_and_mask(
 def generate_droplet_outputs(
     args: Tuple[str, Dict[str, Dict[str, Any]], int, str],
 ) -> Tuple[str, Dict[str, float]]:
-    """Generate outputs for single droplet (both cameras)."""
+    """Generate outputs for single droplet (all cameras)."""
     droplet_id, cam_data, cnn_size, out_sub_path = args
     out_sub_path = Path(out_sub_path)
 
@@ -70,6 +70,17 @@ def generate_droplet_outputs(
         "overlay_plot": 0.0,
         "imwrite": 0.0,
     }
+
+    # Create camera subfolders with crops/ and visualizations/ inside each
+    cam_dirs: Dict[str, Dict[str, Path]] = {}
+    for cam in ("g", "v", "m"):
+        cam_base = out_sub_path / cam
+        cam_dirs[cam] = {
+            "crops": cam_base / "crops",
+            "visualizations": cam_base / "visualizations",
+        }
+        cam_dirs[cam]["crops"].mkdir(parents=True, exist_ok=True)
+        cam_dirs[cam]["visualizations"].mkdir(parents=True, exist_ok=True)
 
     for cam, info in cam_data.items():
         path = info.get("path")
@@ -114,8 +125,9 @@ def generate_droplet_outputs(
         )
         timing["crop"] += time.perf_counter() - t0
 
+        # Save crop to camera subfolder
         t0 = time.perf_counter()
-        crop_path = out_sub_path / f"{path.stem}_crop.png"
+        crop_path = cam_dirs[cam]["crops"] / f"{path.stem}_crop.png"
         try:
             cv2.imwrite(str(crop_path), crop)
             _notify_image_saved(crop_path)
@@ -123,11 +135,13 @@ def generate_droplet_outputs(
             logger.error(f"Failed to write crop {crop_path}: {e}")
         timing["imwrite"] += time.perf_counter() - t0
 
-        # Full output mode: generate plots
+        # Full output mode: generate plots to camera subfolder
         if curve is not None:
+            viz_dir = cam_dirs[cam]["visualizations"]
+
             t0 = time.perf_counter()
             save_darkness_plot(
-                out_sub_path / f"{path.stem}_darkness.png",
+                viz_dir / f"{path.stem}_darkness.png",
                 curve,
                 first,
                 last,
@@ -146,7 +160,7 @@ def generate_droplet_outputs(
                 "cx": cx,
             }
             save_geometric_overlay(
-                out_sub_path / f"{path.stem}_overlay.png",
+                viz_dir / f"{path.stem}_overlay.png",
                 geo_for_plot,
                 best_idx,
                 cnn_size=cnn_size,
@@ -178,6 +192,17 @@ def generate_folder_outputs(
 
     out_sub = OUTPUT_ROOT / sub.name
     out_sub.mkdir(parents=True, exist_ok=True)
+
+    # Create camera subfolders with crops/ and visualizations/ inside each
+    cam_dirs: Dict[str, Dict[str, Path]] = {}
+    for cam in ("g", "v", "m"):
+        cam_base = out_sub / cam
+        cam_dirs[cam] = {
+            "crops": cam_base / "crops",
+            "visualizations": cam_base / "visualizations",
+        }
+        cam_dirs[cam]["crops"].mkdir(parents=True, exist_ok=True)
+        cam_dirs[cam]["visualizations"].mkdir(parents=True, exist_ok=True)
 
     csv_path = out_sub / f"{sub.name}_summary.csv"
 
@@ -271,8 +296,9 @@ def generate_folder_outputs(
                             focus_metrics = compute_all_focus_metrics(crop)
                             timing["focus_metrics"] += time.perf_counter() - t0
 
+                        # Save crop to camera subfolder
                         t0 = time.perf_counter()
-                        out_crop = out_sub / f"{path.stem}_crop.png"
+                        out_crop = cam_dirs[cam]["crops"] / f"{path.stem}_crop.png"
                         try:
                             cv2.imwrite(str(out_crop), crop)
                             crop_path = str(out_crop)
@@ -281,10 +307,13 @@ def generate_folder_outputs(
                             logger.error(f"Failed to write crop {out_crop}: {e}")
                         timing["imwrite"] += time.perf_counter() - t0
 
+                        # Save visualizations to camera subfolder
                         if curve is not None:
+                            viz_dir = cam_dirs[cam]["visualizations"]
+
                             t0 = time.perf_counter()
                             save_darkness_plot(
-                                out_sub / f"{path.stem}_darkness.png",
+                                viz_dir / f"{path.stem}_darkness.png",
                                 curve,
                                 first,
                                 last,
@@ -303,7 +332,7 @@ def generate_folder_outputs(
                                 "cx": cx,
                             }
                             save_geometric_overlay(
-                                out_sub / f"{path.stem}_overlay.png",
+                                viz_dir / f"{path.stem}_overlay.png",
                                 geo_for_plot,
                                 best_idx,
                                 cnn_size=cnn_size,
