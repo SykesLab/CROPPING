@@ -429,11 +429,12 @@ def write_folder_csv(
                             logger.warning(f"Invalid curve index for {droplet_id}/{cam}")
 
                     # Use camera subfolder path
-                    crop_path_str = str(cam_crop_dirs[cam] / f"{path.stem}_crop.png")
+                    crop_file = cam_crop_dirs[cam] / f"{path.stem}_crop.png"
+                    crop_path_str = str(crop_file)
 
-                    # Compute focus metrics from saved crop
+                    # Compute focus metrics from saved crop (only if file exists)
                     focus_metrics: Dict[str, float] = {}
-                    if FOCUS_METRICS_ENABLED:
+                    if FOCUS_METRICS_ENABLED and crop_file.exists():
                         try:
                             crop_img = cv2.imread(crop_path_str, cv2.IMREAD_GRAYSCALE)
                             if crop_img is not None:
