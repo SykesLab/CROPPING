@@ -7,7 +7,7 @@ from typing import Any, Tuple
 import cv2
 import numpy as np
 
-from cine_io import utils
+from phantom_silence import utils
 
 
 def load_frame_gray(cine_obj: Any, idx: int) -> np.ndarray:
