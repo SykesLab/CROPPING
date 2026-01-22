@@ -225,6 +225,7 @@ def _generate_summary_plot(
             bar_colors = []
             y_labels = []
             folder_label_positions = {}
+            separator_positions = []  # Y positions for black separator lines
 
             y_pos = 0
             for folder in sorted(folders):
@@ -243,10 +244,17 @@ def _generate_summary_plot(
                 if y_pos > folder_start:
                     # Position folder label at middle of its camera group
                     folder_label_positions[folder] = (folder_start + y_pos - 1) / 2
+                    # Record separator position (between this material and next)
+                    separator_positions.append(y_pos - 0.5 + 0.25)  # Midpoint of the gap
                     y_pos += 0.5  # Gap between materials
 
-            # Plot bars
-            ax2.barh(y_positions, bar_values, color=bar_colors, alpha=0.8, height=0.8)
+            # Plot bars (height=1.0 so bars touch within each material group)
+            ax2.barh(y_positions, bar_values, color=bar_colors, alpha=0.8, height=1.0)
+
+            # Add thin black separator lines between materials
+            # Skip the last separator (after last material)
+            for sep_y in separator_positions[:-1]:
+                ax2.axhline(y=sep_y, color='black', linewidth=0.8, linestyle='-')
 
             # Set camera labels on y-axis
             ax2.set_yticks(y_positions)
