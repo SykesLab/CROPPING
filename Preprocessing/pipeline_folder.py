@@ -22,7 +22,7 @@ from darkness_analysis import (
     choose_best_frame_geometry_only,
     choose_best_frame_with_geo,
 )
-from focus_metrics import classify_folder_focus
+from focus_classification import run_focus_classification
 from image_utils import otsu_mask
 from output_writer import generate_droplet_outputs, write_folder_csv
 from parallel_utils import run_parallel
@@ -40,7 +40,6 @@ def process_per_folder(
     quick_test: bool = False,
     full_output: bool = True,
     gui_mode: bool = False,
-    focus_classification: bool = True,
 ) -> None:
     """
     Execute per-folder pipeline.
@@ -130,10 +129,10 @@ def process_per_folder(
     total_sec = global_timer.seconds
     print_global_summary(global_analysis_timing, global_output_timing)
 
-    if focus_classification:
-        logger.info("Running focus classification...")
-        print("\n[PER-FOLDER] Running focus classification...")
-        _run_focus_classification_perfolder()
+    # Focus classification (always runs)
+    logger.info("Running focus classification...")
+    print("\n[PER-FOLDER] Running focus classification...")
+    run_focus_classification()
 
     logger.info(f"Per-folder pipeline complete in {format_time(total_sec)}")
     print(f"\n=== PER-FOLDER COMPLETE — {format_time(total_sec)} ===")
@@ -384,9 +383,3 @@ def _print_quick_test_summary(global_timing: Dict[str, float], total_sec: float)
 
     logger.info(f"Quick test complete in {format_time(total_sec)}")
     print(f"\n=== QUICK TEST COMPLETE — {format_time(total_sec)} ===")
-
-
-def _run_focus_classification_perfolder() -> None:
-    """Run per-folder focus classification (delegates to shared implementation)."""
-    from pipeline_global import _run_focus_classification
-    _run_focus_classification()

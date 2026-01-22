@@ -609,17 +609,8 @@ class PipelineGUI:
         )
         self.profile_check.grid(row=2, column=0, padx=5, pady=(5, 2), sticky="w")
 
-        self.focus_class_var = tk.BooleanVar(value=True)
-        self.focus_class_check = ttk.Checkbutton(
-            output_frame,
-            text="Focus classification (per-folder)",
-            variable=self.focus_class_var,
-        )
-        self.focus_class_check.grid(row=3, column=0, padx=5, pady=2, sticky="w")
-
-        # Keep profiling and focus classification in same disable group as outputs
+        # Keep profiling in same disable group as outputs
         self.profile_control = self.profile_check
-        self.focus_class_control = self.focus_class_check
 
         # Initialise enable/disable state
         self._update_config_state()
@@ -651,9 +642,8 @@ class PipelineGUI:
         for w in self.output_controls:
             self._set_widget_state(w, state)
 
-        # Profiling and focus classification
+        # Profiling
         self._set_widget_state(self.profile_control, state)
-        self._set_widget_state(self.focus_class_control, state)
 
     def _set_widget_state(self, widget: tk.Widget, state: str) -> None:
         """Set widget state to 'normal' or 'disabled'."""
@@ -946,16 +936,12 @@ class PipelineGUI:
 
             # Profiling
             config["profile"] = self.profile_var.get()
-
-            # Focus classification
-            config["focus_classification"] = self.focus_class_var.get()
         else:
             # Defaults that won't actually be used in quick mode
             config["step"] = 10
             config["global_mode"] = True
             config["full_output"] = False
             config["profile"] = False
-            config["focus_classification"] = False
 
         return config
 
@@ -1179,7 +1165,6 @@ class PipelineGUI:
                     quick_test=False,
                     full_output=run_config["full_output"],
                     gui_mode=True,
-                    focus_classification=run_config["focus_classification"],
                 )
             else:
                 process_per_folder(
@@ -1188,7 +1173,6 @@ class PipelineGUI:
                     quick_test=False,
                     full_output=run_config["full_output"],
                     gui_mode=True,
-                    focus_classification=run_config["focus_classification"],
                 )
         finally:
             # Restore print

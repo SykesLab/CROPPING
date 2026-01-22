@@ -99,7 +99,8 @@ droplet-preprocessing/
 ├── image_utils.py           # Image utilities
 │
 ├── focus_metrics.py         # Focus quality metrics
-├── focus_analysis.py        # Standalone focus analysis
+├── focus_classification.py  # Focus classification for pipeline
+├── focus_analysis.py        # Standalone focus analysis CLI
 │
 ├── output_writer.py         # CSV/output generation
 ├── plotting.py              # Visualisation
@@ -129,7 +130,7 @@ droplet-preprocessing/
 
 ## Focus Classification
 
-Enable the "Focus classification" checkbox in the GUI. This computes focus metrics for each crop, classifies them as sharp/medium/blurry, and copies the sharp ones to `OUTPUT/Focus/{material}/{camera}/`.
+Focus classification runs automatically after processing. It computes focus metrics for each crop, classifies them as sharp/medium/blurry, and copies the sharp ones to `OUTPUT/Focus/{material}/{camera}/`.
 
 ### Per-Folder, Per-Camera Thresholds
 
