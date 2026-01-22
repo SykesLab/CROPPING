@@ -311,6 +311,12 @@ def _quick_test_single_folder(sub: Path, f_idx: int, total_folders: int,
     out_sub = OUTPUT_ROOT / sub.name
     out_sub.mkdir(parents=True, exist_ok=True)
 
+    # Create camera subfolders with visualizations/ inside each
+    cam_viz_dirs: Dict[str, Path] = {}
+    for cam in ("g", "v", "m"):
+        cam_viz_dirs[cam] = out_sub / cam / "visualizations"
+        cam_viz_dirs[cam].mkdir(parents=True, exist_ok=True)
+
     for cam in ("g", "v", "m"):
         path = cams.get(cam)
         if path is None:
@@ -337,8 +343,10 @@ def _quick_test_single_folder(sub: Path, f_idx: int, total_folders: int,
             best_idx, geo = choose_best_frame_with_geo(cine_obj, curve)
             folder_timing["best_frame"] += time.perf_counter() - t0
 
+            viz_dir = cam_viz_dirs[cam]
+
             t0 = time.perf_counter()
-            save_darkness_plot(out_sub / f"{path.stem}_darkness.png", curve, first, last, best_idx, path.name)
+            save_darkness_plot(viz_dir / f"{path.stem}_darkness.png", curve, first, last, best_idx, path.name)
             folder_timing["darkness_plot"] += time.perf_counter() - t0
 
             t0 = time.perf_counter()
@@ -348,7 +356,7 @@ def _quick_test_single_folder(sub: Path, f_idx: int, total_folders: int,
                 "frame": frame, "mask": mask, "y_top": geo["y_top"], "y_bottom": geo["y_bottom"],
                 "y_bottom_sphere": geo["y_bottom_sphere"], "cx": geo["cx"],
             }
-            save_geometric_overlay(out_sub / f"{path.stem}_overlay.png", geo_for_plot, best_idx, cnn_size=None)
+            save_geometric_overlay(viz_dir / f"{path.stem}_overlay.png", geo_for_plot, best_idx, cnn_size=None)
             folder_timing["overlay_plot"] += time.perf_counter() - t0
         else:
             t0 = time.perf_counter()

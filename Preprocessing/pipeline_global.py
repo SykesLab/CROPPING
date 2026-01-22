@@ -159,9 +159,20 @@ def _generate_droplet_output_global(
     from image_utils import load_frame_gray, otsu_mask
     
     folder_name, droplet_id, cam_data, cnn_size = args
-    
+
     out_sub = OUTPUT_ROOT / folder_name
     out_sub.mkdir(parents=True, exist_ok=True)
+
+    # Create camera subfolders with crops/ and visualizations/ inside each
+    cam_dirs: Dict[str, Dict[str, Path]] = {}
+    for cam in ("g", "v", "m"):
+        cam_base = out_sub / cam
+        cam_dirs[cam] = {
+            "crops": cam_base / "crops",
+            "visualizations": cam_base / "visualizations",
+        }
+        cam_dirs[cam]["crops"].mkdir(parents=True, exist_ok=True)
+        cam_dirs[cam]["visualizations"].mkdir(parents=True, exist_ok=True)
 
     timing = {
         "reload_frame": 0.0,
@@ -217,17 +228,19 @@ def _generate_droplet_output_global(
             _ = compute_all_focus_metrics(crop)
             timing["focus_metrics"] += time.perf_counter() - t0
 
-        # Save crop
+        # Save crop to camera subfolder
         t0 = time.perf_counter()
-        crop_path = out_sub / f"{path.stem}_crop.png"
+        crop_path = cam_dirs[cam]["crops"] / f"{path.stem}_crop.png"
         cv2.imwrite(str(crop_path), crop)
         timing["imwrite"] += time.perf_counter() - t0
 
-        # Full output mode: generate plots
+        # Full output mode: generate plots to camera subfolder
         if curve is not None:
+            viz_dir = cam_dirs[cam]["visualizations"]
+
             t0 = time.perf_counter()
             save_darkness_plot(
-                out_sub / f"{path.stem}_darkness.png",
+                viz_dir / f"{path.stem}_darkness.png",
                 curve,
                 first,
                 last,
@@ -246,7 +259,7 @@ def _generate_droplet_output_global(
                 "cx": cx,
             }
             save_geometric_overlay(
-                out_sub / f"{path.stem}_overlay.png",
+                viz_dir / f"{path.stem}_overlay.png",
                 geo_for_plot,
                 best_idx,
                 cnn_size=cnn_size,
@@ -659,9 +672,14 @@ def _write_global_csvs(
         out_sub.mkdir(parents=True, exist_ok=True)
         csv_path = out_sub / f"{folder_name}_summary.csv"
 
+        # Create camera subfolders (crops are already saved here by output phase)
+        cam_crop_dirs: Dict[str, Path] = {}
+        for cam in ("g", "v", "m"):
+            cam_crop_dirs[cam] = out_sub / cam / "crops"
+
         with open(csv_path, "w", newline="") as f:
             writer = csv.writer(f)
-            
+
             # Header
             header = [
                 "droplet_id",
@@ -706,7 +724,8 @@ def _write_global_csvs(
                     if curve is not None:
                         dark_val = float(curve[best_idx - first])
 
-                    crop_path = str(out_sub / f"{path.stem}_crop.png")
+                    # Use camera subfolder path
+                    crop_path = str(cam_crop_dirs[cam] / f"{path.stem}_crop.png")
 
                     # Compute focus metrics from saved crop
                     focus_metrics: Dict[str, float] = {}
