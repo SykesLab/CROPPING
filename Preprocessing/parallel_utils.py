@@ -46,10 +46,19 @@ def run_parallel(
 
     safe_mode: Run sequentially (single process) for debugging.
     gui_mode: Emit progress markers for GUI instead of tqdm bars.
+    processes: Number of worker processes. If None, uses config.N_CORES or all available.
     """
     total = len(items)
     if total == 0:
         return []
+
+    # Use config.N_CORES if processes not explicitly specified
+    if processes is None:
+        try:
+            import config
+            processes = config.N_CORES
+        except (ImportError, AttributeError):
+            pass  # Use default (all cores)
 
     if gui_mode:
         results = []

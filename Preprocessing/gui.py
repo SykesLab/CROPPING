@@ -469,26 +469,26 @@ class PipelineGUI:
 
     # --- Config panel ---
     def _build_config(self, parent: ttk.Frame) -> None:
+        import os
         frame = ttk.Frame(parent)
         frame.grid(row=1, column=0, padx=10, pady=5, sticky="ew")
         frame.grid_columnconfigure(0, weight=1)
         frame.grid_columnconfigure(1, weight=1)
 
-        # ----- Execution mode -----
-        exec_frame = ttk.LabelFrame(frame, text="Execution mode", padding=10)
+        # ----- Execution mode (row 0, left) -----
+        exec_frame = ttk.LabelFrame(frame, text="Execution mode", padding=5)
         exec_frame.grid(row=0, column=0, padx=5, pady=5, sticky="nsew")
-        exec_frame.grid_columnconfigure(0, weight=1)
 
         self.mode_var = tk.StringVar(value="full")
 
         self.quick_radio = ttk.Radiobutton(
             exec_frame,
-            text="Quick detection test (1st droplet per folder)",
+            text="Quick test (1st droplet/folder)",
             variable=self.mode_var,
             value="quick",
             command=self._update_config_state,
         )
-        self.quick_radio.grid(row=0, column=0, padx=5, pady=2, sticky="w")
+        self.quick_radio.grid(row=0, column=0, columnspan=2, padx=5, pady=1, sticky="w")
 
         self.full_radio = ttk.Radiobutton(
             exec_frame,
@@ -497,89 +497,97 @@ class PipelineGUI:
             value="full",
             command=self._update_config_state,
         )
-        self.full_radio.grid(row=1, column=0, padx=5, pady=2, sticky="w")
+        self.full_radio.grid(row=1, column=0, columnspan=2, padx=5, pady=1, sticky="w")
+
+        # Parallel cores
+        cores_frame = ttk.Frame(exec_frame)
+        cores_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=1, sticky="w")
+        ttk.Label(cores_frame, text="Parallel cores:").grid(row=0, column=0, padx=(0, 5))
+        self.cores_var = tk.StringVar(value=str(os.cpu_count() or 4))
+        self.cores_entry = ttk.Entry(cores_frame, textvariable=self.cores_var, width=4)
+        self.cores_entry.grid(row=0, column=1)
+        ttk.Label(cores_frame, text=f"(detected: {os.cpu_count()})").grid(row=0, column=2, padx=(5, 0))
 
         # Safe mode
         self.safe_var = tk.BooleanVar(value=False)
         self.safe_check = ttk.Checkbutton(
             exec_frame,
-            text="Safe mode (single process, more stable)",
+            text="Safe mode (single process)",
             variable=self.safe_var,
         )
-        self.safe_check.grid(row=2, column=0, padx=5, pady=(5, 2), sticky="w")
+        self.safe_check.grid(row=3, column=0, columnspan=2, padx=5, pady=1, sticky="w")
 
-        # ----- Sampling -----
-        sample_frame = ttk.LabelFrame(frame, text="Sampling (cine step)", padding=10)
-        sample_frame.grid(row=0, column=1, padx=5, pady=5, sticky="nsew")
-        sample_frame.grid_columnconfigure(0, weight=1)
+        # ----- Sampling (row 0, right) -----
+        sample_frame = ttk.LabelFrame(frame, text="Sampling", padding=5)
+        sample_frame.grid(row=0, column=1, padx=5, pady=5, sticky="new")
 
         self.sample_var = tk.StringVar(value="10")
 
-        s_row = 0
+        # Compact sampling options in 2 columns
         self.sample_radios: List[ttk.Radiobutton] = []
         step_labels = [
             ("1", "Every cine"),
-            ("2", "Every 2nd cine"),
-            ("5", "Every 5th cine"),
-            ("10", "Every 10th cine"),
+            ("2", "Every 2nd"),
+            ("5", "Every 5th"),
+            ("10", "Every 10th"),
         ]
-        for step, label in step_labels:
+        for i, (step, label) in enumerate(step_labels):
             rb = ttk.Radiobutton(
                 sample_frame,
                 text=label,
                 variable=self.sample_var,
                 value=step,
             )
-            rb.grid(row=s_row, column=0, padx=5, pady=1, sticky="w")
+            rb.grid(row=i // 2, column=i % 2, padx=5, pady=1, sticky="w")
             self.sample_radios.append(rb)
-            s_row += 1
 
         # Custom step
         custom_frame = ttk.Frame(sample_frame)
-        custom_frame.grid(row=s_row, column=0, padx=5, pady=(4, 5), sticky="w")
-        self.custom_step = ttk.Entry(custom_frame, width=8)
-        self.custom_step.grid(row=0, column=0, padx=(0, 5))
+        custom_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=1, sticky="w")
+        self.custom_step = ttk.Entry(custom_frame, width=5)
+        self.custom_step.grid(row=0, column=0, padx=(0, 3))
         self.custom_radio = ttk.Radiobutton(
             custom_frame,
-            text="Every Nth cine",
+            text="Custom",
             variable=self.sample_var,
             value="custom",
         )
-        self.custom_radio.grid(row=0, column=1, padx=(0, 5), sticky="w")
+        self.custom_radio.grid(row=0, column=1, sticky="w")
 
         self.sampling_controls: List[tk.Widget] = (
             self.sample_radios + [self.custom_step, self.custom_radio]
         )
 
-        # ----- Calibration & Outputs (second row) -----
-        calib_frame = ttk.LabelFrame(frame, text="Calibration (crop)", padding=10)
-        calib_frame.grid(row=1, column=0, padx=5, pady=5, sticky="nsew")
-        calib_frame.grid_columnconfigure(0, weight=1)
+        # Cores entry also disabled in quick mode
+        self.cores_controls: List[tk.Widget] = [self.cores_entry]
+
+        # ----- Calibration (row 1, left) -----
+        calib_frame = ttk.LabelFrame(frame, text="Calibration", padding=5)
+        calib_frame.grid(row=1, column=0, padx=5, pady=5, sticky="new")
 
         self.calib_var = tk.StringVar(value="folder")
 
         self.calib_folder_radio = ttk.Radiobutton(
             calib_frame,
-            text="Per-folder crop (each folder calibrated independently)",
+            text="Per-folder crop",
             variable=self.calib_var,
             value="folder",
         )
-        self.calib_folder_radio.grid(row=0, column=0, padx=5, pady=2, sticky="w")
+        self.calib_folder_radio.grid(row=0, column=0, padx=5, pady=1, sticky="w")
 
         self.calib_global_radio = ttk.Radiobutton(
             calib_frame,
-            text="Global crop (calibration from all folders combined)",
+            text="Global crop",
             variable=self.calib_var,
             value="global",
         )
-        self.calib_global_radio.grid(row=1, column=0, padx=5, pady=2, sticky="w")
+        self.calib_global_radio.grid(row=1, column=0, padx=5, pady=1, sticky="w")
 
         self.calib_controls = [self.calib_folder_radio, self.calib_global_radio]
 
-        # Outputs + profiling
-        output_frame = ttk.LabelFrame(frame, text="Outputs", padding=10)
+        # ----- Outputs (row 1, right) -----
+        output_frame = ttk.LabelFrame(frame, text="Outputs", padding=5)
         output_frame.grid(row=1, column=1, padx=5, pady=5, sticky="nsew")
-        output_frame.grid_columnconfigure(0, weight=1)
 
         self.output_var = tk.StringVar(value="crops")
 
@@ -589,7 +597,7 @@ class PipelineGUI:
             variable=self.output_var,
             value="crops",
         )
-        self.output_crops_radio.grid(row=0, column=0, padx=5, pady=2, sticky="w")
+        self.output_crops_radio.grid(row=0, column=0, padx=5, pady=1, sticky="w")
 
         self.output_all_radio = ttk.Radiobutton(
             output_frame,
@@ -597,7 +605,7 @@ class PipelineGUI:
             variable=self.output_var,
             value="all",
         )
-        self.output_all_radio.grid(row=1, column=0, padx=5, pady=2, sticky="w")
+        self.output_all_radio.grid(row=1, column=0, padx=5, pady=1, sticky="w")
 
         self.output_controls = [self.output_crops_radio, self.output_all_radio]
 
@@ -607,23 +615,22 @@ class PipelineGUI:
             text="Enable profiling",
             variable=self.profile_var,
         )
-        self.profile_check.grid(row=2, column=0, padx=5, pady=(5, 2), sticky="w")
+        self.profile_check.grid(row=2, column=0, padx=5, pady=1, sticky="w")
 
         # Keep profiling in same disable group as outputs
         self.profile_control = self.profile_check
 
-        # ----- Frame Selection (third row) -----
-        frame_sel_frame = ttk.LabelFrame(frame, text="Frame Selection", padding=10)
-        frame_sel_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=5, sticky="nsew")
-        frame_sel_frame.grid_columnconfigure(0, weight=1)
+        # ----- Frame Selection (row 2, right) -----
+        frame_sel_frame = ttk.LabelFrame(frame, text="Frame Selection", padding=5)
+        frame_sel_frame.grid(row=2, column=1, padx=5, pady=5, sticky="nsew")
 
         self.darkness_var = tk.BooleanVar(value=False)
         self.darkness_check = ttk.Checkbutton(
             frame_sel_frame,
-            text="Use darkness weighting (slower, enables darkness curve plots)",
+            text="Use darkness weighting",
             variable=self.darkness_var,
         )
-        self.darkness_check.grid(row=0, column=0, padx=5, pady=2, sticky="w")
+        self.darkness_check.grid(row=0, column=0, padx=5, pady=1, sticky="w")
 
         self.frame_sel_controls = [self.darkness_check]
 
@@ -637,6 +644,10 @@ class PipelineGUI:
 
         # Sampling
         for w in self.sampling_controls:
+            self._set_widget_state(w, state)
+
+        # Cores
+        for w in self.cores_controls:
             self._set_widget_state(w, state)
 
         # Calibration - also check for subfolders
@@ -958,6 +969,13 @@ class PipelineGUI:
 
             # Frame selection
             config["use_darkness"] = self.darkness_var.get()
+
+            # Parallel cores
+            try:
+                config["n_cores"] = max(1, int(self.cores_var.get()))
+            except ValueError:
+                import os
+                config["n_cores"] = os.cpu_count() or 4
         else:
             # Defaults that won't actually be used in quick mode
             config["step"] = 10
@@ -965,6 +983,7 @@ class PipelineGUI:
             config["full_output"] = False
             config["profile"] = False
             config["use_darkness"] = False
+            config["n_cores"] = None  # Use default
 
         return config
 
@@ -1147,13 +1166,16 @@ class PipelineGUI:
         from pipeline_folder import process_per_folder
         from pipeline_global import process_global
 
-        # Apply step to config module
+        # Apply step and cores to config module
         config.CINE_STEP = run_config["step"]
+        config.N_CORES = run_config.get("n_cores")
 
+        cores_str = str(run_config.get('n_cores')) if run_config.get('n_cores') else "all"
         emit_log(
             f"Cine step: {run_config['step']}, "
             f"Mode: {'Global' if run_config['global_mode'] else 'Per-folder'}, "
-            f"Outputs: {'All plots' if run_config['full_output'] else 'Crops only'}"
+            f"Outputs: {'All plots' if run_config['full_output'] else 'Crops only'}, "
+            f"Cores: {cores_str}"
         )
 
         # --- Mirror all prints to GUI log as well ---

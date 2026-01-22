@@ -26,6 +26,9 @@ CROP_SAFETY_PIXELS: int = _config.crop.safety_pixels
 # --- Sampling ---
 CINE_STEP: int = _config.sampling.cine_step
 
+# --- Parallelisation ---
+N_CORES: Optional[int] = None  # None = use all available cores
+
 # --- Geometry detection ---
 GEOM_MIN_AREA: int = _config.geometry.min_area
 SPHERE_WIDTH_RATIO: float = _config.geometry.sphere_width_ratio
