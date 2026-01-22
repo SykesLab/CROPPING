@@ -13,7 +13,7 @@ Frame selection uses connected component analysis to locate the droplet and sphe
 
 Crops are sized to fit the droplet while excluding the sphere. If the crop would include the sphere, it shifts upward. When processing multiple folders, a global calibration pass sets a single crop size (using a conservative low percentile) so all outputs are the same dimensions for CNN training.
 
-Focus quality is measured using six edge-based metrics (Laplacian variance, Tenengrad, Brenner, etc). Classification into sharp/medium/blurry uses per-folder thresholds at the 75th and 25th percentiles, so each folder contributes its sharpest ~25% regardless of lighting conditions.
+Focus quality is measured using six edge-based metrics (Laplacian variance, Tenengrad, Brenner, etc). Classification into sharp/medium/blurry uses per-folder, per-camera thresholds at the 75th and 25th percentiles, so each camera within each folder contributes its sharpest ~25% regardless of lighting conditions or optical setup.
 
 The GUI shows live thumbnails, progress, and ETA. Processing runs in parallel across all CPU cores, with options for quick validation runs, single-process mode for debugging, and step sampling to process every Nth droplet.
 
@@ -108,14 +108,17 @@ droplet-preprocessing/
 ├── workers.py               # Parallel worker functions
 │
 └── OUTPUT/                  # Generated outputs (default)
-    ├── {folder}/
-    │   ├── *_crop.png       # Droplet crops
-    │   ├── *_summary.csv    # Metadata
-    │   └── *_overlay.png    # Visualisations
+    ├── {material}/
+    │   ├── {material}_summary.csv
+    │   ├── g/               # Green camera outputs
+    │   │   ├── crops/
+    │   │   └── visualizations/
+    │   ├── v/               # Violet camera outputs
+    │   └── m/               # Mono camera outputs (if present)
     │
     └── Focus/               # Focus classification results
         ├── sharp_crops.csv
-        └── {folder}/        # Sharp images by folder
+        └── {material}/{camera}/  # Sharp images by material and camera
 ```
 
 ## Pipeline Modes
@@ -126,13 +129,15 @@ droplet-preprocessing/
 
 ## Focus Classification
 
-Enable the "Focus classification" checkbox in the GUI. This computes focus metrics for each crop, classifies them as sharp/medium/blurry, and copies the sharp ones to `OUTPUT/Focus/{folder}/`.
+Enable the "Focus classification" checkbox in the GUI. This computes focus metrics for each crop, classifies them as sharp/medium/blurry, and copies the sharp ones to `OUTPUT/Focus/{material}/{camera}/`.
 
-### Per-Folder Thresholds
+### Per-Folder, Per-Camera Thresholds
 
-Each folder gets its own threshold based on its own distribution:
-- Sharpest ~25% from each folder goes to training
-- Accounts for different lighting/focus between sessions
+Each camera within each folder is classified independently:
+- Each camera (g, v, m) contributes its sharpest ~25% to training
+- Different cameras have different optical properties (wavelength, depth of field)
+- Accounts for different lighting/focus between sessions and camera types
+- Ensures balanced training data from each camera type for multi-view CNN training
 
 ### Standalone Analysis
 
@@ -146,20 +151,32 @@ python focus_analysis.py path/to/OUTPUT
 ### Directory Structure
 ```
 OUTPUT/
-├── {folder}/
-│   ├── {droplet}{cam}_crop.png       # Grayscale droplet crop
-│   ├── {droplet}{cam}_darkness.png   # Darkness curve plot (full output mode)
-│   ├── {droplet}{cam}_overlay.png    # Geometric overlay plot (full output mode)
-│   └── {folder}_summary.csv          # Metadata for all crops
+├── {material}/
+│   ├── {material}_summary.csv              # Metadata for all crops in this material
+│   ├── g/                                  # Green camera outputs
+│   │   ├── crops/
+│   │   │   └── sphere0843g_crop.png        # Grayscale droplet crop
+│   │   └── visualizations/
+│   │       ├── sphere0843g_darkness.png    # Darkness curve plot (full output mode)
+│   │       └── sphere0843g_overlay.png     # Geometric overlay (full output mode)
+│   ├── v/                                  # Violet camera outputs
+│   │   ├── crops/
+│   │   └── visualizations/
+│   └── m/                                  # Mono camera outputs (if present)
+│       ├── crops/
+│       └── visualizations/
 │
-├── Focus/                             # Focus classification results
-│   ├── sharp_crops.csv               # All sharp crops with metrics
-│   ├── focus_classified_all.csv      # All crops with classifications
-│   ├── focus_folder_stats.csv        # Per-folder threshold statistics
-│   ├── focus_classification_summary.png  # Distribution visualisation
-│   └── {folder}/                     # Sharp crop copies by folder
+├── Focus/                                  # Focus classification results
+│   ├── sharp_crops.csv                     # All sharp crops with metrics
+│   ├── focus_classified_all.csv            # All crops with classifications
+│   ├── focus_folder_stats.csv              # Per-folder+camera statistics
+│   ├── focus_classification_summary.png    # Distribution visualisation
+│   └── {material}/
+│       ├── g/                              # Sharp crops from green camera
+│       ├── v/                              # Sharp crops from violet camera
+│       └── m/                              # Sharp crops from mono camera
 │
-└── focus_metrics_computed.csv        # Combined metrics from all folders
+└── focus_metrics_computed.csv              # Combined metrics from all folders
 ```
 
 ### Crop Images
@@ -178,7 +195,7 @@ Each folder produces `{folder}_summary.csv`:
 | Column | Description |
 |--------|-------------|
 | droplet_id | Droplet identifier |
-| camera | g (green) or v (violet) |
+| camera | g (green), v (violet), or m (mono/main) |
 | cine_file | Source .cine filename |
 | best_frame | Selected frame index |
 | dark_fraction | Darkness metric at best frame |
@@ -205,6 +222,10 @@ Key parameters can be adjusted in `config.py`:
 | `CALIBRATION_PERCENTILE` | 5.0 | Percentile for robust crop sizing |
 | `DARKNESS_THRESHOLD_PERCENTILE` | 70.0 | Darkness percentile for candidate filtering |
 | `DARKNESS_WEIGHT` | 0.05 | Weight of darkness vs centring in frame scoring |
+| `FOCUS_METRICS_ENABLED` | true | Enable/disable focus metric computation |
+| `FOCUS_PRIMARY_METRIC` | laplacian_var | Primary metric for classification |
+| `FOCUS_SHARP_THRESHOLD` | null | Custom sharp threshold (null = use 75th percentile) |
+| `FOCUS_BLUR_THRESHOLD` | null | Custom blur threshold (null = use 25th percentile) |
 
 ## Troubleshooting
 
