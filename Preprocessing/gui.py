@@ -502,18 +502,21 @@ class PipelineGUI:
         # Parallel cores
         cores_frame = ttk.Frame(exec_frame)
         cores_frame.grid(row=2, column=0, columnspan=2, padx=5, pady=1, sticky="w")
-        ttk.Label(cores_frame, text="Parallel cores:").grid(row=0, column=0, padx=(0, 5))
+        self.cores_label = ttk.Label(cores_frame, text="Parallel cores:")
+        self.cores_label.grid(row=0, column=0, padx=(0, 5))
         self.cores_var = tk.StringVar(value=str(os.cpu_count() or 4))
         self.cores_entry = ttk.Entry(cores_frame, textvariable=self.cores_var, width=4)
         self.cores_entry.grid(row=0, column=1)
-        ttk.Label(cores_frame, text=f"(detected: {os.cpu_count()})").grid(row=0, column=2, padx=(5, 0))
+        self.cores_detected_label = ttk.Label(cores_frame, text=f"(detected: {os.cpu_count()})")
+        self.cores_detected_label.grid(row=0, column=2, padx=(5, 0))
 
-        # Safe mode
+        # Safe mode (disables cores when checked)
         self.safe_var = tk.BooleanVar(value=False)
         self.safe_check = ttk.Checkbutton(
             exec_frame,
             text="Safe mode (single process)",
             variable=self.safe_var,
+            command=self._update_cores_state,
         )
         self.safe_check.grid(row=3, column=0, columnspan=2, padx=5, pady=1, sticky="w")
 
@@ -558,8 +561,8 @@ class PipelineGUI:
             self.sample_radios + [self.custom_step, self.custom_radio]
         )
 
-        # Cores entry also disabled in quick mode
-        self.cores_controls: List[tk.Widget] = [self.cores_entry]
+        # Cores controls (disabled in quick mode or safe mode)
+        self.cores_controls: List[tk.Widget] = [self.cores_entry, self.cores_label, self.cores_detected_label]
 
         # ----- Calibration (row 1, left) -----
         calib_frame = ttk.LabelFrame(frame, text="Calibration", padding=5)
@@ -646,9 +649,8 @@ class PipelineGUI:
         for w in self.sampling_controls:
             self._set_widget_state(w, state)
 
-        # Cores
-        for w in self.cores_controls:
-            self._set_widget_state(w, state)
+        # Cores (also affected by safe mode)
+        self._update_cores_state()
 
         # Calibration - also check for subfolders
         # Per-folder always available when not in quick mode
@@ -681,6 +683,15 @@ class PipelineGUI:
             widget.configure(state=state)
         except Exception:
             pass
+
+    def _update_cores_state(self) -> None:
+        """Enable/disable cores controls based on quick mode and safe mode."""
+        quick = self.mode_var.get() == "quick"
+        safe = self.safe_var.get()
+        # Cores disabled if quick mode OR safe mode
+        state = "disabled" if (quick or safe) else "normal"
+        for w in self.cores_controls:
+            self._set_widget_state(w, state)
 
     # --- Preview thumbnails ---
     def _build_preview(self, parent: ttk.Frame) -> None:
