@@ -71,7 +71,7 @@ def generate_droplet_outputs(
         "imwrite": 0.0,
     }
 
-    # Create camera subfolders with crops/ and visualizations/ inside each
+    # Camera subfolder paths (created on-demand when needed)
     cam_dirs: Dict[str, Dict[str, Path]] = {}
     for cam in ("g", "v", "m"):
         cam_base = out_sub_path / cam
@@ -79,8 +79,6 @@ def generate_droplet_outputs(
             "crops": cam_base / "crops",
             "visualizations": cam_base / "visualizations",
         }
-        cam_dirs[cam]["crops"].mkdir(parents=True, exist_ok=True)
-        cam_dirs[cam]["visualizations"].mkdir(parents=True, exist_ok=True)
 
     for cam, info in cam_data.items():
         path = info.get("path")
@@ -125,8 +123,9 @@ def generate_droplet_outputs(
         )
         timing["crop"] += time.perf_counter() - t0
 
-        # Save crop to camera subfolder
+        # Save crop to camera subfolder (create on first use)
         t0 = time.perf_counter()
+        cam_dirs[cam]["crops"].mkdir(parents=True, exist_ok=True)
         crop_path = cam_dirs[cam]["crops"] / f"{path.stem}_crop.png"
         try:
             cv2.imwrite(str(crop_path), crop)
@@ -135,9 +134,10 @@ def generate_droplet_outputs(
             logger.error(f"Failed to write crop {crop_path}: {e}")
         timing["imwrite"] += time.perf_counter() - t0
 
-        # Full output mode: generate plots to camera subfolder
+        # Full output mode: generate plots to camera subfolder (create on first use)
         if curve is not None:
             viz_dir = cam_dirs[cam]["visualizations"]
+            viz_dir.mkdir(parents=True, exist_ok=True)
 
             t0 = time.perf_counter()
             save_darkness_plot(
@@ -193,7 +193,7 @@ def generate_folder_outputs(
     out_sub = OUTPUT_ROOT / sub.name
     out_sub.mkdir(parents=True, exist_ok=True)
 
-    # Create camera subfolders with crops/ and visualizations/ inside each
+    # Camera subfolder paths (created on-demand when needed)
     cam_dirs: Dict[str, Dict[str, Path]] = {}
     for cam in ("g", "v", "m"):
         cam_base = out_sub / cam
@@ -201,8 +201,6 @@ def generate_folder_outputs(
             "crops": cam_base / "crops",
             "visualizations": cam_base / "visualizations",
         }
-        cam_dirs[cam]["crops"].mkdir(parents=True, exist_ok=True)
-        cam_dirs[cam]["visualizations"].mkdir(parents=True, exist_ok=True)
 
     csv_path = out_sub / f"{sub.name}_summary.csv"
 
@@ -296,8 +294,9 @@ def generate_folder_outputs(
                             focus_metrics = compute_all_focus_metrics(crop)
                             timing["focus_metrics"] += time.perf_counter() - t0
 
-                        # Save crop to camera subfolder
+                        # Save crop to camera subfolder (create on first use)
                         t0 = time.perf_counter()
+                        cam_dirs[cam]["crops"].mkdir(parents=True, exist_ok=True)
                         out_crop = cam_dirs[cam]["crops"] / f"{path.stem}_crop.png"
                         try:
                             cv2.imwrite(str(out_crop), crop)
@@ -307,9 +306,10 @@ def generate_folder_outputs(
                             logger.error(f"Failed to write crop {out_crop}: {e}")
                         timing["imwrite"] += time.perf_counter() - t0
 
-                        # Save visualizations to camera subfolder
+                        # Save visualizations to camera subfolder (create on first use)
                         if curve is not None:
                             viz_dir = cam_dirs[cam]["visualizations"]
+                            viz_dir.mkdir(parents=True, exist_ok=True)
 
                             t0 = time.perf_counter()
                             save_darkness_plot(
