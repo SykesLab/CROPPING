@@ -107,13 +107,14 @@ def group_cines_by_droplet(folder: Path) -> List[Tuple[str, Dict[str, Optional[P
     Group .cine files by droplet ID and camera.
 
     Filename pattern: sphere0843g.cine -> droplet_id=0843, camera=g
-    Returns list of (droplet_id, {"g": path, "v": path}) sorted by ID.
+    Supports camera suffixes: g (green), v (violet), m (mono/main)
+    Returns list of (droplet_id, {cam: path, ...}) sorted by ID.
     """
     folder = Path(folder)
     groups: Dict[str, Dict[str, Optional[Path]]] = {}
 
     for path in sorted(folder.glob("*.cine")):
-        match = re.search(r"(\d+)([gv])$", path.stem, re.IGNORECASE)
+        match = re.search(r"(\d+)([gmv])$", path.stem, re.IGNORECASE)
         if not match:
             continue
 
@@ -121,7 +122,7 @@ def group_cines_by_droplet(folder: Path) -> List[Tuple[str, Dict[str, Optional[P
         cam = match.group(2).lower()
 
         if droplet_id not in groups:
-            groups[droplet_id] = {"g": None, "v": None}
+            groups[droplet_id] = {}
         groups[droplet_id][cam] = path
 
     sorted_ids = sorted(groups.keys(), key=lambda x: int(x))

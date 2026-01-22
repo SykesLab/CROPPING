@@ -34,7 +34,7 @@ def analyze_droplet_full(args: Tuple[str, Dict[str, Any]]) -> DropletResult:
 
     timing = {"load_cine": 0.0, "darkness_curve": 0.0, "best_frame": 0.0, "n_frames": 0}
 
-    for cam in ("g", "v"):
+    for cam in ("g", "v", "m"):
         path = cams.get(cam)
         if path is None:
             continue
@@ -81,7 +81,7 @@ def analyze_droplet_crops_only(args: Tuple[str, Dict[str, Any]]) -> DropletResul
 
     timing = {"load_cine": 0.0, "geometry_scan": 0.0, "n_frames": 0}
 
-    for cam in ("g", "v"):
+    for cam in ("g", "v", "m"):
         path = cams.get(cam)
         if path is None:
             continue
@@ -135,7 +135,7 @@ def analyze_folder_full(args: Tuple[Path, int]) -> FolderResult:
     for g_index in selected:
         droplet_id, cams = groups[g_index]
 
-        for cam in ("g", "v"):
+        for cam in ("g", "v", "m"):
             path = cams.get(cam)
             if path is None:
                 continue
@@ -194,7 +194,7 @@ def analyze_folder_crops_only(args: Tuple[Path, int]) -> FolderResult:
     for g_index in selected:
         droplet_id, cams = groups[g_index]
 
-        for cam in ("g", "v"):
+        for cam in ("g", "v", "m"):
             path = cams.get(cam)
             if path is None:
                 continue
