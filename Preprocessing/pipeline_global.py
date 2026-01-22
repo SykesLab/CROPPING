@@ -59,7 +59,7 @@ def _analyze_droplet_global_full(
         "n_frames": 0,
     }
 
-    for cam in ("g", "v"):
+    for cam in ("g", "v", "m"):
         path = cams.get(cam)
         if path is None:
             continue
@@ -115,7 +115,7 @@ def _analyze_droplet_global_crops_only(
         "n_frames": 0,
     }
 
-    for cam in ("g", "v"):
+    for cam in ("g", "v", "m"):
         path = cams.get(cam)
         if path is None:
             continue
@@ -817,7 +817,7 @@ def _quick_test_global(
                 "y_sphere",
             ])
 
-            for cam in ("g", "v"):
+            for cam in ("g", "v", "m"):
                 path = cams.get(cam)
                 if path is None:
                     continue

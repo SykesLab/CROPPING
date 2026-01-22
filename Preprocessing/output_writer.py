@@ -214,7 +214,7 @@ def generate_folder_outputs(
         for idx in selected:
             droplet_id, cams = groups[idx]
 
-            for cam in ("g", "v"):
+            for cam in ("g", "v", "m"):
                 path = cams.get(cam)
                 if path is None:
                     continue

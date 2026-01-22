@@ -311,7 +311,7 @@ def _quick_test_single_folder(sub: Path, f_idx: int, total_folders: int,
     out_sub = OUTPUT_ROOT / sub.name
     out_sub.mkdir(parents=True, exist_ok=True)
 
-    for cam in ("g", "v"):
+    for cam in ("g", "v", "m"):
         path = cams.get(cam)
         if path is None:
             continue

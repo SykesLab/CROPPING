@@ -1088,7 +1088,7 @@ class PipelineGUI:
                 continue
 
             droplet_id, cams = groups[0]
-            path = cams.get("g") or cams.get("v")
+            path = cams.get("g") or cams.get("m") or cams.get("v")
             if path is None:
                 continue
 
