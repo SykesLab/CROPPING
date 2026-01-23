@@ -709,7 +709,7 @@ class PipelineGUI:
         self.darkness_var = tk.BooleanVar(value=False)
         self.darkness_check = ttk.Checkbutton(
             frame_sel_frame,
-            text="Use darkness weighting",
+            text="Use darkness weighting (4x slower)",
             variable=self.darkness_var,
         )
         self.darkness_check.grid(row=0, column=0, padx=5, pady=1, sticky="w")
