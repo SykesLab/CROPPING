@@ -79,7 +79,8 @@ def choose_best_frame_geometry_only(cine_obj: Any) -> Tuple[int, Dict[str, Any]]
 
     # Early stop tracking
     CONSECUTIVE_LOST_THRESHOLD = 3
-    had_valid_droplet = False
+    MIN_VALID_FRAMES_BEFORE_STOP = 10  # Need at least 10 valid frames before allowing early stop
+    valid_frame_count = 0
     consecutive_lost = 0
 
     for idx in range(first_frame, last_frame + 1):
@@ -91,7 +92,7 @@ def choose_best_frame_geometry_only(cine_obj: Any) -> Tuple[int, Dict[str, Any]]
 
         # Check if we have valid droplet detection
         if y_top is not None and y_bottom is not None and y_sphere is not None:
-            had_valid_droplet = True
+            valid_frame_count += 1
             consecutive_lost = 0
 
             # Must be pre-collision (droplet above sphere)
@@ -108,8 +109,9 @@ def choose_best_frame_geometry_only(cine_obj: Any) -> Tuple[int, Dict[str, Any]]
                     best_geo = geo
         else:
             # Droplet lost - check for early stop condition
-            # Only trigger early stop if we had a valid droplet before and sphere is still visible
-            if had_valid_droplet and y_sphere is not None:
+            # Only trigger early stop if we've seen enough valid frames (not just noise)
+            # and the sphere is still visible
+            if valid_frame_count >= MIN_VALID_FRAMES_BEFORE_STOP and y_sphere is not None:
                 consecutive_lost += 1
                 if consecutive_lost >= CONSECUTIVE_LOST_THRESHOLD:
                     # Collision detected - stop scanning
