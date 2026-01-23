@@ -9,9 +9,9 @@ Extracts droplet crops from Phantom .cine files for CNN training. Handles frame 
 
 Each .cine file contains a high-speed recording of a droplet falling onto a sphere. The pipeline finds the best frame to crop from, where "best" means the droplet is fully visible, hasn't yet collided with the sphere, and is roughly centred in the frame.
 
-Frame selection uses connected component analysis to locate the droplet and sphere in each frame. It scores frames by how symmetric the gaps are (droplet-to-image-top vs droplet-to-sphere), with a small weight on darkness to prefer frames where the droplet is more opaque. Frames where the droplet has already touched the sphere are rejected.
+Frame selection uses connected component analysis to locate the droplet and sphere in each frame. It scores frames by how symmetric the gaps are (droplet-to-image-top vs droplet-to-sphere), with a small weight on darkness to prefer frames where the droplet is more opaque. Frames where the droplet has already touched the sphere are rejected. When darkness analysis is disabled, an early-stop optimisation detects collision and stops scanning (~4x speedup).
 
-Crops are sized to fit the droplet while excluding the sphere. If the crop would include the sphere, it shifts upward. When processing multiple folders, a global calibration pass sets a single crop size (using a conservative low percentile) so all outputs are the same dimensions for CNN training.
+Crops are sized to fit the droplet while excluding the sphere. If the crop would otherwise include the sphere, it shifts upward. In Global mode, a calibration pass computes the maximum safe crop height for each sample, then takes a low percentile (default 5th) as the uniform crop size. Set `calibration.percentile` to 0 for guaranteed sphere exclusion if detection is reliable. See [Calibration and Crop Sizing](#calibration-and-crop-sizing) for tuning.
 
 Focus quality is measured using six edge-based metrics (Laplacian variance, Tenengrad, Brenner, etc). Classification into sharp/medium/blurry uses per-folder, per-camera thresholds at the 75th and 25th percentiles, so each camera within each folder contributes its sharpest ~25% regardless of lighting conditions or optical setup.
 
@@ -147,6 +147,46 @@ To rerun focus analysis on existing crops without reprocessing:
 python focus_analysis.py path/to/OUTPUT
 ```
 
+## Calibration and Crop Sizing
+
+### How It Works
+
+In Global mode, the pipeline computes a single crop size across all samples so the CNN receives uniform input dimensions. For each droplet:
+
+1. **Measure geometry**: diameter (droplet height), gap (space between droplet bottom and sphere top), top margin (space from image top to droplet top)
+2. **Compute allowed height**: `diameter + 2 × max(0, gap - safety_pixels)`
+3. **Take percentile**: Use the Nth percentile across all samples as the global crop size
+
+### Key Parameters
+
+| Parameter | Default | Effect |
+|-----------|---------|--------|
+| `calibration.percentile` | 5.0 | Which percentile of allowed heights to use. Lower = smaller crops, safer. |
+| `crop.safety_pixels` | 3 | Extra margin subtracted from the gap before computing allowed height. |
+
+### Tuning Guide
+
+**If crops include the sphere** (sphere visible at bottom of crop):
+- Lower `calibration.percentile` (e.g., 2.0 or 1.0)
+- Or increase `safety_pixels` (e.g., 5 or 10)
+
+**If crops are too small** (excessive padding around droplet):
+- Raise `calibration.percentile` (e.g., 10.0)
+- Or decrease `safety_pixels`
+
+**For guaranteed sphere exclusion** (recommended if geometry detection is reliable):
+- Set `calibration.percentile: 0` to use the minimum allowed height across all samples
+- This ensures no crop ever includes the sphere, but produces smaller crops
+- Only use if you're confident the detection has no outliers causing falsely small gaps
+
+### The Trade-off
+
+The percentile approach handles noisy/outlier data:
+- **5th percentile**: ~95% of crops guaranteed sphere-free, ~5% may clip the sphere slightly
+- **0th percentile (minimum)**: 100% sphere-free, but a single outlier with a tiny gap makes all crops small
+
+If your geometry detection is solid (consistent frame selection, no false detections), using `percentile: 0` is safe and guarantees clean crops.
+
 ## Output Files
 
 ### Directory Structure
@@ -212,21 +252,46 @@ Each folder produces `{folder}_summary.csv`:
 
 ## Configuration
 
-Key parameters can be adjusted in `config.py`:
+All parameters are in `preprocessing_config.yaml`. GUI overrides path settings at runtime.
 
+### Crop Sizing
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `MAX_CNN_SIZE` | 512 | Maximum crop size (pixels) |
-| `MIN_CNN_SIZE` | 64 | Minimum crop size (pixels) |
-| `CROP_SAFETY_PIXELS` | 3 | Margin between crop and sphere |
-| `N_CANDIDATES` | 20 | Candidate frames for geometry analysis |
-| `CALIBRATION_PERCENTILE` | 5.0 | Percentile for robust crop sizing |
-| `DARKNESS_THRESHOLD_PERCENTILE` | 70.0 | Darkness percentile for candidate filtering |
-| `DARKNESS_WEIGHT` | 0.05 | Weight of darkness vs centring in frame scoring |
-| `FOCUS_METRICS_ENABLED` | true | Enable/disable focus metric computation |
-| `FOCUS_PRIMARY_METRIC` | laplacian_var | Primary metric for classification |
-| `FOCUS_SHARP_THRESHOLD` | null | Custom sharp threshold (null = use 75th percentile) |
-| `FOCUS_BLUR_THRESHOLD` | null | Custom blur threshold (null = use 25th percentile) |
+| `crop.max_cnn_size` | 512 | Maximum crop size (pixels) |
+| `crop.min_cnn_size` | 64 | Minimum crop size (pixels) |
+| `crop.safety_pixels` | 3 | Margin subtracted from gap. Increase if sphere appears in crops. |
+
+### Calibration
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `calibration.percentile` | 5.0 | Percentile of allowed heights. Set to 0 for guaranteed sphere exclusion. |
+
+### Sampling
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `sampling.cine_step` | 10 | Process every Nth droplet (1 = all) |
+
+### Best Frame Selection
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `best_frame.n_candidates` | 20 | Candidate frames for geometry analysis (full output mode only) |
+| `best_frame.darkness_threshold_percentile` | 70.0 | Darkness percentile for candidate filtering |
+| `best_frame.darkness_weight` | 0.05 | Weight of darkness vs centring in scoring |
+
+### Geometry Detection
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `geometry.min_area` | 50 | Minimum pixels for connected component detection |
+| `geometry.sphere_width_ratio` | 0.30 | Sphere must span this fraction of frame width |
+| `geometry.sphere_center_tolerance` | 0.35 | Sphere center tolerance from image center |
+
+### Focus Classification
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `focus.enabled` | true | Enable/disable focus metric computation |
+| `focus.primary_metric` | laplacian_var | Primary metric for sharp/blur classification |
+| `focus.sharp_threshold` | null | Custom threshold (null = 75th percentile per folder+camera) |
+| `focus.blur_threshold` | null | Custom threshold (null = 25th percentile per folder+camera) |
 
 ## Troubleshooting
 
