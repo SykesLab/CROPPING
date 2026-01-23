@@ -25,6 +25,20 @@ logger = logging.getLogger(__name__)
 # Optional callback for GUI notification
 _on_image_saved: Optional[Callable[[Path], None]] = None
 
+# Full output mode flag (generates overlay plots even without darkness curve)
+_full_output_mode: bool = False
+
+
+def set_full_output_mode(enabled: bool) -> None:
+    """Set whether to generate visualization plots (overlay) even without darkness curve."""
+    global _full_output_mode
+    _full_output_mode = enabled
+
+
+def is_full_output_mode() -> bool:
+    """Check if full output mode is enabled."""
+    return _full_output_mode
+
 
 def set_image_callback(callback: Optional[Callable[[Path], None]]) -> None:
     """Set callback to be called when an image is saved (for GUI notifications)."""
@@ -134,22 +148,26 @@ def generate_droplet_outputs(
             logger.error(f"Failed to write crop {crop_path}: {e}")
         timing["imwrite"] += time.perf_counter() - t0
 
-        # Full output mode: generate plots to camera subfolder (create on first use)
-        if curve is not None:
+        # Full output mode: generate plots to camera subfolder
+        # Darkness plot requires curve; overlay can be generated independently
+        if curve is not None or _full_output_mode:
             viz_dir = cam_dirs[cam]["visualizations"]
             viz_dir.mkdir(parents=True, exist_ok=True)
 
-            t0 = time.perf_counter()
-            save_darkness_plot(
-                viz_dir / f"{path.stem}_darkness.png",
-                curve,
-                first,
-                last,
-                best_idx,
-                path.name,
-            )
-            timing["darkness_plot"] += time.perf_counter() - t0
+            # Darkness plot (only if we have a curve)
+            if curve is not None:
+                t0 = time.perf_counter()
+                save_darkness_plot(
+                    viz_dir / f"{path.stem}_darkness.png",
+                    curve,
+                    first,
+                    last,
+                    best_idx,
+                    path.name,
+                )
+                timing["darkness_plot"] += time.perf_counter() - t0
 
+            # Overlay plot (always in full output mode)
             t0 = time.perf_counter()
             geo_for_plot = {
                 "frame": frame,
@@ -306,22 +324,26 @@ def generate_folder_outputs(
                             logger.error(f"Failed to write crop {out_crop}: {e}")
                         timing["imwrite"] += time.perf_counter() - t0
 
-                        # Save visualizations to camera subfolder (create on first use)
-                        if curve is not None:
+                        # Save visualizations to camera subfolder
+                        # Darkness plot requires curve; overlay can be generated independently
+                        if curve is not None or _full_output_mode:
                             viz_dir = cam_dirs[cam]["visualizations"]
                             viz_dir.mkdir(parents=True, exist_ok=True)
 
-                            t0 = time.perf_counter()
-                            save_darkness_plot(
-                                viz_dir / f"{path.stem}_darkness.png",
-                                curve,
-                                first,
-                                last,
-                                best_idx,
-                                path.name,
-                            )
-                            timing["darkness_plot"] += time.perf_counter() - t0
+                            # Darkness plot (only if we have a curve)
+                            if curve is not None:
+                                t0 = time.perf_counter()
+                                save_darkness_plot(
+                                    viz_dir / f"{path.stem}_darkness.png",
+                                    curve,
+                                    first,
+                                    last,
+                                    best_idx,
+                                    path.name,
+                                )
+                                timing["darkness_plot"] += time.perf_counter() - t0
 
+                            # Overlay plot (always in full output mode)
                             t0 = time.perf_counter()
                             geo_for_plot = {
                                 "frame": frame,

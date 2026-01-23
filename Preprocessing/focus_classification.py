@@ -262,13 +262,13 @@ def _generate_summary_plot(
 
             # Add folder labels on the left (outside the plot)
             for folder, y_mid in folder_label_positions.items():
-                ax2.text(-0.15, y_mid, folder, transform=ax2.get_yaxis_transform(),
+                ax2.text(-0.08, y_mid, folder, transform=ax2.get_yaxis_transform(),
                          ha='right', va='center', fontsize=7, fontweight='bold')
 
             ax2.set_xlim(left=0)
 
             # Add padding on the left for folder labels
-            plt.subplots_adjust(left=0.25)
+            plt.subplots_adjust(left=0.18)
         else:
             # Fallback for no camera column
             stats_df_sorted = stats_df.sort_values('n_sharp', ascending=True)

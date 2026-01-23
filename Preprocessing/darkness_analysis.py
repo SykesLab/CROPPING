@@ -62,10 +62,13 @@ def analyze_cine_darkness(cine_obj: Any) -> Dict[str, Any]:
 
 def choose_best_frame_geometry_only(cine_obj: Any) -> Tuple[int, Dict[str, Any]]:
     """
-    Find best frame by scanning all frames for optimal geometry (crops-only mode).
+    Find best frame by scanning all frames for optimal geometry (no darkness computation).
 
-    Selects the pre-collision frame where the droplet is best centred
-    between the top of the image and the sphere.
+    Scans all frames with geometry analysis (no darkness computation) to find the
+    best pre-collision frame. Selects the frame where the droplet is best centred
+    between the top of the image and the sphere, using pure geometry-based scoring.
+
+    Skips the expensive darkness computation, but still analyzes all frames.
     """
     first_frame, last_frame = cine_obj.range
 
@@ -73,6 +76,7 @@ def choose_best_frame_geometry_only(cine_obj: Any) -> Tuple[int, Dict[str, Any]]
     best_score: Optional[float] = None
     best_geo: Optional[Dict[str, Any]] = None
 
+    # Scan all frames with geometry analysis only (no darkness computation)
     for idx in range(first_frame, last_frame + 1):
         geo = analyze_frame_geometric(cine_obj, idx)
 
@@ -87,7 +91,7 @@ def choose_best_frame_geometry_only(cine_obj: Any) -> Tuple[int, Dict[str, Any]]
         if y_bottom >= y_sphere:
             continue
 
-        # Score by how well centred the droplet is
+        # Score by how well centred the droplet is (no darkness weighting)
         top_margin = float(y_top)
         bottom_gap = float(y_sphere - y_bottom)
         centring_error = abs(top_margin - bottom_gap)
@@ -98,6 +102,7 @@ def choose_best_frame_geometry_only(cine_obj: Any) -> Tuple[int, Dict[str, Any]]
             best_score = score
             best_geo = geo
 
+    # Fallback if no valid frame found
     if best_frame is None:
         mid_frame = (first_frame + last_frame) // 2
         best_frame = mid_frame

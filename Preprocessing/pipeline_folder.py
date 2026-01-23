@@ -24,7 +24,7 @@ from darkness_analysis import (
 )
 from focus_classification import run_focus_classification
 from image_utils import otsu_mask
-from output_writer import generate_droplet_outputs, write_folder_csv
+from output_writer import generate_droplet_outputs, set_full_output_mode, write_folder_csv
 from parallel_utils import run_parallel
 from plotting import save_darkness_plot, save_geometric_overlay
 from profiling import aggregate_timings, print_global_summary, save_profile_json
@@ -70,6 +70,9 @@ def process_per_folder(
     if quick_test:
         _quick_test_per_folder(safe_mode=safe_mode, profile=profile, full_output=full_output, gui_mode=gui_mode)
         return
+
+    # Set full output mode for overlay generation (independent of darkness curves)
+    set_full_output_mode(full_output)
 
     subfolders = get_cine_folders(CINE_ROOT)
     total_folders = len(subfolders)

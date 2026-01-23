@@ -32,6 +32,7 @@ from focus_metrics import suggest_thresholds
 from image_utils import otsu_mask
 from parallel_utils import run_parallel
 from plotting import save_darkness_plot, save_geometric_overlay
+from output_writer import is_full_output_mode, set_full_output_mode
 from profiling import (
     aggregate_timings,
     print_global_summary,
@@ -234,22 +235,26 @@ def _generate_droplet_output_global(
         cv2.imwrite(str(crop_path), crop)
         timing["imwrite"] += time.perf_counter() - t0
 
-        # Full output mode: generate plots to camera subfolder (create on first use)
-        if curve is not None:
+        # Full output mode: generate plots to camera subfolder
+        # Darkness plot requires curve; overlay can be generated independently
+        if curve is not None or is_full_output_mode():
             viz_dir = cam_dirs[cam]["visualizations"]
             viz_dir.mkdir(parents=True, exist_ok=True)
 
-            t0 = time.perf_counter()
-            save_darkness_plot(
-                viz_dir / f"{path.stem}_darkness.png",
-                curve,
-                first,
-                last,
-                best_idx,
-                path.name,
-            )
-            timing["darkness_plot"] += time.perf_counter() - t0
+            # Darkness plot (only if we have a curve)
+            if curve is not None:
+                t0 = time.perf_counter()
+                save_darkness_plot(
+                    viz_dir / f"{path.stem}_darkness.png",
+                    curve,
+                    first,
+                    last,
+                    best_idx,
+                    path.name,
+                )
+                timing["darkness_plot"] += time.perf_counter() - t0
 
+            # Overlay plot (always in full output mode)
             t0 = time.perf_counter()
             geo_for_plot = {
                 "frame": frame,
@@ -310,6 +315,9 @@ def process_global(
             gui_mode=gui_mode
         )
         return
+
+    # Set full output mode for overlay generation (independent of darkness curves)
+    set_full_output_mode(full_output)
 
     # Get step from config (set by main_runner)
     step = config.CINE_STEP

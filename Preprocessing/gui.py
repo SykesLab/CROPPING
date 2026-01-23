@@ -18,10 +18,35 @@ except ImportError:
     print("GUI requires: pip install pillow")
     raise
 
+import json
+
 import config
-# Import cine_io modu6le but don't check SDK status yet - will be configured in GUI
+# Import cine_io module but don't check SDK status yet - will be configured in GUI
 import cine_io
 from profiling import format_time
+
+# Settings file for persisting GUI state
+SETTINGS_FILE = config.PROJECT_ROOT / ".gui_settings.json"
+
+
+def _load_settings() -> dict:
+    """Load saved GUI settings."""
+    try:
+        if SETTINGS_FILE.exists():
+            with open(SETTINGS_FILE, "r") as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return {}
+
+
+def _save_settings(settings: dict) -> None:
+    """Save GUI settings."""
+    try:
+        with open(SETTINGS_FILE, "w") as f:
+            json.dump(settings, f, indent=2)
+    except Exception:
+        pass
 
 # Queue for worker -> GUI communication (logs, progress, done signals)
 gui_queue: queue.Queue = queue.Queue()
@@ -113,6 +138,9 @@ class PipelineGUI:
         self._build_preview(self.main_inner)
         self._build_controls(self.main_inner)
         self._build_log(self.main_inner)
+
+        # Load saved settings and apply
+        self._load_saved_settings()
 
         # Start queue polling
         self.root.after(100, self._poll_queue)
@@ -252,6 +280,51 @@ class PipelineGUI:
         )
         messagebox.showinfo("About", about_text)
 
+    def _load_saved_settings(self) -> None:
+        """Load and apply saved GUI settings."""
+        settings = _load_settings()
+
+        # CINE root
+        if "cine_root" in settings:
+            saved_path = Path(settings["cine_root"])
+            if saved_path.exists():
+                config.CINE_ROOT = saved_path
+                self.selected_root = saved_path
+                self.landing_cine_path.configure(text=str(saved_path))
+                self._scan_cine_folder()
+
+        # Execution mode
+        if "mode" in settings:
+            self.mode_var.set(settings["mode"])
+        if "safe_mode" in settings:
+            self.safe_var.set(settings["safe_mode"])
+        if "cores" in settings:
+            self.cores_var.set(settings["cores"])
+
+        # Sampling
+        if "sample_step" in settings:
+            self.sample_var.set(settings["sample_step"])
+        if "custom_step" in settings:
+            self.custom_step.delete(0, "end")
+            self.custom_step.insert(0, settings["custom_step"])
+
+        # Calibration
+        if "calibration" in settings:
+            self.calib_var.set(settings["calibration"])
+
+        # Outputs
+        if "output_mode" in settings:
+            self.output_var.set(settings["output_mode"])
+        if "profiling" in settings:
+            self.profile_var.set(settings["profiling"])
+
+        # Frame selection
+        if "use_darkness" in settings:
+            self.darkness_var.set(settings["use_darkness"])
+
+        # Update UI state
+        self._update_config_state()
+
     def _show_landing(self) -> None:
         """Show landing screen."""
         self.main_frame.grid_remove()
@@ -281,6 +354,9 @@ class PipelineGUI:
         self.selected_root = root
         self.landing_cine_path.configure(text=str(root))
         self._scan_cine_folder()
+
+        # Save for next session
+        _save_settings({"cine_root": str(root)})
 
     def _scan_cine_folder(self) -> None:
         """Scan CINE folder and update info label."""
@@ -375,6 +451,9 @@ class PipelineGUI:
 
         # Rescan
         self._rescan_counts_for_root(root)
+
+        # Save for next session
+        _save_settings({"cine_root": str(root)})
 
     def _rescan_counts_for_root(self, root: Path) -> None:
         """Scan cine root and update counts on both landing + header."""
