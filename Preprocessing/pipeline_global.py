@@ -39,6 +39,7 @@ from profiling import (
     save_profile_json,
 )
 from profiling import Timer, format_time
+from pipeline_folder import _print_pipeline_summary
 
 
 # --- Droplet-level workers for global pipeline ---
@@ -151,7 +152,7 @@ def _analyze_droplet_global_crops_only(
 
 
 def _generate_droplet_output_global(
-    args: Tuple[str, str, Dict[str, Dict[str, Any]], int],
+    args: Tuple[str, str, Dict[str, Dict[str, Any]], int, bool],
 ) -> Tuple[str, Dict[str, float]]:
     """Generate output for single droplet (global mode)."""
     import cv2
@@ -159,8 +160,8 @@ def _generate_droplet_output_global(
     from cropping import crop_droplet_with_sphere_guard
     from focus_metrics import compute_all_focus_metrics
     from image_utils import load_frame_gray, otsu_mask
-    
-    folder_name, droplet_id, cam_data, cnn_size = args
+
+    folder_name, droplet_id, cam_data, cnn_size, full_output = args
 
     out_sub = OUTPUT_ROOT / folder_name
     out_sub.mkdir(parents=True, exist_ok=True)
@@ -237,7 +238,7 @@ def _generate_droplet_output_global(
 
         # Full output mode: generate plots to camera subfolder
         # Darkness plot requires curve; overlay can be generated independently
-        if curve is not None or is_full_output_mode():
+        if curve is not None or full_output:
             viz_dir = cam_dirs[cam]["visualizations"]
             viz_dir.mkdir(parents=True, exist_ok=True)
 
@@ -425,11 +426,11 @@ def process_global(
     print(f"[GLOBAL] Phase 3: Generating {total_droplets} outputs...")
     phase3_timer = Timer()
 
-    # Build output args: (folder_name, droplet_id, cam_data, cnn_size)
-    output_args: List[Tuple[str, str, Dict[str, Dict[str, Any]], int]] = []
+    # Build output args: (folder_name, droplet_id, cam_data, cnn_size, full_output)
+    output_args: List[Tuple[str, str, Dict[str, Dict[str, Any]], int, bool]] = []
     for folder_name, droplets in folder_analyses.items():
         for droplet_id, cam_data in droplets.items():
-            output_args.append((folder_name, droplet_id, cam_data, cnn_size))
+            output_args.append((folder_name, droplet_id, cam_data, cnn_size, full_output))
 
     results_out = run_parallel(
         _generate_droplet_output_global,
@@ -461,6 +462,9 @@ def process_global(
     logger.info("Running focus classification...")
     print("\n[GLOBAL] Running focus classification...")
     run_focus_classification()
+
+    # Print pipeline summary with any issues
+    _print_pipeline_summary(OUTPUT_ROOT)
 
     total_sec = global_timer.seconds
     logger.info(f"Global pipeline complete in {format_time(total_sec)}")

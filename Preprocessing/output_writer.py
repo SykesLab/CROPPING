@@ -71,10 +71,10 @@ def _reload_frame_and_mask(
 
 
 def generate_droplet_outputs(
-    args: Tuple[str, Dict[str, Dict[str, Any]], int, str],
+    args: Tuple[str, Dict[str, Dict[str, Any]], int, str, bool],
 ) -> Tuple[str, Dict[str, float]]:
     """Generate outputs for single droplet (all cameras)."""
-    droplet_id, cam_data, cnn_size, out_sub_path = args
+    droplet_id, cam_data, cnn_size, out_sub_path, full_output = args
     out_sub_path = Path(out_sub_path)
 
     timing = {
@@ -150,7 +150,7 @@ def generate_droplet_outputs(
 
         # Full output mode: generate plots to camera subfolder
         # Darkness plot requires curve; overlay can be generated independently
-        if curve is not None or _full_output_mode:
+        if curve is not None or full_output:
             viz_dir = cam_dirs[cam]["visualizations"]
             viz_dir.mkdir(parents=True, exist_ok=True)
 

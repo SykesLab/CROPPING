@@ -34,6 +34,77 @@ from workers import analyze_droplet_crops_only, analyze_droplet_full
 logger = logging.getLogger(__name__)
 
 
+def _print_pipeline_summary(output_root: Path) -> None:
+    """Print summary of pipeline results including any issues detected."""
+    print("\n" + "=" * 60)
+    print("PIPELINE SUMMARY")
+    print("=" * 60)
+
+    # Find all summary CSVs
+    summary_csvs = list(output_root.glob("*/*_summary.csv"))
+    if not summary_csvs:
+        print("  No summary CSVs found!")
+        return
+
+    total_cines = 0
+    total_with_geometry = 0
+    total_missing_geometry = 0
+    total_missing_crops = 0
+    issues_by_folder: Dict[str, List[str]] = {}
+
+    for csv_path in summary_csvs:
+        folder_name = csv_path.parent.name
+        try:
+            df = pd.read_csv(csv_path)
+        except Exception as e:
+            logger.warning(f"Could not read {csv_path}: {e}")
+            continue
+
+        folder_issues = []
+        folder_total = len(df)
+        total_cines += folder_total
+
+        # Check for missing geometry
+        if "y_top" in df.columns:
+            missing_geo = df["y_top"].isna().sum()
+            total_missing_geometry += missing_geo
+            total_with_geometry += (folder_total - missing_geo)
+            if missing_geo > 0:
+                folder_issues.append(f"{missing_geo} missing geometry")
+
+        # Check for missing crops
+        if "crop_path" in df.columns:
+            # Check if crop files actually exist
+            missing_crops = 0
+            for crop_path in df["crop_path"].dropna():
+                if crop_path and not Path(crop_path).exists():
+                    missing_crops += 1
+            total_missing_crops += missing_crops
+            if missing_crops > 0:
+                folder_issues.append(f"{missing_crops} missing crop files")
+
+        if folder_issues:
+            issues_by_folder[folder_name] = folder_issues
+
+    # Print overall stats
+    print(f"\n  Total cines processed: {total_cines}")
+    print(f"  With valid geometry:   {total_with_geometry} ({total_with_geometry/total_cines*100:.1f}%)" if total_cines > 0 else "")
+    print(f"  Missing geometry:      {total_missing_geometry} ({total_missing_geometry/total_cines*100:.1f}%)" if total_cines > 0 else "")
+
+    if total_missing_crops > 0:
+        print(f"  Missing crop files:    {total_missing_crops}")
+
+    # Print issues by folder
+    if issues_by_folder:
+        print("\n  Issues by folder:")
+        for folder, issues in sorted(issues_by_folder.items()):
+            print(f"    {folder}: {', '.join(issues)}")
+    else:
+        print("\n  No issues detected!")
+
+    print("=" * 60)
+
+
 def process_per_folder(
     safe_mode: bool = False,
     profile: bool = False,
@@ -111,7 +182,7 @@ def process_per_folder(
         folder_result = _process_single_folder(
             sub=sub, f_idx=f_idx, total_folders=total_folders,
             worker_func=worker_func, safe_mode=safe_mode,
-            gui_mode=gui_mode, profile=profile,
+            gui_mode=gui_mode, profile=profile, full_output=full_output,
         )
 
         if folder_result is None:
@@ -145,6 +216,9 @@ def process_per_folder(
     print("\n[PER-FOLDER] Running focus classification...")
     run_focus_classification()
 
+    # Print pipeline summary with any issues
+    _print_pipeline_summary(OUTPUT_ROOT)
+
     logger.info(f"Per-folder pipeline complete in {format_time(total_sec)}")
     print(f"\n=== PER-FOLDER COMPLETE — {format_time(total_sec)} ===")
 
@@ -168,7 +242,7 @@ def _count_total_droplets(subfolders: List[Path]) -> int:
 
 def _process_single_folder(
     sub: Path, f_idx: int, total_folders: int, worker_func: Any,
-    safe_mode: bool, gui_mode: bool, profile: bool,
+    safe_mode: bool, gui_mode: bool, profile: bool, full_output: bool = True,
 ) -> Optional[Tuple[float, float, float, float, Dict[str, float], Dict[str, float], int]]:
     """Process a single folder through all pipeline phases."""
     print("\n" + "=" * 30)
@@ -230,7 +304,7 @@ def _process_single_folder(
     out_sub = OUTPUT_ROOT / sub.name
     out_sub.mkdir(parents=True, exist_ok=True)
 
-    output_args = [(droplet_id, folder_analyses[droplet_id], cnn_size, str(out_sub))
+    output_args = [(droplet_id, folder_analyses[droplet_id], cnn_size, str(out_sub), full_output)
                    for droplet_id in folder_analyses]
 
     results_out = run_parallel(generate_droplet_outputs, output_args, desc=f"{sub.name}: outputs",
