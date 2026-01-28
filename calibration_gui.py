@@ -1224,6 +1224,10 @@ The synthetic blur will match your camera!"""
                     if isinstance(widget, ttk.Entry):
                         widget.configure(state=state)
 
+        # Re-run calibration if measurements exist (updates the plot)
+        if self.sigma_values and self.zstack_positions:
+            self._run_calibration()
+
     def _run_calibration(self):
         """Run the calibration."""
         if not self.sigma_values or not self.zstack_positions:
