@@ -17,38 +17,19 @@ python calibration_gui.py
 
 ## Why Calibrate?
 
-Even if you know your camera's optical parameters (focal length, aperture, etc.), the theoretical blur formula doesn't perfectly match reality. Calibration determines ρ, which corrects theory to match your actual camera.
-
-**Everyone needs calibration** - whether you know your optical parameters or not.
-
-## Three Calibration Approaches
-
-### Approach A: Direct Empirical
-**Best for:** Unknown optical parameters, simplicity
+Your deep learning model learns to estimate blur (σ) from images. Calibration provides the mapping from blur to physical depth:
 
 ```
-σ = ρ × |d|
+depth_mm = σ / ρ
 ```
-- ρ has units: pixels per mm
-- No optical parameters needed
-- Simple linear fit
 
-### Approach B: Optical Formula + ρ
-**Best for:** Known parameters, accuracy at large defocus
+Where ρ is your camera's blur-to-depth constant (pixels per mm).
 
-```
-σ = ρ × CoC(d, f, N, D, pixel_size)
-```
-- ρ is dimensionless (typically 0.5-2.0)
-- Uses theoretical Circle of Confusion formula
-- More accurate far from focus
+## Workflow Overview
 
-### Hybrid (Recommended)
-**Best for:** Using the Training GUI
-
-1. Calibrate with Approach A (simple lab procedure)
-2. Automatically convert to Approach B format
-3. Get compatible values for Training GUI
+1. **Training**: Generate synthetic data with arbitrary optical parameters - model learns blur patterns
+2. **Calibration**: Measure real σ vs depth for YOUR camera in the lab
+3. **Inference**: Model predicts σ → use calibrated ρ to convert to physical depth (mm)
 
 ## Lab Procedure
 
@@ -65,50 +46,55 @@ Even if you know your camera's optical parameters (focal length, aperture, etc.)
 5. Load images into GUI
 6. Run calibration
 
-## GUI Workflow
+## GUI Tabs
 
-### Tab 1: Load Z-Stack
+### Tab 1: Data
 - Browse to folder containing calibration images
 - Set z-range (e.g., -12 to +12 mm, 0.5mm steps)
-- Preview images and auto-detect focal plane
+- Preview images with slider
+- Auto-detect focal plane (sharpest image)
+- Auto-crop to sphere region
 
-### Tab 2: Measure Blur
-- Choose measurement method:
-  - **Sigmoid** (recommended): Fits edge profile
-  - **Gradient**: Uses Sobel magnitude
-  - **Laplacian**: Simple variance metric
-- View σ vs z plot
+### Tab 2: Calibrate
+Three-column layout: Measure | Fit | Results
 
-### Tab 3: Calibrate ρ
-- Select approach (A, B, or Hybrid)
-- For B/Hybrid: Enter optical parameters
-- Run calibration
-- View fit quality (R²)
+**Step 1 - Measure Blur:**
+- Choose method: Sigmoid (recommended), Gradient, or Laplacian
+- Auto-detect sphere or enter manual coordinates
+- Click "Measure All" to process z-stack
 
-### Tab 4: Multi-Aperture
-If your historical data was captured with unknown aperture:
-1. Calibrate at multiple aperture settings
-2. Load validation images (e.g., from 2021 dataset)
-3. Compare which aperture gives plausible depths
-4. Select the best match
+**Step 2 - Fit ρ:**
+- Select approach: Hybrid (recommended), Direct, or Optical Formula
+- Enter optical parameters if needed
+- Click "Calibrate ρ" to fit the blur-depth relationship
 
-### Tab 5: Multi-Camera
-For sign resolution with 2+ cameras:
-1. Add calibration for each camera
-2. Record focal plane offsets
-3. Test sign resolution algorithm
+**Results:**
+- View σ vs z plot (V-shape expected)
+- See fit quality (R²)
+- Get calibrated ρ value
 
-### Tab 6: Export
+### Tab 3: Multi-Camera
+For sign resolution with 2+ cameras (e.g., cameras g, m, v):
+
+- Add calibration for each camera with focal plane offset
+- First camera becomes reference (offset = 0)
+- Test sign resolution: enter σ from two cameras, calculate signed depth
+
+**How sign resolution works:**
+- Single camera only gives |depth| (magnitude)
+- Two cameras at different focal planes can determine if droplet is in front (+) or behind (-) the reference plane
+- Compare which camera sees sharper image to determine sign
+
+### Tab 4: Export
 - Save YAML config (for Training GUI)
 - Save CSV measurements
-- Save plots
+- Save calibration plots
 - Copy ρ to clipboard
 
 ## Output Format
 
 ```yaml
 camera: "g"
-aperture_setting: "position_2"
 approach: "hybrid"
 
 direct:
@@ -126,16 +112,19 @@ formula_rho: 5.3
 focal_plane_offset_mm: 0.0
 ```
 
-## Using Results with Training GUI
+## Using Results
 
-1. Open Training GUI
-2. In "Scan & Configure" tab, enter:
-   - `focal_length_mm`, `f_number`, `focus_distance_mm`, `pixel_size_mm` from calibration
-   - `rho` = `formula_rho` value
-3. Generate synthetic training data
-4. Train model
+After calibration, use ρ to convert model predictions to depth:
 
-The synthetic blur will now match your real camera system!
+```python
+# Model predicts blur sigma
+sigma_predicted = model.predict(image)
+
+# Convert to depth using calibrated rho
+depth_mm = sigma_predicted / rho_px_per_mm
+```
+
+For multi-camera signed depth, compare blur from both cameras and use focal offsets.
 
 ## Module Structure
 
@@ -144,36 +133,8 @@ calibration/
 ├── calibration_gui.py     # Main GUI application
 ├── blur_measurement.py    # Blur measurement methods
 ├── calibration_core.py    # Core calibration logic
-├── validation.py          # Historical data validation
+├── validation.py          # Validation utilities
 └── README.md              # This file
-```
-
-## Command Line Usage
-
-For scripting:
-
-```python
-from calibration_core import calibrate_hybrid, OpticalParams
-from blur_measurement import measure_blur_batch
-
-# Load your images and positions
-images = [...]  # List of numpy arrays
-positions = [-12, -11.5, ..., 12]  # z positions in mm
-
-# Measure blur
-_, sigmas, _ = measure_blur_batch(images, positions, method='sigmoid')
-
-# Calibrate
-optical = OpticalParams(
-    focal_length_mm=50,
-    f_number=4,
-    focus_distance_mm=300,
-    pixel_size_mm=0.01
-)
-result = calibrate_hybrid(positions, sigmas, optical)
-
-print(f"ρ (direct): {result.direct_result.rho_px_per_mm:.3f} px/mm")
-print(f"ρ (formula): {result.formula_result.rho:.3f}")
 ```
 
 ## References
