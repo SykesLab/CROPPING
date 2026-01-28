@@ -141,9 +141,11 @@ def validate_calibration_approach_a(
         sigmas=sigmas
     )
 
-    # Assess plausibility
+    # Assess plausibility - all thresholds relative to expected range
     result.warnings = []
     result.plausibility_score = 0.0
+
+    range_size = expected_depth_range[1] - expected_depth_range[0]
 
     if len(depths) == 0:
         result.warnings.append("No valid measurements")
@@ -162,17 +164,22 @@ def validate_calibration_approach_a(
     else:
         result.plausibility_score += 0.4
 
-    # Check 2: Reasonable spread (not all clustered at one value)
-    if result.depth_std < 1.0:
-        result.warnings.append(f"Very low depth variance (σ={result.depth_std:.2f} mm)")
-    elif result.depth_std > 20:
-        result.warnings.append(f"Very high depth variance (σ={result.depth_std:.2f} mm)")
+    # Check 2: Reasonable spread - relative to range size
+    std_too_low = 0.1 * range_size   # e.g., 0.6mm for ±3mm range
+    std_too_high = 0.5 * range_size  # e.g., 3mm for ±3mm range
+
+    if result.depth_std < std_too_low:
+        result.warnings.append(f"Very low depth variance (σ={result.depth_std:.2f} mm, expected >{std_too_low:.1f} mm)")
+    elif result.depth_std > std_too_high:
+        result.warnings.append(f"Very high depth variance (σ={result.depth_std:.2f} mm, expected <{std_too_high:.1f} mm)")
     else:
         result.plausibility_score += 0.3
 
-    # Check 3: Mean depth near zero (assuming symmetric distribution)
-    if abs(result.depth_mean) > 10:
-        result.warnings.append(f"Mean depth far from zero ({result.depth_mean:.1f} mm)")
+    # Check 3: Mean depth near zero - relative to range size
+    mean_threshold = 0.3 * range_size  # e.g., 1.8mm for ±3mm range
+
+    if abs(result.depth_mean) > mean_threshold:
+        result.warnings.append(f"Mean depth far from zero ({result.depth_mean:.1f} mm, expected within ±{mean_threshold:.1f} mm)")
     else:
         result.plausibility_score += 0.3
 
@@ -216,9 +223,11 @@ def validate_calibration_approach_b(
         sigmas=sigmas
     )
 
-    # Same plausibility assessment as Approach A
+    # Plausibility assessment - all thresholds relative to expected range
     result.warnings = []
     result.plausibility_score = 0.0
+
+    range_size = expected_depth_range[1] - expected_depth_range[0]
 
     if len(depths) == 0:
         result.warnings.append("No valid measurements")
@@ -230,20 +239,28 @@ def validate_calibration_approach_b(
 
     if in_range_fraction < 0.8:
         result.warnings.append(
-            f"Only {in_range_fraction*100:.0f}% of depths in expected range"
+            f"Only {in_range_fraction*100:.0f}% of depths in expected range "
+            f"[{expected_depth_range[0]}, {expected_depth_range[1]}] mm"
         )
     else:
         result.plausibility_score += 0.4
 
-    if result.depth_std < 1.0:
-        result.warnings.append(f"Very low depth variance (σ={result.depth_std:.2f} mm)")
-    elif result.depth_std > 20:
-        result.warnings.append(f"Very high depth variance (σ={result.depth_std:.2f} mm)")
+    # Check 2: Reasonable spread - relative to range size
+    std_too_low = 0.1 * range_size
+    std_too_high = 0.5 * range_size
+
+    if result.depth_std < std_too_low:
+        result.warnings.append(f"Very low depth variance (σ={result.depth_std:.2f} mm, expected >{std_too_low:.1f} mm)")
+    elif result.depth_std > std_too_high:
+        result.warnings.append(f"Very high depth variance (σ={result.depth_std:.2f} mm, expected <{std_too_high:.1f} mm)")
     else:
         result.plausibility_score += 0.3
 
-    if abs(result.depth_mean) > 10:
-        result.warnings.append(f"Mean depth far from zero ({result.depth_mean:.1f} mm)")
+    # Check 3: Mean depth near zero - relative to range size
+    mean_threshold = 0.3 * range_size
+
+    if abs(result.depth_mean) > mean_threshold:
+        result.warnings.append(f"Mean depth far from zero ({result.depth_mean:.1f} mm, expected within ±{mean_threshold:.1f} mm)")
     else:
         result.plausibility_score += 0.3
 
