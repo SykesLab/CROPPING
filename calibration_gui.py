@@ -1429,7 +1429,7 @@ The synthetic blur will now match your real camera!
             b = self.calibration_b
             z_fit = np.linspace(z_valid.min(), z_valid.max(), 100)
             # For approach B, compute sigma from CoC formula
-            sigma_fit = np.array([b.rho * b.optical_params.coc_at_defocus(z) for z in z_fit])
+            sigma_fit = np.array([b.rho * b.optical_params.calculate_coc(z) for z in z_fit])
             self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Optical: ρ = {b.rho:.3f}', linewidth=2)
 
         self.calib_ax.set_xlabel('Defocus z (mm)')
