@@ -349,7 +349,7 @@ class CalibrationGUI:
 
         ttk.Button(focal_frame, text="Detect Sphere", command=self._detect_sphere_in_preview).pack(side='left', padx=5)
         ttk.Label(focal_frame, text="|", foreground='gray').pack(side='left', padx=5)
-        ttk.Button(focal_frame, text="Check z=0", command=self._auto_detect_focal, width=10).pack(side='left')
+        ttk.Button(focal_frame, text="Verify", command=self._auto_detect_focal, width=6).pack(side='left')
         ttk.Label(focal_frame, text="(verify sharpest is at z=0)", foreground='gray', font=('', 8)).pack(side='left', padx=5)
 
         self.focal_info_var = tk.StringVar(value="")
