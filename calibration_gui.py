@@ -93,11 +93,6 @@ from calibration_core import (
     calibrate_approach_a, calibrate_approach_b, calibrate_hybrid,
     find_focal_plane, validate_calibration, export_calibration_yaml
 )
-from validation import (
-    load_validation_images, measure_blur_from_images,
-    validate_calibration_approach_a, ValidationResult,
-    compare_aperture_settings, generate_validation_report
-)
 
 # Try to import matplotlib for plotting
 try:
@@ -153,10 +148,6 @@ class CalibrationGUI:
         self.calibration_b: Optional[CalibrationResultB] = None
         self.calibration_hybrid: Optional[CalibrationResultHybrid] = None
 
-        # Multi-aperture storage
-        self.aperture_calibrations: Dict[str, CalibrationResultHybrid] = {}
-        self.validation_results: Dict[str, ValidationResult] = {}
-
         # Multi-camera storage
         self.camera_calibrations: Dict[str, CalibrationResultHybrid] = {}
         self.focal_plane_offsets: Dict[str, float] = {}
@@ -186,18 +177,18 @@ class CalibrationGUI:
         # Create 4 consolidated tabs
         self.tab_data = ttk.Frame(self.notebook, padding=10)
         self.tab_calibrate = ttk.Frame(self.notebook, padding=10)
-        self.tab_validate = ttk.Frame(self.notebook, padding=10)
+        self.tab_multicam = ttk.Frame(self.notebook, padding=10)
         self.tab_export = ttk.Frame(self.notebook, padding=10)
 
         self.notebook.add(self.tab_data, text="1. Data")
         self.notebook.add(self.tab_calibrate, text="2. Calibrate")
-        self.notebook.add(self.tab_validate, text="3. Validate")
+        self.notebook.add(self.tab_multicam, text="3. Multi-Camera")
         self.notebook.add(self.tab_export, text="4. Export")
 
         # Build tabs
         self._create_data_tab()
         self._create_calibrate_tab()
-        self._create_validate_tab()
+        self._create_multi_camera_tab()
         self._create_export_tab()
 
     # =========================================================================
@@ -522,132 +513,101 @@ class CalibrationGUI:
         scrollbar.pack(side='right', fill='y')
 
     # =========================================================================
-    # Tab 3: Validate (Multi-Aperture + Multi-Camera combined)
+    # Tab 3: Multi-Camera (Sign Resolution)
     # =========================================================================
-    def _create_validate_tab(self):
-        """Create the Validate tab (multi-aperture comparison + multi-camera setup)."""
-        # Two-column layout
-        left_col = ttk.Frame(self.tab_validate)
-        left_col.pack(side='left', fill='both', expand=True, padx=(0, 5))
+    def _create_multi_camera_tab(self):
+        """Create the Multi-Camera tab for sign resolution setup."""
+        # Single column layout (simpler now)
+        main_frame = ttk.Frame(self.tab_multicam)
+        main_frame.pack(fill='both', expand=True)
 
-        right_col = ttk.Frame(self.tab_validate)
-        right_col.pack(side='left', fill='both', expand=True, padx=(5, 0))
+        # Header
+        header = ttk.Label(main_frame, text="Multi-Camera Sign Resolution", font=('TkDefaultFont', 11, 'bold'))
+        header.pack(anchor='w', pady=(0, 10))
 
-        # === LEFT COLUMN: MULTI-APERTURE ===
-        aperture_header = ttk.Label(left_col, text="Multi-Aperture Comparison", font=('TkDefaultFont', 10, 'bold'))
-        aperture_header.pack(anchor='w', pady=(0, 5))
+        info_text = "With two cameras at different focal planes, compare blur to determine depth sign (front vs behind)."
+        ttk.Label(main_frame, text=info_text, foreground='gray', wraplength=500).pack(anchor='w', pady=(0, 10))
 
-        # Calibrated apertures list
-        list_frame = ttk.LabelFrame(left_col, text="Calibrated Apertures", padding=5)
-        list_frame.pack(fill='both', expand=True, pady=2)
+        # Two-column content
+        content = ttk.Frame(main_frame)
+        content.pack(fill='both', expand=True)
 
-        columns = ('aperture', 'rho_direct', 'rho_formula', 'r_squared')
-        self.aperture_tree = ttk.Treeview(list_frame, columns=columns, show='headings', height=4)
-        self.aperture_tree.heading('aperture', text='Aperture')
-        self.aperture_tree.heading('rho_direct', text='ρ (px/mm)')
-        self.aperture_tree.heading('rho_formula', text='ρ (form)')
-        self.aperture_tree.heading('r_squared', text='R²')
-        self.aperture_tree.column('aperture', width=80)
-        self.aperture_tree.column('rho_direct', width=70)
-        self.aperture_tree.column('rho_formula', width=70)
-        self.aperture_tree.column('r_squared', width=50)
-        self.aperture_tree.pack(fill='both', expand=True)
+        left_col = ttk.Frame(content)
+        left_col.pack(side='left', fill='both', expand=True, padx=(0, 10))
 
-        btn_row = ttk.Frame(list_frame)
-        btn_row.pack(fill='x', pady=2)
-        ttk.Button(btn_row, text="Add Current", command=self._add_aperture_calibration).pack(side='left', padx=2)
-        ttk.Button(btn_row, text="Remove", command=self._remove_aperture_calibration).pack(side='left', padx=2)
-        ttk.Button(btn_row, text="Clear", command=self._clear_aperture_calibrations).pack(side='left')
+        right_col = ttk.Frame(content)
+        right_col.pack(side='left', fill='both', expand=True)
 
-        # Validation section
-        valid_frame = ttk.LabelFrame(left_col, text="Validate Against Data", padding=5)
-        valid_frame.pack(fill='x', pady=5)
-
-        folder_row = ttk.Frame(valid_frame)
-        folder_row.pack(fill='x', pady=2)
-        ttk.Label(folder_row, text="Folder:").pack(side='left')
-        self.valid_folder_var = tk.StringVar()
-        ttk.Entry(folder_row, textvariable=self.valid_folder_var, width=25).pack(side='left', padx=2)
-        ttk.Button(folder_row, text="...", command=self._browse_validation_folder, width=3).pack(side='left')
-
-        range_row = ttk.Frame(valid_frame)
-        range_row.pack(fill='x', pady=2)
-        ttk.Label(range_row, text="Depth range:").pack(side='left')
-        self.valid_depth_min_var = tk.StringVar(value="-15")
-        ttk.Entry(range_row, textvariable=self.valid_depth_min_var, width=5).pack(side='left', padx=2)
-        ttk.Label(range_row, text="to").pack(side='left')
-        self.valid_depth_max_var = tk.StringVar(value="15")
-        ttk.Entry(range_row, textvariable=self.valid_depth_max_var, width=5).pack(side='left', padx=2)
-        ttk.Label(range_row, text="mm").pack(side='left')
-
-        ttk.Button(valid_frame, text="Run Validation", command=self._run_validation).pack(pady=5)
-
-        self.valid_progress_var = tk.DoubleVar(value=0)
-        ttk.Progressbar(valid_frame, variable=self.valid_progress_var, maximum=100).pack(fill='x', pady=2)
-        self.valid_status_var = tk.StringVar(value="")
-        ttk.Label(valid_frame, textvariable=self.valid_status_var, font=('', 8)).pack(anchor='w')
-
-        # Results text
-        self.valid_text = scrolledtext.ScrolledText(left_col, height=10, state='disabled', wrap='word', font=('Courier', 8))
-        self.valid_text.pack(fill='both', expand=True, pady=2)
-
-        # === RIGHT COLUMN: MULTI-CAMERA ===
-        camera_header = ttk.Label(right_col, text="Multi-Camera Setup", font=('TkDefaultFont', 10, 'bold'))
-        camera_header.pack(anchor='w', pady=(0, 5))
-
-        # Camera list
-        cam_frame = ttk.LabelFrame(right_col, text="Camera Calibrations", padding=5)
-        cam_frame.pack(fill='both', expand=True, pady=2)
+        # === LEFT: Camera Calibrations ===
+        cam_frame = ttk.LabelFrame(left_col, text="Camera Calibrations", padding=10)
+        cam_frame.pack(fill='both', expand=True)
 
         columns = ('camera', 'rho', 'focal_offset')
-        self.camera_tree = ttk.Treeview(cam_frame, columns=columns, show='headings', height=4)
+        self.camera_tree = ttk.Treeview(cam_frame, columns=columns, show='headings', height=6)
         self.camera_tree.heading('camera', text='Camera')
         self.camera_tree.heading('rho', text='ρ (px/mm)')
-        self.camera_tree.heading('focal_offset', text='Offset (mm)')
-        self.camera_tree.column('camera', width=70)
-        self.camera_tree.column('rho', width=80)
-        self.camera_tree.column('focal_offset', width=80)
+        self.camera_tree.heading('focal_offset', text='Focal Offset (mm)')
+        self.camera_tree.column('camera', width=80)
+        self.camera_tree.column('rho', width=100)
+        self.camera_tree.column('focal_offset', width=120)
         self.camera_tree.pack(fill='both', expand=True)
 
-        add_row = ttk.Frame(cam_frame)
-        add_row.pack(fill='x', pady=2)
-        ttk.Label(add_row, text="Offset:").pack(side='left')
+        # Add controls
+        add_frame = ttk.Frame(cam_frame)
+        add_frame.pack(fill='x', pady=(10, 0))
+
+        ttk.Label(add_frame, text="Focal offset from reference (mm):").pack(side='left')
         self.focal_offset_var = tk.StringVar(value="0.0")
-        ttk.Entry(add_row, textvariable=self.focal_offset_var, width=8).pack(side='left', padx=2)
-        ttk.Button(add_row, text="Add", command=self._add_camera_calibration).pack(side='left', padx=2)
-        ttk.Button(add_row, text="Remove", command=self._remove_camera_calibration).pack(side='left')
+        ttk.Entry(add_frame, textvariable=self.focal_offset_var, width=10).pack(side='left', padx=5)
 
-        # Test sign resolution
-        test_frame = ttk.LabelFrame(right_col, text="Test Sign Resolution", padding=5)
-        test_frame.pack(fill='x', pady=5)
+        btn_frame = ttk.Frame(cam_frame)
+        btn_frame.pack(fill='x', pady=5)
+        ttk.Button(btn_frame, text="Add Current Calibration", command=self._add_camera_calibration).pack(side='left', padx=2)
+        ttk.Button(btn_frame, text="Remove Selected", command=self._remove_camera_calibration).pack(side='left', padx=2)
 
-        test_row = ttk.Frame(test_frame)
-        test_row.pack(fill='x', pady=2)
-        ttk.Label(test_row, text="Cam 1 σ:").pack(side='left')
+        ttk.Label(cam_frame, text="First camera added becomes reference (offset = 0)",
+                  font=('', 8), foreground='gray').pack(anchor='w')
+
+        # === RIGHT: Test Sign Resolution ===
+        test_frame = ttk.LabelFrame(right_col, text="Test Sign Resolution", padding=10)
+        test_frame.pack(fill='x')
+
+        ttk.Label(test_frame, text="Enter blur from two cameras for same droplet:").pack(anchor='w', pady=(0, 10))
+
+        row1 = ttk.Frame(test_frame)
+        row1.pack(fill='x', pady=2)
+        ttk.Label(row1, text="Camera 1 σ (px):", width=15).pack(side='left')
         self.test_sigma1_var = tk.StringVar(value="18.0")
-        ttk.Entry(test_row, textvariable=self.test_sigma1_var, width=8).pack(side='left', padx=2)
-        ttk.Label(test_row, text="Cam 2 σ:").pack(side='left')
+        ttk.Entry(row1, textvariable=self.test_sigma1_var, width=10).pack(side='left')
+
+        row2 = ttk.Frame(test_frame)
+        row2.pack(fill='x', pady=2)
+        ttk.Label(row2, text="Camera 2 σ (px):", width=15).pack(side='left')
         self.test_sigma2_var = tk.StringVar(value="7.2")
-        ttk.Entry(test_row, textvariable=self.test_sigma2_var, width=8).pack(side='left', padx=2)
+        ttk.Entry(row2, textvariable=self.test_sigma2_var, width=10).pack(side='left')
 
-        ttk.Button(test_frame, text="Calculate Depth", command=self._test_sign_resolution).pack(pady=5)
+        ttk.Button(test_frame, text="Calculate Signed Depth", command=self._test_sign_resolution).pack(pady=10)
 
+        # Result
         self.sign_result_var = tk.StringVar(value="")
-        ttk.Label(test_frame, textvariable=self.sign_result_var, font=('TkDefaultFont', 11, 'bold')).pack()
+        ttk.Label(test_frame, textvariable=self.sign_result_var, font=('TkDefaultFont', 14, 'bold')).pack()
 
         self.sign_explanation_var = tk.StringVar(value="")
-        ttk.Label(test_frame, textvariable=self.sign_explanation_var, foreground='gray', font=('', 8), wraplength=300).pack()
+        ttk.Label(test_frame, textvariable=self.sign_explanation_var, foreground='gray', wraplength=300).pack(pady=5)
 
         # Example
-        example_frame = ttk.LabelFrame(right_col, text="Example", padding=5)
-        example_frame.pack(fill='x', pady=2)
+        example_frame = ttk.LabelFrame(right_col, text="How It Works", padding=10)
+        example_frame.pack(fill='x', pady=10)
 
-        example_text = """Cam g: focal at z=0  |  Cam m: focal at z=+3mm
-Droplet at z=+5mm:
-  g sees 5mm offset (blurry)
-  m sees 2mm offset (sharper)
-  → m sharper = droplet BEHIND g"""
-        ttk.Label(example_frame, text=example_text, justify='left', font=('Courier', 8)).pack(anchor='w')
+        example_text = """Camera g: focal plane at z = 0 mm
+Camera m: focal plane at z = +3 mm (behind g)
+
+Droplet at z = +5 mm:
+  • g sees 5mm offset → more blur (σ = 18px)
+  • m sees 2mm offset → less blur (σ = 7px)
+  • m is sharper → droplet is BEHIND g's focal plane
+  • Signed depth = +5 mm"""
+        ttk.Label(example_frame, text=example_text, justify='left', font=('Courier', 9)).pack(anchor='w')
 
     # =========================================================================
     # Tab 4: Export
@@ -1462,117 +1422,7 @@ The synthetic blur will now match your real camera!
         self.calib_canvas.draw()
 
     # =========================================================================
-    # Event Handlers - Tab 4 (Multi-Aperture)
-    # =========================================================================
-    def _add_aperture_calibration(self):
-        """Add current calibration to aperture list."""
-        if not self.calibration_hybrid:
-            messagebox.showerror("Error", "Run calibration first (Tab 3)")
-            return
-
-        aperture = self.aperture_var.get()
-
-        if aperture in self.aperture_calibrations:
-            if not messagebox.askyesno("Overwrite?", f"Aperture '{aperture}' already exists. Overwrite?"):
-                return
-
-        self.aperture_calibrations[aperture] = self.calibration_hybrid
-
-        # Update tree
-        self._refresh_aperture_tree()
-
-    def _remove_aperture_calibration(self):
-        """Remove selected aperture calibration."""
-        selection = self.aperture_tree.selection()
-        if selection:
-            item = self.aperture_tree.item(selection[0])
-            aperture = item['values'][0]
-            if aperture in self.aperture_calibrations:
-                del self.aperture_calibrations[aperture]
-            self.aperture_tree.delete(selection[0])
-
-    def _clear_aperture_calibrations(self):
-        """Clear all aperture calibrations."""
-        self.aperture_calibrations.clear()
-        for item in self.aperture_tree.get_children():
-            self.aperture_tree.delete(item)
-
-    def _refresh_aperture_tree(self):
-        """Refresh aperture tree from stored calibrations."""
-        for item in self.aperture_tree.get_children():
-            self.aperture_tree.delete(item)
-
-        for aperture, calib in self.aperture_calibrations.items():
-            a = calib.direct_result
-            b = calib.formula_result
-            self.aperture_tree.insert('', 'end', values=(
-                aperture,
-                f"{a.rho_px_per_mm:.3f}",
-                f"{b.rho:.3f}",
-                f"{a.r_squared:.3f}",
-                a.num_points
-            ))
-
-    def _browse_validation_folder(self):
-        folder = filedialog.askdirectory(title="Select Validation Images Folder")
-        if folder:
-            self.valid_folder_var.set(folder)
-
-    def _run_validation(self):
-        """Run validation against historical data."""
-        folder = self.valid_folder_var.get()
-        if not folder:
-            messagebox.showerror("Error", "Select validation folder")
-            return
-
-        if not self.aperture_calibrations:
-            messagebox.showerror("Error", "Add at least one aperture calibration first")
-            return
-
-        # Run in thread
-        def validation_thread():
-            try:
-                images = load_validation_images(Path(folder))
-                if not images:
-                    self.msg_queue.put(('valid_error', "No images found in validation folder"))
-                    return
-
-                self.msg_queue.put(('valid_status', f"Loaded {len(images)} images, measuring blur..."))
-
-                measurements = measure_blur_from_images(images)
-
-                depth_min = float(self.valid_depth_min_var.get())
-                depth_max = float(self.valid_depth_max_var.get())
-
-                self.validation_results.clear()
-                for aperture, calib in self.aperture_calibrations.items():
-                    result = validate_calibration_approach_a(
-                        measurements, calib.direct_result, (depth_min, depth_max)
-                    )
-                    self.validation_results[aperture] = result
-
-                self.msg_queue.put(('valid_done', None))
-
-            except Exception as e:
-                self.msg_queue.put(('valid_error', str(e)))
-
-        threading.Thread(target=validation_thread, daemon=True).start()
-        self.valid_status_var.set("Running validation...")
-
-    def _on_validation_complete(self):
-        """Handle validation completion."""
-        report = generate_validation_report(self.validation_results)
-
-        self.valid_text.configure(state='normal')
-        self.valid_text.delete('1.0', 'end')
-        self.valid_text.insert('1.0', report)
-        self.valid_text.configure(state='disabled')
-
-        self.valid_status_var.set("Validation complete")
-        self.valid_progress_var.set(100)
-
-    # =========================================================================
-    # Event Handlers - Tab 5 (Multi-Camera)
+    # Event Handlers - Tab 3 (Multi-Camera)
     # =========================================================================
     def _add_camera_calibration(self):
         """Add current calibration to camera list."""
@@ -1775,13 +1625,6 @@ The synthetic blur will now match your real camera!
                     self.measure_status_var.set(data)
                 elif msg_type == 'measure_done':
                     self._on_measure_complete()
-                elif msg_type == 'valid_status':
-                    self.valid_status_var.set(data)
-                elif msg_type == 'valid_done':
-                    self._on_validation_complete()
-                elif msg_type == 'valid_error':
-                    messagebox.showerror("Validation Error", data)
-                    self.valid_status_var.set("Error")
 
         except queue.Empty:
             pass
