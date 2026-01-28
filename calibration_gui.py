@@ -1443,10 +1443,27 @@ The synthetic blur will now match your real camera!
     # =========================================================================
     # Event Handlers - Tab 3 (Multi-Camera)
     # =========================================================================
+    def _get_current_calibration(self):
+        """Get the current active calibration and its rho in px/mm."""
+        if self.calibration_hybrid:
+            rho = self.calibration_hybrid.direct_result.rho_px_per_mm
+            return ('hybrid', self.calibration_hybrid, rho)
+        elif self.calibration_a:
+            rho = self.calibration_a.rho_px_per_mm
+            return ('A', self.calibration_a, rho)
+        elif self.calibration_b:
+            # For approach B, estimate rho_px_per_mm at reference defocus
+            ref_d = float(self.ref_defocus_var.get())
+            coc = self.calibration_b.optical_params.calculate_coc(ref_d)
+            rho_px_per_mm = (self.calibration_b.rho * coc) / ref_d if ref_d != 0 else 0
+            return ('B', self.calibration_b, rho_px_per_mm)
+        return (None, None, None)
+
     def _add_camera_calibration(self):
         """Add current calibration to camera list."""
-        if not self.calibration_hybrid:
-            messagebox.showerror("Error", "Run calibration first (Tab 3)")
+        approach, calib, rho = self._get_current_calibration()
+        if not calib:
+            messagebox.showerror("Error", "Run calibration first (Tab 2)")
             return
 
         camera = self.camera_var.get()
@@ -1461,7 +1478,12 @@ The synthetic blur will now match your real camera!
             offset = 0.0
             self.focal_offset_var.set("0.0")
 
-        self.camera_calibrations[camera] = self.calibration_hybrid
+        # Store calibration with its approach type and rho_px_per_mm
+        self.camera_calibrations[camera] = {
+            'approach': approach,
+            'calibration': calib,
+            'rho_px_per_mm': rho
+        }
         self.focal_plane_offsets[camera] = offset
 
         self._refresh_camera_tree()
@@ -1482,14 +1504,14 @@ The synthetic blur will now match your real camera!
         for item in self.camera_tree.get_children():
             self.camera_tree.delete(item)
 
-        for camera, calib in self.camera_calibrations.items():
-            a = calib.direct_result
+        for camera, data in self.camera_calibrations.items():
+            rho = data['rho_px_per_mm']
             offset = self.focal_plane_offsets.get(camera, 0.0)
             aperture = self.aperture_var.get()
 
             self.camera_tree.insert('', 'end', values=(
                 camera,
-                f"{a.rho_px_per_mm:.3f}",
+                f"{rho:.3f}",
                 f"{offset:.1f}",
                 aperture
             ))
@@ -1510,8 +1532,8 @@ The synthetic blur will now match your real camera!
         cameras = list(self.camera_calibrations.keys())
         cam1, cam2 = cameras[0], cameras[1]
 
-        rho1 = self.camera_calibrations[cam1].direct_result.rho_px_per_mm
-        rho2 = self.camera_calibrations[cam2].direct_result.rho_px_per_mm
+        rho1 = self.camera_calibrations[cam1]['rho_px_per_mm']
+        rho2 = self.camera_calibrations[cam2]['rho_px_per_mm']
         offset = self.focal_plane_offsets[cam2] - self.focal_plane_offsets[cam1]
 
         # Calculate depths
