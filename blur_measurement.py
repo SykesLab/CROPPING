@@ -92,9 +92,11 @@ def measure_blur_sigmoid(
     for i in range(num_rays):
         angle = 2 * np.pi * i / num_rays
 
-        # Sample points along ray from center outward
+        # Sample points along ray - start from 50% of radius to skip center artifacts
+        # (e.g., bright spots, reflections)
+        start_r = int(radius * 0.5)
         max_r = int(min(radius * 1.5, min(cx, cy, w - cx, h - cy)))
-        r_values = np.arange(0, max_r)
+        r_values = np.arange(start_r, max_r)
 
         x_coords = (cx + r_values * np.cos(angle)).astype(int)
         y_coords = (cy + r_values * np.sin(angle)).astype(int)
@@ -113,7 +115,7 @@ def measure_blur_sigmoid(
 
         # Fit sigmoid
         try:
-            # Initial guesses
+            # Initial guesses - use start of profile (inside sphere) and end (background)
             I_bg_init = np.median(intensities[-10:])
             I_sphere_init = np.median(intensities[:10])
             r_edge_init = radius
