@@ -448,7 +448,7 @@ def measure_blur_batch(
     # Auto-detect from sharpest image if not provided
     if center is None or radius is None:
         # Find sharpest image (likely at focus)
-        sharpness = [cv2.Laplacian(img.astype(np.float32), cv2.CV_64F).var() for img in images]
+        sharpness = [cv2.Laplacian(img, cv2.CV_64F).var() for img in images]
         best_idx = np.argmax(sharpness)
         center, radius = detect_sphere(images[best_idx])
 

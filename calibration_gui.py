@@ -887,7 +887,8 @@ The synthetic blur will match your camera!"""
 
         sharpness = []
         for img in self.zstack_images:
-            lap = cv2.Laplacian(img.astype(np.float32), cv2.CV_64F)
+            # Use uint8 directly - OpenCV supports uint8 -> CV_64F
+            lap = cv2.Laplacian(img, cv2.CV_64F)
             sharpness.append(lap.var())
 
         best_idx = int(np.argmax(sharpness))
@@ -1180,8 +1181,11 @@ The synthetic blur will match your camera!"""
         # Update plot (use shared calib_ax)
         if HAS_MATPLOTLIB:
             self.calib_ax.clear()
-            z = self.zstack_positions[:len(self.sigma_values)]
-            self.calib_ax.scatter(z, self.sigma_values, c='blue', alpha=0.7, s=30, label='Measured')
+            # Match lengths safely
+            n = min(len(self.zstack_positions), len(self.sigma_values))
+            z = self.zstack_positions[:n]
+            sigma = self.sigma_values[:n]
+            self.calib_ax.scatter(z, sigma, c='blue', alpha=0.7, s=30, label='Measured')
             self.calib_ax.set_xlabel('Defocus z (mm)')
             self.calib_ax.set_ylabel('Blur σ (pixels)')
             self.calib_ax.set_title('Blur vs Defocus')
