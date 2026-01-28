@@ -1224,10 +1224,6 @@ The synthetic blur will match your camera!"""
                     if isinstance(widget, ttk.Entry):
                         widget.configure(state=state)
 
-        # Re-run calibration if measurements exist (updates the plot)
-        if self.sigma_values and self.zstack_positions:
-            self._run_calibration()
-
     def _run_calibration(self):
         """Run the calibration."""
         if not self.sigma_values or not self.zstack_positions:
@@ -1237,9 +1233,13 @@ The synthetic blur will match your camera!"""
         approach = self.approach_var.get()
 
         try:
+            # Clear all previous calibrations first
+            self.calibration_a = None
+            self.calibration_b = None
+            self.calibration_hybrid = None
+
             if approach == 'A':
                 self.calibration_a = calibrate_approach_a(self.zstack_positions, self.sigma_values)
-                self.calibration_hybrid = None
                 self._display_results_a()
 
             elif approach == 'B':
@@ -1250,7 +1250,6 @@ The synthetic blur will match your camera!"""
                     pixel_size_mm=float(self.optical_vars['pixel_size'].get())
                 )
                 self.calibration_b = calibrate_approach_b(self.zstack_positions, self.sigma_values, optical)
-                self.calibration_hybrid = None
                 self._display_results_b()
 
             else:  # hybrid
@@ -1415,17 +1414,23 @@ The synthetic blur will now match your real camera!
         # Plot data points
         self.calib_ax.scatter(z_valid, sigma_valid, c='blue', label='Measured', alpha=0.7, s=40)
 
-        # Plot fit
+        # Plot fit based on which calibration is active
         if self.calibration_hybrid:
             a = self.calibration_hybrid.direct_result
             z_fit = np.linspace(z_valid.min(), z_valid.max(), 100)
             sigma_fit = a.rho_px_per_mm * np.abs(z_fit) + a.sigma_0
-            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Fit: ρ = {a.rho_px_per_mm:.3f} px/mm', linewidth=2)
+            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Hybrid: ρ = {a.rho_px_per_mm:.3f} px/mm', linewidth=2)
         elif self.calibration_a:
             a = self.calibration_a
             z_fit = np.linspace(z_valid.min(), z_valid.max(), 100)
             sigma_fit = a.rho_px_per_mm * np.abs(z_fit) + a.sigma_0
-            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Fit: ρ = {a.rho_px_per_mm:.3f} px/mm', linewidth=2)
+            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Direct: ρ = {a.rho_px_per_mm:.3f} px/mm', linewidth=2)
+        elif self.calibration_b:
+            b = self.calibration_b
+            z_fit = np.linspace(z_valid.min(), z_valid.max(), 100)
+            # For approach B, compute sigma from CoC formula
+            sigma_fit = np.array([b.rho * b.optical_params.coc_at_defocus(z) for z in z_fit])
+            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Optical: ρ = {b.rho:.3f}', linewidth=2)
 
         self.calib_ax.set_xlabel('Defocus z (mm)')
         self.calib_ax.set_ylabel('Blur σ (pixels)')
