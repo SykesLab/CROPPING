@@ -343,12 +343,14 @@ class CalibrationGUI:
         self.preview_label_var = tk.StringVar(value="z = 0.0 mm")
         ttk.Label(slider_frame, textvariable=self.preview_label_var, width=15).pack(side='left')
 
-        # Focal plane detection
+        # Sphere detection and utilities
         focal_frame = ttk.Frame(preview_frame)
         focal_frame.pack(fill='x', pady=5)
 
-        ttk.Button(focal_frame, text="Auto-detect Focal Plane", command=self._auto_detect_focal).pack(side='left', padx=5)
-        ttk.Button(focal_frame, text="Detect Sphere", command=self._detect_sphere_in_preview).pack(side='left')
+        ttk.Button(focal_frame, text="Detect Sphere", command=self._detect_sphere_in_preview).pack(side='left', padx=5)
+        ttk.Label(focal_frame, text="|", foreground='gray').pack(side='left', padx=5)
+        ttk.Button(focal_frame, text="Check z=0", command=self._auto_detect_focal, width=10).pack(side='left')
+        ttk.Label(focal_frame, text="(verify sharpest is at z=0)", foreground='gray', font=('', 8)).pack(side='left', padx=5)
 
         self.focal_info_var = tk.StringVar(value="")
         ttk.Label(focal_frame, textvariable=self.focal_info_var, foreground='blue', font=('', 9)).pack(side='left', padx=10)
@@ -880,7 +882,7 @@ The synthetic blur will match your camera!"""
             self.preview_canvas.create_image(225, 225, image=self._preview_photo)
 
     def _auto_detect_focal(self):
-        """Auto-detect the focal plane (sharpest image)."""
+        """Sanity check: verify sharpest image is at z=0."""
         if not self.zstack_images:
             messagebox.showerror("Error", "No images loaded")
             return
@@ -901,8 +903,12 @@ The synthetic blur will match your camera!"""
         self.preview_slider.set(best_idx)
         self._update_preview(best_idx)
 
-        self.focal_info_var.set(f"Focal plane: z = {best_z:.2f} mm (image #{best_idx + 1})")
-        self._append_stats_text(f"\n\nFocal plane detected: z = {best_z:.2f} mm")
+        # Show result as sanity check
+        if abs(best_z) < 0.3:  # Within 0.3mm of z=0
+            self.focal_info_var.set(f"✓ Sharpest at z = {best_z:.2f} mm (looks good!)")
+        else:
+            self.focal_info_var.set(f"⚠ Sharpest at z = {best_z:.2f} mm (expected ~0)")
+        self._append_stats_text(f"\n\nSanity check: sharpest image at z = {best_z:.2f} mm")
 
     def _auto_crop_to_sphere(self):
         """Auto-crop all images to sphere region with padding."""
