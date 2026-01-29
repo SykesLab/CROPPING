@@ -2,15 +2,24 @@
 CINE file loader for calibration z-stacks.
 
 Handles loading .cine files for z-stack calibration data.
+Supports both:
+  - Single .cine file with multiple frames (one per z-position)
+  - Folder of .cine files (one file per z-position)
+
 Uses pyphantom library (Phantom SDK) for .cine file access.
 
 Usage:
+    # For folder of .cine files:
+    loader = CineFolderLoader(folder_path)
+    images, positions = loader.load_zstack(z_start=-6, z_end=6)
+
+    # For single .cine file:
     loader = CineLoader(cine_path)
-    if loader.is_available():
-        frames, positions = loader.extract_zstack(z_start=-6, z_end=6)
+    images, positions = loader.extract_zstack(z_start=-6, z_end=6)
 """
 
 import os
+import re
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional, Tuple
@@ -305,6 +314,223 @@ class CineLoader:
                     defocus_positions.append(stage_pos - stage_to_defocus_offset)
 
         return images, defocus_positions
+
+
+# =============================================================================
+# CineFolderLoader Class - For folder of .cine files
+# =============================================================================
+class CineFolderLoader:
+    """
+    Load z-stack from a folder of .cine files (one file per z-position).
+
+    Each .cine file represents one z-position. The loader extracts one frame
+    (or averages multiple frames) from each file.
+
+    Attributes:
+        folder: Path to folder containing .cine files
+        cine_files: List of .cine file paths (sorted)
+        num_files: Number of .cine files found
+    """
+
+    def __init__(self, folder_path: Optional[str] = None):
+        """
+        Initialize loader, optionally scanning a folder.
+
+        Args:
+            folder_path: Path to folder containing .cine files
+        """
+        self.folder: Optional[Path] = None
+        self.cine_files: List[Path] = []
+        self.num_files: int = 0
+        self._image_shape: Optional[Tuple[int, int]] = None
+
+        if folder_path:
+            self.scan_folder(folder_path)
+
+    @staticmethod
+    def is_available() -> bool:
+        """Check if pyphantom is available."""
+        return PYPHANTOM_AVAILABLE
+
+    def scan_folder(self, folder_path: str) -> bool:
+        """
+        Scan a folder for .cine files.
+
+        Args:
+            folder_path: Path to folder
+
+        Returns:
+            True if .cine files found, False otherwise
+        """
+        self.folder = Path(folder_path)
+        if not self.folder.exists():
+            print(f"[CineFolderLoader] Folder not found: {folder_path}")
+            return False
+
+        # Find all .cine files and sort them
+        self.cine_files = sorted(self.folder.glob("*.cine"))
+        self.num_files = len(self.cine_files)
+
+        if self.num_files == 0:
+            print(f"[CineFolderLoader] No .cine files found in: {folder_path}")
+            return False
+
+        # Get image shape from first file
+        if PYPHANTOM_AVAILABLE:
+            loader = CineLoader(str(self.cine_files[0]))
+            if loader.cine_obj is not None:
+                info = loader.get_info()
+                self._image_shape = (info['image_height'], info['image_width'])
+
+        return True
+
+    def get_info(self) -> Dict[str, Any]:
+        """Get information about the folder."""
+        return {
+            "folder": str(self.folder) if self.folder else None,
+            "num_files": self.num_files,
+            "filenames": [f.name for f in self.cine_files],
+            "image_width": self._image_shape[1] if self._image_shape else 0,
+            "image_height": self._image_shape[0] if self._image_shape else 0,
+        }
+
+    def _extract_frame_from_cine(
+        self,
+        cine_path: Path,
+        frame_idx: int = 0,
+        average_frames: int = 1
+    ) -> Optional[np.ndarray]:
+        """Extract a frame (or averaged frames) from a single .cine file."""
+        if not PYPHANTOM_AVAILABLE:
+            return None
+
+        loader = CineLoader(str(cine_path))
+        if loader.cine_obj is None:
+            return None
+
+        if average_frames <= 1:
+            return loader.extract_frame(loader.frame_range[0] + frame_idx)
+        else:
+            # Average multiple frames
+            frames = []
+            for i in range(average_frames):
+                idx = loader.frame_range[0] + frame_idx + i
+                if idx <= loader.frame_range[1]:
+                    f = loader.extract_frame(idx)
+                    if f is not None:
+                        frames.append(f.astype(np.float32))
+
+            if frames:
+                return np.mean(frames, axis=0).astype(np.uint8)
+            return None
+
+    def load_zstack(
+        self,
+        z_start: float,
+        z_end: float,
+        frame_idx: int = 0,
+        average_frames: int = 1,
+        progress_callback: Optional[callable] = None
+    ) -> Tuple[List[np.ndarray], List[float], List[str]]:
+        """
+        Load z-stack from folder of .cine files.
+
+        Args:
+            z_start: Z position (mm) for first file (defocus)
+            z_end: Z position (mm) for last file
+            frame_idx: Which frame to extract from each .cine (default: 0 = first)
+            average_frames: Number of frames to average per file (default: 1)
+            progress_callback: Optional callback(current, total) for progress
+
+        Returns:
+            Tuple of (images list, z_positions list, filenames list)
+        """
+        if not PYPHANTOM_AVAILABLE:
+            print("[CineFolderLoader] pyphantom not available")
+            return [], [], []
+
+        if self.num_files == 0:
+            return [], [], []
+
+        # Compute z-positions (linear interpolation based on file order)
+        z_positions = []
+        for i in range(self.num_files):
+            if self.num_files == 1:
+                z = (z_start + z_end) / 2
+            else:
+                t = i / (self.num_files - 1)
+                z = z_start + t * (z_end - z_start)
+            z_positions.append(z)
+
+        # Extract one frame from each .cine file
+        images = []
+        filenames = []
+        valid_positions = []
+
+        for i, cine_path in enumerate(self.cine_files):
+            if progress_callback:
+                progress_callback(i + 1, self.num_files)
+
+            img = self._extract_frame_from_cine(cine_path, frame_idx, average_frames)
+            if img is not None:
+                images.append(img)
+                filenames.append(cine_path.name)
+                valid_positions.append(z_positions[i])
+
+        return images, valid_positions, filenames
+
+    def load_with_positions_csv(
+        self,
+        csv_path: str,
+        stage_offset: float = 0.0,
+        frame_idx: int = 0,
+        average_frames: int = 1
+    ) -> Tuple[List[np.ndarray], List[float], List[str]]:
+        """
+        Load z-stack using a CSV file for position mapping.
+
+        CSV should have columns: filename, z_position_mm (or stage_position_mm)
+
+        Args:
+            csv_path: Path to CSV file
+            stage_offset: Offset to convert stage to defocus (z = stage - offset)
+            frame_idx: Which frame to extract from each .cine
+            average_frames: Number of frames to average
+
+        Returns:
+            Tuple of (images list, z_positions list, filenames list)
+        """
+        import pandas as pd
+
+        df = pd.read_csv(csv_path)
+
+        # Determine position column
+        if 'z_position_mm' in df.columns:
+            pos_col = 'z_position_mm'
+            offset = 0.0
+        elif 'stage_position_mm' in df.columns:
+            pos_col = 'stage_position_mm'
+            offset = stage_offset
+        else:
+            raise ValueError("CSV must have 'z_position_mm' or 'stage_position_mm' column")
+
+        images = []
+        positions = []
+        filenames = []
+
+        for _, row in df.iterrows():
+            filename = row['filename']
+            position = row[pos_col] - offset
+
+            cine_path = self.folder / filename
+            if cine_path.exists():
+                img = self._extract_frame_from_cine(cine_path, frame_idx, average_frames)
+                if img is not None:
+                    images.append(img)
+                    positions.append(position)
+                    filenames.append(filename)
+
+        return images, positions, filenames
 
 
 # =============================================================================

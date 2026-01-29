@@ -93,7 +93,7 @@ from calibration_core import (
     calibrate_approach_a, calibrate_approach_b, calibrate_hybrid,
     find_focal_plane, validate_calibration, export_calibration_yaml
 )
-from cine_loader import CineLoader, check_pyphantom, PYPHANTOM_AVAILABLE
+from cine_loader import CineFolderLoader, check_pyphantom, PYPHANTOM_AVAILABLE
 
 # Try to import matplotlib for plotting
 try:
@@ -141,7 +141,7 @@ class CalibrationGUI:
         self.zstack_positions: List[float] = []
         self.zstack_filenames: List[str] = []
         self.zstack_stats: Optional[ZStackStats] = None
-        self.cine_loader: Optional[CineLoader] = None  # For .cine file support
+        self.cine_folder_loader: Optional[CineFolderLoader] = None  # For folder of .cine files
 
         self.blur_measurements: List[BlurMeasurement] = []
         self.sigma_values: List[float] = []
@@ -207,8 +207,8 @@ class CalibrationGUI:
 
         # === LEFT PANEL ===
 
-        # Source type selection
-        source_type_frame = ttk.LabelFrame(left_panel, text="Z-Stack Source Type", padding=5)
+        # 1. Source type selection (TOP)
+        source_type_frame = ttk.LabelFrame(left_panel, text="1. Z-Stack Source Type", padding=5)
         source_type_frame.pack(fill='x', pady=5)
 
         self.source_type_var = tk.StringVar(value="folder")
@@ -224,8 +224,12 @@ class CalibrationGUI:
         ttk.Label(source_type_frame, text=f"({'✓' if pyphantom_available else '⚠'} pyphantom)",
                   font=('', 8), foreground=status_color).pack(side='left', padx=10)
 
-        # === Image Folder Source (existing) ===
-        self.folder_source_frame = ttk.LabelFrame(left_panel, text="Image Folder Source", padding=10)
+        # 2. Container for source-specific options (switches between folder/cine)
+        self.source_container = ttk.Frame(left_panel)
+        self.source_container.pack(fill='x', pady=0)
+
+        # === Image Folder Source ===
+        self.folder_source_frame = ttk.LabelFrame(self.source_container, text="Image Folder Source", padding=10)
         self.folder_source_frame.pack(fill='x', pady=5)
 
         row1 = ttk.Frame(self.folder_source_frame)
@@ -249,16 +253,38 @@ class CalibrationGUI:
             font=('TkDefaultFont', 8), foreground='gray'
         ).pack(anchor='w', pady=(2, 0))
 
-        # === .cine File Source (new) ===
-        self.cine_source_frame = ttk.LabelFrame(left_panel, text=".cine File Source", padding=10)
-        # Initially hidden - will be shown when source type changes
+        # Generate positions (inside folder source frame)
+        gen_frame = ttk.Frame(self.folder_source_frame)
+        gen_frame.pack(fill='x', pady=(10, 0))
+        ttk.Label(gen_frame, text="Or generate positions:", font=('', 8, 'bold')).pack(anchor='w')
+
+        range_row = ttk.Frame(gen_frame)
+        range_row.pack(fill='x', pady=2)
+        ttk.Label(range_row, text="Z min:", width=6).pack(side='left')
+        self.z_min_var = tk.StringVar(value="-12")
+        ttk.Entry(range_row, textvariable=self.z_min_var, width=6).pack(side='left', padx=(0, 5))
+        ttk.Label(range_row, text="max:", width=4).pack(side='left')
+        self.z_max_var = tk.StringVar(value="12")
+        ttk.Entry(range_row, textvariable=self.z_max_var, width=6).pack(side='left', padx=(0, 5))
+        ttk.Label(range_row, text="step:", width=4).pack(side='left')
+        self.z_step_var = tk.StringVar(value="0.5")
+        ttk.Entry(range_row, textvariable=self.z_step_var, width=6).pack(side='left', padx=(0, 5))
+        ttk.Label(range_row, text="mm", font=('', 8)).pack(side='left')
+
+        ttk.Button(gen_frame, text="Generate", command=self._generate_positions).pack(anchor='w', pady=2)
+        self.positions_info_var = tk.StringVar(value="")
+        ttk.Label(gen_frame, textvariable=self.positions_info_var, foreground='gray', font=('', 8)).pack(anchor='w')
+
+        # === .cine Folder Source ===
+        self.cine_source_frame = ttk.LabelFrame(self.source_container, text=".cine Folder Source", padding=10)
+        # Not packed initially - shown when source type changes to "cine"
 
         cine_row1 = ttk.Frame(self.cine_source_frame)
         cine_row1.pack(fill='x', pady=2)
-        ttk.Label(cine_row1, text=".cine File:", width=14).pack(side='left')
-        self.cine_file_var = tk.StringVar()
-        ttk.Entry(cine_row1, textvariable=self.cine_file_var, width=35).pack(side='left', padx=5)
-        ttk.Button(cine_row1, text="Browse", command=self._browse_cine_file).pack(side='left')
+        ttk.Label(cine_row1, text=".cine Folder:", width=14).pack(side='left')
+        self.cine_folder_var = tk.StringVar()
+        ttk.Entry(cine_row1, textvariable=self.cine_folder_var, width=35).pack(side='left', padx=5)
+        ttk.Button(cine_row1, text="Browse", command=self._browse_cine_folder).pack(side='left')
 
         # Stage position mapping
         cine_row2 = ttk.Frame(self.cine_source_frame)
@@ -278,42 +304,18 @@ class CalibrationGUI:
         ttk.Label(cine_row3, text="Focus at stage:", width=14).pack(side='left')
         self.stage_focus_var = tk.StringVar(value="6")
         ttk.Entry(cine_row3, textvariable=self.stage_focus_var, width=6).pack(side='left', padx=2)
-        ttk.Label(cine_row3, text="mm (defocus = stage - this value)", font=('', 8), foreground='gray').pack(side='left', padx=5)
+        ttk.Label(cine_row3, text="mm (defocus = stage - this)", font=('', 8), foreground='gray').pack(side='left', padx=5)
 
-        # Frame selection
+        # Frame selection (which frame to extract from each .cine file)
         cine_row4 = ttk.Frame(self.cine_source_frame)
         cine_row4.pack(fill='x', pady=2)
-        ttk.Label(cine_row4, text="Frame step:", width=14).pack(side='left')
-        self.cine_frame_step_var = tk.StringVar(value="1")
-        ttk.Entry(cine_row4, textvariable=self.cine_frame_step_var, width=6).pack(side='left', padx=2)
-        ttk.Label(cine_row4, text="(1 = every frame)", font=('', 8), foreground='gray').pack(side='left', padx=5)
+        ttk.Label(cine_row4, text="Frame index:", width=14).pack(side='left')
+        self.cine_frame_idx_var = tk.StringVar(value="0")
+        ttk.Entry(cine_row4, textvariable=self.cine_frame_idx_var, width=6).pack(side='left', padx=2)
+        ttk.Label(cine_row4, text="(which frame from each .cine)", font=('', 8), foreground='gray').pack(side='left', padx=5)
 
         self.cine_info_var = tk.StringVar(value="")
         ttk.Label(self.cine_source_frame, textvariable=self.cine_info_var, font=('', 8), foreground='blue').pack(anchor='w', pady=2)
-
-        # Manual position entry
-        manual_frame = ttk.LabelFrame(left_panel, text="Generate Positions (if no CSV)", padding=10)
-        manual_frame.pack(fill='x', pady=5)
-
-        range_row = ttk.Frame(manual_frame)
-        range_row.pack(fill='x', pady=2)
-
-        ttk.Label(range_row, text="Z min (mm):", width=12).pack(side='left')
-        self.z_min_var = tk.StringVar(value="-12")
-        ttk.Entry(range_row, textvariable=self.z_min_var, width=8).pack(side='left', padx=(0, 10))
-
-        ttk.Label(range_row, text="Z max:", width=8).pack(side='left')
-        self.z_max_var = tk.StringVar(value="12")
-        ttk.Entry(range_row, textvariable=self.z_max_var, width=8).pack(side='left', padx=(0, 10))
-
-        ttk.Label(range_row, text="Step:", width=6).pack(side='left')
-        self.z_step_var = tk.StringVar(value="0.5")
-        ttk.Entry(range_row, textvariable=self.z_step_var, width=8).pack(side='left')
-
-        ttk.Button(manual_frame, text="Generate Positions", command=self._generate_positions).pack(pady=5)
-
-        self.positions_info_var = tk.StringVar(value="")
-        ttk.Label(manual_frame, textvariable=self.positions_info_var, foreground='gray', font=('', 8)).pack(anchor='w')
 
         # Metadata
         meta_frame = ttk.LabelFrame(left_panel, text="Calibration Metadata", padding=10)
@@ -761,12 +763,11 @@ The synthetic blur will match your camera!"""
         if source_type == "folder":
             # Show folder source, hide cine source
             self.cine_source_frame.pack_forget()
-            # Re-pack folder frame after source type frame (index 0)
-            self.folder_source_frame.pack(fill='x', pady=5)
+            self.folder_source_frame.pack(in_=self.source_container, fill='x', pady=5)
         else:
             # Show cine source, hide folder source
             self.folder_source_frame.pack_forget()
-            self.cine_source_frame.pack(fill='x', pady=5)
+            self.cine_source_frame.pack(in_=self.source_container, fill='x', pady=5)
 
             if not PYPHANTOM_AVAILABLE:
                 messagebox.showwarning("pyphantom Not Available",
@@ -774,33 +775,30 @@ The synthetic blur will match your camera!"""
                     "To load .cine files, install the Phantom SDK and pyphantom package.\n\n"
                     "Alternatively, export your z-stack as individual images.")
 
-    def _browse_cine_file(self):
-        """Browse for .cine file."""
-        file = filedialog.askopenfilename(
-            title="Select .cine File",
-            filetypes=[("CINE files", "*.cine"), ("All files", "*.*")]
-        )
-        if file:
-            self.cine_file_var.set(file)
-            # Try to load and show info
-            self._preview_cine_info()
+    def _browse_cine_folder(self):
+        """Browse for folder containing .cine files."""
+        folder = filedialog.askdirectory(title="Select Folder with .cine Files")
+        if folder:
+            self.cine_folder_var.set(folder)
+            # Try to scan and show info
+            self._preview_cine_folder_info()
 
-    def _preview_cine_info(self):
-        """Preview info about selected .cine file."""
-        cine_path = self.cine_file_var.get()
-        if not cine_path:
+    def _preview_cine_folder_info(self):
+        """Preview info about selected .cine folder."""
+        folder_path = self.cine_folder_var.get()
+        if not folder_path:
             return
 
-        loader = CineLoader(cine_path)
-        if loader.cine_obj is not None:
+        loader = CineFolderLoader(folder_path)
+        if loader.num_files > 0:
             info = loader.get_info()
             self.cine_info_var.set(
-                f"Loaded: {info['num_frames']} frames, {info['image_width']}x{info['image_height']} px"
+                f"Found: {info['num_files']} .cine files, {info['image_width']}x{info['image_height']} px"
             )
-            self.cine_loader = loader
+            self.cine_folder_loader = loader
         else:
-            self.cine_info_var.set("Failed to load .cine file")
-            self.cine_loader = None
+            self.cine_info_var.set("No .cine files found in folder")
+            self.cine_folder_loader = None
 
     def _browse_zstack_folder(self):
         folder = filedialog.askdirectory(title="Select Z-Stack Image Folder")
@@ -816,45 +814,48 @@ The synthetic blur will match your camera!"""
             self.positions_file_var.set(file)
 
     def _scan_zstack_folder(self):
-        """Scan folder or .cine file and report what's found."""
+        """Scan folder or .cine folder and report what's found."""
         source_type = self.source_type_var.get()
 
         if source_type == "cine":
-            self._scan_cine_file()
+            self._scan_cine_folder()
         else:
             self._scan_image_folder()
 
-    def _scan_cine_file(self):
-        """Scan .cine file and report info."""
-        cine_path = self.cine_file_var.get()
-        if not cine_path:
-            messagebox.showerror("Error", "Please select a .cine file first")
+    def _scan_cine_folder(self):
+        """Scan folder of .cine files and report info."""
+        folder_path = self.cine_folder_var.get()
+        if not folder_path:
+            messagebox.showerror("Error", "Please select a .cine folder first")
             return
 
-        if not Path(cine_path).exists():
-            messagebox.showerror("Error", f"File not found: {cine_path}")
+        if not Path(folder_path).exists():
+            messagebox.showerror("Error", f"Folder not found: {folder_path}")
             return
 
-        loader = CineLoader(cine_path)
-        if loader.cine_obj is None:
-            self._update_stats_text(f"Scan Results\n" + "=" * 40 + "\n\nFailed to load .cine file")
-            self.load_status_var.set("Failed to load .cine file")
+        loader = CineFolderLoader(folder_path)
+        if loader.num_files == 0:
+            self._update_stats_text(f"Scan Results\n" + "=" * 40 + "\n\nNo .cine files found in folder")
+            self.load_status_var.set("No .cine files found")
             return
 
         info = loader.get_info()
-        self._update_stats_text(f"Scan Results for: {info['filename']}\n" + "=" * 40)
-        self._append_stats_text(f"\n\nFrames: {info['num_frames']}")
-        self._append_stats_text(f"\nFrame range: {info['first_frame']} to {info['last_frame']}")
+        self._update_stats_text(f"Scan Results for: {Path(folder_path).name}\n" + "=" * 40)
+        self._append_stats_text(f"\n\n.cine files: {info['num_files']}")
         self._append_stats_text(f"\nImage size: {info['image_width']} × {info['image_height']} px")
+        self._append_stats_text(f"\n\nFiles:")
+        for fn in info['filenames'][:10]:  # Show first 10
+            self._append_stats_text(f"\n  {fn}")
+        if len(info['filenames']) > 10:
+            self._append_stats_text(f"\n  ... and {len(info['filenames']) - 10} more")
 
         # Show position mapping preview
         try:
             stage_start = float(self.stage_start_var.get())
             stage_end = float(self.stage_end_var.get())
             stage_focus = float(self.stage_focus_var.get())
-            frame_step = int(self.cine_frame_step_var.get())
 
-            n_positions = info['num_frames'] // frame_step
+            n_positions = info['num_files']
             z_start = stage_start - stage_focus
             z_end = stage_end - stage_focus
             z_step = (z_end - z_start) / (n_positions - 1) if n_positions > 1 else 0
@@ -866,8 +867,8 @@ The synthetic blur will match your camera!"""
         except ValueError:
             self._append_stats_text("\n\n⚠️ Invalid stage parameters")
 
-        self.load_status_var.set(f"Found {info['num_frames']} frames - ready to load")
-        self.cine_loader = loader
+        self.load_status_var.set(f"Found {info['num_files']} .cine files - ready to load")
+        self.cine_folder_loader = loader
 
     def _scan_image_folder(self):
         """Scan image folder and report what's found."""
@@ -936,25 +937,25 @@ The synthetic blur will match your camera!"""
             self._load_zstack_from_folder()
 
     def _load_zstack_from_cine(self):
-        """Load z-stack from .cine file."""
-        cine_path = self.cine_file_var.get()
-        if not cine_path:
-            messagebox.showerror("Error", "Please select a .cine file")
+        """Load z-stack from folder of .cine files."""
+        folder_path = self.cine_folder_var.get()
+        if not folder_path:
+            messagebox.showerror("Error", "Please select a .cine folder")
             return
 
-        if not Path(cine_path).exists():
-            messagebox.showerror("Error", f"File not found: {cine_path}")
+        if not Path(folder_path).exists():
+            messagebox.showerror("Error", f"Folder not found: {folder_path}")
             return
 
         if not PYPHANTOM_AVAILABLE:
             messagebox.showerror("Error", "pyphantom not available - cannot load .cine files")
             return
 
-        # Load .cine file if not already loaded
-        if self.cine_loader is None or str(self.cine_loader.path) != cine_path:
-            self.cine_loader = CineLoader(cine_path)
-            if self.cine_loader.cine_obj is None:
-                messagebox.showerror("Error", "Failed to load .cine file")
+        # Load folder if not already loaded
+        if self.cine_folder_loader is None or str(self.cine_folder_loader.folder) != folder_path:
+            self.cine_folder_loader = CineFolderLoader(folder_path)
+            if self.cine_folder_loader.num_files == 0:
+                messagebox.showerror("Error", "No .cine files found in folder")
                 return
 
         # Get stage range and focus offset
@@ -962,32 +963,37 @@ The synthetic blur will match your camera!"""
             stage_start = float(self.stage_start_var.get())
             stage_end = float(self.stage_end_var.get())
             stage_focus = float(self.stage_focus_var.get())
-            frame_step = int(self.cine_frame_step_var.get())
+            frame_idx = int(self.cine_frame_idx_var.get())
         except ValueError as e:
-            messagebox.showerror("Error", f"Invalid stage parameters: {e}")
+            messagebox.showerror("Error", f"Invalid parameters: {e}")
             return
 
         # Convert stage positions to defocus: z_defocus = stage - stage_focus
         z_start = stage_start - stage_focus
         z_end = stage_end - stage_focus
 
-        self.load_status_var.set("Extracting frames from .cine...")
+        self.load_status_var.set("Extracting frames from .cine files...")
         self.root.update_idletasks()
 
-        # Extract frames
-        images, positions = self.cine_loader.extract_zstack(
+        # Extract one frame from each .cine file
+        def progress_callback(current, total):
+            self.load_progress_var.set(current / total * 100)
+            self.root.update_idletasks()
+
+        images, positions, filenames = self.cine_folder_loader.load_zstack(
             z_start=z_start,
             z_end=z_end,
-            frame_step=frame_step
+            frame_idx=frame_idx,
+            progress_callback=progress_callback
         )
 
         if not images:
-            messagebox.showerror("Error", "No frames extracted from .cine file")
+            messagebox.showerror("Error", "No frames extracted from .cine files")
             return
 
         self.zstack_images = images
         self.zstack_positions = positions
-        self.zstack_filenames = [f"frame_{i:04d}" for i in range(len(images))]
+        self.zstack_filenames = filenames
 
         # Create stats
         h, w = self.zstack_images[0].shape
@@ -1007,16 +1013,16 @@ The synthetic blur will match your camera!"""
         self._update_preview(0)
 
         # Update stats display
-        self._update_stats_text(f"Loaded Z-Stack from .cine\n" + "=" * 40)
-        self._append_stats_text(f"\nSource: {Path(cine_path).name}")
-        self._append_stats_text(f"\nFrames: {self.zstack_stats.num_images}")
+        self._update_stats_text(f"Loaded Z-Stack from .cine folder\n" + "=" * 40)
+        self._append_stats_text(f"\nSource: {Path(folder_path).name}")
+        self._append_stats_text(f"\n.cine files: {self.zstack_stats.num_images}")
         self._append_stats_text(f"\nSize: {w} × {h} px")
         self._append_stats_text(f"\nStage: {stage_start} to {stage_end} mm")
         self._append_stats_text(f"\nFocus at stage: {stage_focus} mm")
         self._append_stats_text(f"\nDefocus range: {self.zstack_stats.z_min:.1f} to {self.zstack_stats.z_max:.1f} mm")
         self._append_stats_text(f"\nZ step: {z_step:.3f} mm")
 
-        self.load_status_var.set(f"Loaded {len(self.zstack_images)} frames from .cine")
+        self.load_status_var.set(f"Loaded {len(self.zstack_images)} frames from .cine folder")
         self.load_progress_var.set(100)
 
     def _load_zstack_from_folder(self):
