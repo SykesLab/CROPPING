@@ -518,12 +518,15 @@ class CineFolderLoader:
         # Determine position column
         if 'z_position_mm' in df.columns:
             pos_col = 'z_position_mm'
-            offset = 0.0
+            offset = 0.0  # Already in defocus coordinates
         elif 'stage_position_mm' in df.columns:
             pos_col = 'stage_position_mm'
-            offset = stage_offset
+            offset = stage_offset  # Convert from stage to defocus
+        elif 'position' in df.columns:
+            pos_col = 'position'
+            offset = stage_offset  # Assume stage position, convert to defocus
         else:
-            raise ValueError("CSV must have 'z_position_mm' or 'stage_position_mm' column")
+            raise ValueError("CSV must have 'z_position_mm', 'stage_position_mm', or 'position' column")
 
         images = []
         positions = []
@@ -542,6 +545,142 @@ class CineFolderLoader:
                     filenames.append(filename)
 
         return images, positions, filenames
+
+    def load_with_parsed_positions(
+        self,
+        focus_offset: float = 6.0,
+        frame_idx: int = 0,
+        average_frames: int = 1,
+        progress_callback: Optional[callable] = None
+    ) -> Tuple[List[np.ndarray], List[float], List[str]]:
+        """
+        Load z-stack by parsing stage positions from filenames.
+
+        Uses naming convention: {prefix}_{run}_{index}.cine
+        Where: stage_position = (run - 1) * 2 + (index - 1) * 0.2
+
+        Args:
+            focus_offset: Stage position where focus is (defocus = stage - offset)
+            frame_idx: Which frame to extract from each .cine (default: 0)
+            average_frames: Number of frames to average per file (default: 1)
+            progress_callback: Optional callback(current, total) for progress
+
+        Returns:
+            Tuple of (images list, defocus_positions list, filenames list)
+        """
+        if not PYPHANTOM_AVAILABLE:
+            print("[CineFolderLoader] pyphantom not available")
+            return [], [], []
+
+        if self.num_files == 0:
+            return [], [], []
+
+        # Parse positions from filenames and pair with files
+        file_positions = []
+        for cine_path in self.cine_files:
+            stage_pos = parse_position_from_filename(cine_path.name)
+            if stage_pos is not None:
+                defocus = stage_pos - focus_offset
+                file_positions.append((cine_path, defocus, cine_path.name))
+
+        # Sort by defocus position
+        file_positions.sort(key=lambda x: x[1])
+
+        # Extract frames
+        images = []
+        positions = []
+        filenames = []
+
+        for i, (cine_path, defocus, name) in enumerate(file_positions):
+            if progress_callback:
+                progress_callback(i + 1, len(file_positions))
+
+            img = self._extract_frame_from_cine(cine_path, frame_idx, average_frames)
+            if img is not None:
+                images.append(img)
+                positions.append(defocus)
+                filenames.append(name)
+
+        return images, positions, filenames
+
+    def get_parsed_positions_info(self, focus_offset: float = 6.0) -> Dict[str, Any]:
+        """
+        Get info about positions parsed from filenames (without loading images).
+
+        Args:
+            focus_offset: Stage position where focus is
+
+        Returns:
+            Dict with parsed position info
+        """
+        parsed = []
+        unparsed = []
+
+        for cine_path in self.cine_files:
+            stage_pos = parse_position_from_filename(cine_path.name)
+            if stage_pos is not None:
+                defocus = stage_pos - focus_offset
+                parsed.append((cine_path.name, stage_pos, defocus))
+            else:
+                unparsed.append(cine_path.name)
+
+        # Sort by defocus
+        parsed.sort(key=lambda x: x[2])
+
+        if parsed:
+            defocus_values = [p[2] for p in parsed]
+            return {
+                "num_parsed": len(parsed),
+                "num_unparsed": len(unparsed),
+                "unparsed_files": unparsed,
+                "defocus_min": min(defocus_values),
+                "defocus_max": max(defocus_values),
+                "defocus_range": max(defocus_values) - min(defocus_values),
+                "positions": parsed,  # List of (filename, stage_pos, defocus)
+            }
+        else:
+            return {
+                "num_parsed": 0,
+                "num_unparsed": len(unparsed),
+                "unparsed_files": unparsed,
+            }
+
+
+# =============================================================================
+# Filename Position Parsing
+# =============================================================================
+def parse_position_from_filename(filename: str) -> Optional[float]:
+    """
+    Parse stage position from filename using naming convention.
+
+    Supports format: {prefix}_{run}_{index}.cine
+    Where: stage_position = (run - 1) * 2 + (index - 1) * 0.2
+
+    Examples:
+        9mm_1_1.cine  → 0.0 mm
+        9mm_1_10.cine → 1.8 mm
+        9mm_2_1.cine  → 2.0 mm
+        9mm_4_5.cine  → 6.8 mm
+
+    Args:
+        filename: Filename (with or without path)
+
+    Returns:
+        Stage position in mm, or None if pattern doesn't match
+    """
+    # Extract just the filename without path
+    name = Path(filename).stem
+
+    # Pattern: {prefix}_{run}_{index}
+    match = re.search(r'_(\d+)_(\d+)$', name)
+    if match:
+        run = int(match.group(1))
+        index = int(match.group(2))
+        # stage_position = (run - 1) * 2 + (index - 1) * 0.2
+        position = (run - 1) * 2.0 + (index - 1) * 0.2
+        return position
+
+    return None
 
 
 # =============================================================================

@@ -286,7 +286,18 @@ class CalibrationGUI:
         ttk.Entry(cine_row1, textvariable=self.cine_folder_var, width=35).pack(side='left', padx=5)
         ttk.Button(cine_row1, text="Browse", command=self._browse_cine_folder).pack(side='left')
 
-        # Stage position mapping
+        # Positions CSV (optional - maps filenames to stage positions)
+        cine_row1b = ttk.Frame(self.cine_source_frame)
+        cine_row1b.pack(fill='x', pady=2)
+        ttk.Label(cine_row1b, text="Positions CSV:", width=14).pack(side='left')
+        self.cine_positions_csv_var = tk.StringVar()
+        ttk.Entry(cine_row1b, textvariable=self.cine_positions_csv_var, width=35).pack(side='left', padx=5)
+        ttk.Button(cine_row1b, text="Browse", command=self._browse_cine_positions_csv).pack(side='left')
+
+        ttk.Label(self.cine_source_frame, text="(optional: CSV with filename, stage_position_mm columns)",
+                  font=('', 8), foreground='gray').pack(anchor='w', padx=14)
+
+        # Stage position mapping (fallback when no CSV)
         cine_row2 = ttk.Frame(self.cine_source_frame)
         cine_row2.pack(fill='x', pady=5)
         ttk.Label(cine_row2, text="Stage Range:", width=14).pack(side='left')
@@ -296,7 +307,7 @@ class CalibrationGUI:
         ttk.Label(cine_row2, text="End:", width=4).pack(side='left')
         self.stage_end_var = tk.StringVar(value="12")
         ttk.Entry(cine_row2, textvariable=self.stage_end_var, width=6).pack(side='left', padx=2)
-        ttk.Label(cine_row2, text="mm", font=('', 8)).pack(side='left')
+        ttk.Label(cine_row2, text="mm (used if no CSV)", font=('', 8), foreground='gray').pack(side='left', padx=5)
 
         # Defocus offset (stage position where defocus = 0)
         cine_row3 = ttk.Frame(self.cine_source_frame)
@@ -304,7 +315,8 @@ class CalibrationGUI:
         ttk.Label(cine_row3, text="Focus at stage:", width=14).pack(side='left')
         self.stage_focus_var = tk.StringVar(value="6")
         ttk.Entry(cine_row3, textvariable=self.stage_focus_var, width=6).pack(side='left', padx=2)
-        ttk.Label(cine_row3, text="mm (defocus = stage - this)", font=('', 8), foreground='gray').pack(side='left', padx=5)
+        ttk.Label(cine_row3, text="mm", font=('', 8)).pack(side='left', padx=2)
+        ttk.Button(cine_row3, text="Find Focus", command=self._find_focus_position).pack(side='left', padx=10)
 
         # Frame selection (which frame to extract from each .cine file)
         cine_row4 = ttk.Frame(self.cine_source_frame)
@@ -800,6 +812,134 @@ The synthetic blur will match your camera!"""
             self.cine_info_var.set("No .cine files found in folder")
             self.cine_folder_loader = None
 
+    def _browse_cine_positions_csv(self):
+        """Browse for CSV file mapping .cine filenames to stage positions."""
+        file = filedialog.askopenfilename(
+            title="Select Positions CSV",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+        )
+        if file:
+            self.cine_positions_csv_var.set(file)
+            # Preview the CSV contents
+            self._preview_cine_positions_csv(file)
+
+    def _preview_cine_positions_csv(self, csv_path: str):
+        """Preview contents of positions CSV."""
+        try:
+            import pandas as pd
+            df = pd.read_csv(csv_path)
+
+            if 'filename' not in df.columns:
+                self.cine_info_var.set("CSV missing 'filename' column")
+                return
+
+            pos_col = None
+            if 'stage_position_mm' in df.columns:
+                pos_col = 'stage_position_mm'
+            elif 'z_position_mm' in df.columns:
+                pos_col = 'z_position_mm'
+            elif 'position' in df.columns:
+                pos_col = 'position'
+
+            if pos_col is None:
+                self.cine_info_var.set("CSV missing position column (stage_position_mm or z_position_mm)")
+                return
+
+            positions = df[pos_col].values
+            self.cine_info_var.set(
+                f"CSV: {len(df)} entries, positions {positions.min():.1f} to {positions.max():.1f} mm"
+            )
+
+            # Auto-fill stage range from CSV
+            self.stage_start_var.set(f"{positions.min():.1f}")
+            self.stage_end_var.set(f"{positions.max():.1f}")
+
+        except Exception as e:
+            self.cine_info_var.set(f"Error reading CSV: {e}")
+
+    def _find_focus_position(self):
+        """Find focus position by measuring sharpness across z-stack."""
+        folder_path = self.cine_folder_var.get()
+        if not folder_path:
+            messagebox.showerror("Error", "Please select a .cine folder first")
+            return
+
+        if not PYPHANTOM_AVAILABLE:
+            messagebox.showerror("Error", "pyphantom not available")
+            return
+
+        # Ensure folder is loaded
+        if self.cine_folder_loader is None or str(self.cine_folder_loader.folder) != folder_path:
+            self.cine_folder_loader = CineFolderLoader(folder_path)
+            if self.cine_folder_loader.num_files == 0:
+                messagebox.showerror("Error", "No .cine files found in folder")
+                return
+
+        # Get stage range
+        try:
+            stage_start = float(self.stage_start_var.get())
+            stage_end = float(self.stage_end_var.get())
+            frame_idx = int(self.cine_frame_idx_var.get())
+        except ValueError as e:
+            messagebox.showerror("Error", f"Invalid parameters: {e}")
+            return
+
+        self.load_status_var.set("Measuring sharpness to find focus...")
+        self.root.update_idletasks()
+
+        # Load frames and measure sharpness
+        def progress_callback(current, total):
+            self.load_progress_var.set(current / total * 100)
+            self.root.update_idletasks()
+
+        # Use temporary defocus = 0 (we'll calculate stage positions)
+        images, _, filenames = self.cine_folder_loader.load_zstack(
+            z_start=stage_start,
+            z_end=stage_end,
+            frame_idx=frame_idx,
+            progress_callback=progress_callback
+        )
+
+        if not images:
+            messagebox.showerror("Error", "No frames extracted")
+            return
+
+        # Measure sharpness (Laplacian variance) for each frame
+        sharpness_values = []
+        for img in images:
+            laplacian = cv2.Laplacian(img, cv2.CV_64F)
+            sharpness = laplacian.var()
+            sharpness_values.append(sharpness)
+
+        # Find the sharpest frame
+        max_idx = np.argmax(sharpness_values)
+
+        # Calculate the corresponding stage position
+        n_files = len(images)
+        if n_files == 1:
+            focus_stage = (stage_start + stage_end) / 2
+        else:
+            t = max_idx / (n_files - 1)
+            focus_stage = stage_start + t * (stage_end - stage_start)
+
+        # Update the focus position
+        self.stage_focus_var.set(f"{focus_stage:.2f}")
+
+        # Show results
+        self._update_stats_text(f"Focus Detection Results\n" + "=" * 40)
+        self._append_stats_text(f"\n\nAnalyzed {len(images)} frames")
+        self._append_stats_text(f"\nSharpest frame: #{max_idx + 1} of {n_files}")
+        self._append_stats_text(f"\nFilename: {filenames[max_idx]}")
+        self._append_stats_text(f"\nSharpness (Laplacian var): {sharpness_values[max_idx]:.1f}")
+        self._append_stats_text(f"\n\nEstimated focus at stage: {focus_stage:.2f} mm")
+        self._append_stats_text(f"\n\n(Focus position has been auto-filled)")
+
+        # Show sharpness curve summary
+        self._append_stats_text(f"\n\nSharpness range: {min(sharpness_values):.1f} to {max(sharpness_values):.1f}")
+
+        self.load_status_var.set(f"Focus found at stage {focus_stage:.2f} mm")
+        self.load_progress_var.set(100)
+
     def _browse_zstack_folder(self):
         folder = filedialog.askdirectory(title="Select Z-Stack Image Folder")
         if folder:
@@ -849,7 +989,7 @@ The synthetic blur will match your camera!"""
         if len(info['filenames']) > 10:
             self._append_stats_text(f"\n  ... and {len(info['filenames']) - 10} more")
 
-        # Show position mapping preview
+        # Show position mapping preview (linear interpolation)
         try:
             stage_start = float(self.stage_start_var.get())
             stage_end = float(self.stage_end_var.get())
@@ -861,9 +1001,15 @@ The synthetic blur will match your camera!"""
             z_step = (z_end - z_start) / (n_positions - 1) if n_positions > 1 else 0
 
             self._append_stats_text(f"\n\nWith current settings:")
+            self._append_stats_text(f"\n  Stage range: {stage_start} to {stage_end} mm")
+            self._append_stats_text(f"\n  Focus at stage: {stage_focus} mm")
             self._append_stats_text(f"\n  Positions: {n_positions}")
             self._append_stats_text(f"\n  Defocus range: {z_start:.1f} to {z_end:.1f} mm")
             self._append_stats_text(f"\n  Z step: {z_step:.3f} mm")
+
+            self._append_stats_text(f"\n\nNote: Files are sorted alphabetically and positions")
+            self._append_stats_text(f"\nare linearly interpolated across the stage range.")
+
         except ValueError:
             self._append_stats_text("\n\n⚠️ Invalid stage parameters")
 
@@ -968,10 +1114,6 @@ The synthetic blur will match your camera!"""
             messagebox.showerror("Error", f"Invalid parameters: {e}")
             return
 
-        # Convert stage positions to defocus: z_defocus = stage - stage_focus
-        z_start = stage_start - stage_focus
-        z_end = stage_end - stage_focus
-
         self.load_status_var.set("Extracting frames from .cine files...")
         self.root.update_idletasks()
 
@@ -980,12 +1122,30 @@ The synthetic blur will match your camera!"""
             self.load_progress_var.set(current / total * 100)
             self.root.update_idletasks()
 
-        images, positions, filenames = self.cine_folder_loader.load_zstack(
-            z_start=z_start,
-            z_end=z_end,
-            frame_idx=frame_idx,
-            progress_callback=progress_callback
-        )
+        # Check if CSV is provided for position mapping
+        csv_path = self.cine_positions_csv_var.get()
+        use_csv = csv_path and Path(csv_path).exists()
+
+        if use_csv:
+            # Load using CSV for position mapping
+            images, positions, filenames = self.cine_folder_loader.load_with_positions_csv(
+                csv_path=csv_path,
+                stage_offset=stage_focus,
+                frame_idx=frame_idx
+            )
+            position_source = "CSV"
+        else:
+            # Use linear interpolation across stage range
+            z_start = stage_start - stage_focus
+            z_end = stage_end - stage_focus
+
+            images, positions, filenames = self.cine_folder_loader.load_zstack(
+                z_start=z_start,
+                z_end=z_end,
+                frame_idx=frame_idx,
+                progress_callback=progress_callback
+            )
+            position_source = "linear interpolation"
 
         if not images:
             messagebox.showerror("Error", "No frames extracted from .cine files")
@@ -1017,7 +1177,7 @@ The synthetic blur will match your camera!"""
         self._append_stats_text(f"\nSource: {Path(folder_path).name}")
         self._append_stats_text(f"\n.cine files: {self.zstack_stats.num_images}")
         self._append_stats_text(f"\nSize: {w} × {h} px")
-        self._append_stats_text(f"\nStage: {stage_start} to {stage_end} mm")
+        self._append_stats_text(f"\nPositions from: {position_source}")
         self._append_stats_text(f"\nFocus at stage: {stage_focus} mm")
         self._append_stats_text(f"\nDefocus range: {self.zstack_stats.z_min:.1f} to {self.zstack_stats.z_max:.1f} mm")
         self._append_stats_text(f"\nZ step: {z_step:.3f} mm")
