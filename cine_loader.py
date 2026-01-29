@@ -54,6 +54,7 @@ def _suppress_output() -> Generator[None, None, None]:
 # Try to import pyphantom
 _cine_module: Optional[Any] = None
 _utils_module: Optional[Any] = None
+_phantom_instance: Optional[Any] = None
 PYPHANTOM_AVAILABLE = False
 
 try:
@@ -61,6 +62,16 @@ try:
         from pyphantom import cine as _cine_module
         from pyphantom import utils as _utils_module
         PYPHANTOM_AVAILABLE = True
+
+        # Initialize Phantom SDK (required for cine handle creation)
+        try:
+            from pyphantom import Phantom
+            _phantom_instance = Phantom(init_camera=False)
+        except Exception:
+            try:
+                _phantom_instance = Phantom()
+            except Exception:
+                _phantom_instance = None
 except ImportError:
     pass
 
