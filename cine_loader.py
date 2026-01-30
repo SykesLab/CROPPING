@@ -515,34 +515,34 @@ class CineFolderLoader:
 
         df = pd.read_csv(csv_path)
 
-        # Determine position column
-        if 'z_position_mm' in df.columns:
-            pos_col = 'z_position_mm'
-            offset = 0.0  # Already in defocus coordinates
-        elif 'stage_position_mm' in df.columns:
-            pos_col = 'stage_position_mm'
-            offset = stage_offset  # Convert from stage to defocus
-        elif 'position' in df.columns:
-            pos_col = 'position'
-            offset = stage_offset  # Assume stage position, convert to defocus
-        else:
-            raise ValueError("CSV must have 'z_position_mm', 'stage_position_mm', or 'position' column")
+        # Use first column as filename, second as position (ignore column names)
+        filenames_col = df.iloc[:, 0].astype(str)
+        positions_col = df.iloc[:, 1].astype(float)
+
+        # Build lookup dict (with and without extension)
+        pos_dict = {}
+        for fn, pos in zip(filenames_col, positions_col):
+            pos_dict[fn] = pos
+            pos_dict[Path(fn).stem] = pos
 
         images = []
         positions = []
         filenames = []
 
-        for _, row in df.iterrows():
-            filename = row['filename']
-            position = row[pos_col] - offset
+        for cine_path in self.cine_files:
+            # Try to find position in CSV
+            position = None
+            if cine_path.name in pos_dict:
+                position = pos_dict[cine_path.name] - stage_offset
+            elif cine_path.stem in pos_dict:
+                position = pos_dict[cine_path.stem] - stage_offset
 
-            cine_path = self.folder / filename
-            if cine_path.exists():
+            if position is not None:
                 img = self._extract_frame_from_cine(cine_path, frame_idx, average_frames)
                 if img is not None:
                     images.append(img)
                     positions.append(position)
-                    filenames.append(filename)
+                    filenames.append(cine_path.name)
 
         return images, positions, filenames
 
