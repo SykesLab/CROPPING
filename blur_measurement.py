@@ -55,20 +55,34 @@ def _fit_sigmoid_multi_start(
     intensities: np.ndarray,
     radius: float,
     I_bg_init: float,
-    I_sphere_init: float
+    I_sphere_init: float,
+    edge_margin: float = 30.0
 ) -> Tuple[Optional[np.ndarray], float, float]:
     """
     Fit sigmoid with multiple starting points to avoid local minima.
+
+    Args:
+        r_valid: Radial positions of samples
+        intensities: Intensity values at those positions
+        radius: Expected edge radius
+        I_bg_init: Initial guess for background intensity
+        I_sphere_init: Initial guess for sphere intensity
+        edge_margin: How far from radius the edge can be
 
     Returns:
         (best_popt, best_r_squared, best_residual) or (None, 0, inf) if all fail
     """
     # Try multiple initial sigma values to avoid local minima
-    sigma_inits = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
+    # Include very small values for sharp edges
+    sigma_inits = [0.1, 0.3, 0.5, 1.0, 2.0, 5.0, 10.0]
 
     best_popt = None
     best_r_squared = -np.inf
     best_residual = np.inf
+
+    # Bounds: edge should be within the sampled region
+    r_min = r_valid.min()
+    r_max = r_valid.max()
 
     for sigma_init in sigma_inits:
         try:
@@ -76,10 +90,10 @@ def _fit_sigmoid_multi_start(
                 sigmoid, r_valid, intensities,
                 p0=[I_bg_init, I_sphere_init, radius, sigma_init],
                 bounds=(
-                    [0, 0, radius * 0.5, 0.01],
-                    [1, 1, radius * 1.5, 50]
+                    [0, 0, r_min, 0.01],  # Edge must be within sampled region
+                    [1, 1, r_max, 50]
                 ),
-                maxfev=1000
+                maxfev=2000
             )
 
             # Calculate fit quality
@@ -140,14 +154,14 @@ def measure_blur_sigmoid(
     h, w = image.shape[:2]
 
     if verbose:
+        print(f"  Image size: {w} x {h}")
         print(f"  Detected: center=({cx}, {cy}), radius={radius}")
 
-    # Check for sufficient contrast
-    # Create masks for inner sphere and outer background
+    # Check for sufficient contrast using regions well inside/outside the sphere
     y_grid, x_grid = np.ogrid[:h, :w]
     dist = np.sqrt((x_grid - cx)**2 + (y_grid - cy)**2)
-    inner_mask = dist < radius * 0.6
-    outer_mask = (dist > radius * 1.2) & (dist < radius * 1.8)
+    inner_mask = dist < radius * 0.7
+    outer_mask = (dist > radius * 1.3) & (dist < radius * 1.8)
 
     if np.any(inner_mask) and np.any(outer_mask):
         I_sphere_est = np.median(image[inner_mask])
@@ -162,49 +176,108 @@ def measure_blur_sigmoid(
                 details={'error': f'Insufficient contrast: {contrast:.3f}'}
             )
     else:
-        contrast = None
+        I_sphere_est = 0.0
+        I_bg_est = 1.0
+        contrast = 1.0
 
-    # Extract radial profiles
+    # Extract radial profiles - FOCUS on the edge region
+    # For sharp images, sampling 0.5r to 1.5r gives mostly flat data
+    # Instead, sample tightly around the expected edge with sub-pixel resolution
     sigmas = []
     r_squareds = []
     fit_details = []
 
+    # Determine edge sampling window based on expected blur
+    # Start with a reasonable window, will capture edge for sigma up to ~20px
+    edge_margin = max(30, int(radius * 0.1))  # Sample ± this many pixels from edge
+
+    if verbose:
+        print(f"  Edge margin: {edge_margin} px, sampling r=[{radius-edge_margin}, {radius+edge_margin}]")
+
     for i in range(num_rays):
         angle = 2 * np.pi * i / num_rays
+        cos_a, sin_a = np.cos(angle), np.sin(angle)
 
-        # Sample points along ray - start from 50% of radius to skip center artifacts
-        # (e.g., bright spots, reflections)
-        start_r = int(radius * 0.5)
-        max_r = int(min(radius * 1.5, min(cx, cy, w - cx, h - cy)))
-        r_values = np.arange(start_r, max_r)
+        # Calculate max radius for THIS ray direction based on image bounds
+        # For each direction, find how far we can go before hitting image edge
+        if cos_a > 0.01:
+            max_r_x = (w - 2 - cx) / cos_a  # How far right before hitting w
+        elif cos_a < -0.01:
+            max_r_x = (1 - cx) / cos_a  # How far left before hitting 0
+        else:
+            max_r_x = float('inf')
 
-        x_coords = (cx + r_values * np.cos(angle)).astype(int)
-        y_coords = (cy + r_values * np.sin(angle)).astype(int)
+        if sin_a > 0.01:
+            max_r_y = (h - 2 - cy) / sin_a  # How far down before hitting h
+        elif sin_a < -0.01:
+            max_r_y = (1 - cy) / sin_a  # How far up before hitting 0
+        else:
+            max_r_y = float('inf')
 
-        # Ensure within bounds
-        valid = (x_coords >= 0) & (x_coords < w) & (y_coords >= 0) & (y_coords < h)
-        r_valid = r_values[valid]
-        x_valid = x_coords[valid]
-        y_valid = y_coords[valid]
+        max_r_for_ray = min(max_r_x, max_r_y)
 
-        if len(r_valid) < 10:
+        # Sample with sub-pixel resolution around the expected edge
+        start_r = max(0, radius - edge_margin)
+        end_r = min(radius + edge_margin, max_r_for_ray)
+
+        if end_r <= start_r:
+            if verbose and i < 3:
+                print(f"  Ray {i}: skipped, no valid range (start={start_r:.0f}, end={end_r:.0f}, max_r={max_r_for_ray:.0f})")
             continue
 
-        # Get intensity profile
-        intensities = image[y_valid, x_valid]
+        r_values = np.arange(start_r, end_r, 0.5)  # Sub-pixel sampling
+        if len(r_values) < 20:
+            if verbose and i < 3:
+                print(f"  Ray {i}: skipped, only {len(r_values)} samples in range [{start_r:.0f}, {end_r:.0f}]")
+            continue
 
-        # Initial guesses from profile
-        I_bg_init = np.median(intensities[-10:])
-        I_sphere_init = np.median(intensities[:10])
+        # Get sub-pixel coordinates
+        x_coords = cx + r_values * cos_a
+        y_coords = cy + r_values * sin_a
+
+        # Bilinear interpolation for sub-pixel sampling
+        x0 = np.floor(x_coords).astype(int)
+        y0 = np.floor(y_coords).astype(int)
+        x1 = x0 + 1
+        y1 = y0 + 1
+
+        # Ensure within bounds (should mostly pass now due to max_r calculation)
+        valid = (x0 >= 0) & (x1 < w) & (y0 >= 0) & (y1 < h)
+        if np.sum(valid) < 20:
+            if verbose and i < 3:
+                print(f"  Ray {i}: skipped, {np.sum(valid)}/{len(valid)} valid after bounds check")
+            continue
+
+        r_valid = r_values[valid]
+        x0_v, y0_v = x0[valid], y0[valid]
+        x1_v, y1_v = x1[valid], y1[valid]
+        xf = (x_coords[valid] - x0_v)  # Fractional part
+        yf = (y_coords[valid] - y0_v)
+
+        # Bilinear interpolation
+        intensities = (
+            image[y0_v, x0_v] * (1 - xf) * (1 - yf) +
+            image[y0_v, x1_v] * xf * (1 - yf) +
+            image[y1_v, x0_v] * (1 - xf) * yf +
+            image[y1_v, x1_v] * xf * yf
+        )
+
+        # Use known contrast values for initial guesses
+        I_bg_init = I_bg_est
+        I_sphere_init = I_sphere_est
+
+        if verbose and i < 3:
+            print(f"  Ray {i}: {len(r_valid)} samples, r=[{r_valid.min():.0f},{r_valid.max():.0f}], "
+                  f"I=[{intensities.min():.3f},{intensities.max():.3f}], range={intensities.max()-intensities.min():.3f}")
 
         # Use multi-start optimization
         popt, r_squared, residual = _fit_sigmoid_multi_start(
-            r_valid, intensities, radius, I_bg_init, I_sphere_init
+            r_valid, intensities, radius, I_bg_init, I_sphere_init, edge_margin
         )
 
         if popt is None:
-            if verbose:
-                print(f"  Ray {i}: fit failed")
+            if verbose and i < 8:
+                print(f"  Ray {i}: fit failed (all starting points failed)")
             continue
 
         I_bg, I_sphere, r_edge, sigma = popt
@@ -212,16 +285,28 @@ def measure_blur_sigmoid(
         # Check if fit makes physical sense
         fit_contrast = abs(I_bg - I_sphere)
 
+        # Calculate acceptance metrics
+        contrast_ratio = fit_contrast / contrast if contrast else 1.0
+        edge_offset = abs(r_edge - radius)
+
         if verbose and i < 8:  # Only print first 8 rays in verbose mode
             print(f"  Ray {i}: σ={sigma:.3f}, R²={r_squared:.3f}, "
-                  f"contrast={fit_contrast:.3f}, r_edge={r_edge:.1f}")
+                  f"contrast={fit_contrast:.3f} ({contrast_ratio:.1%}), r_edge={r_edge:.1f} (off={edge_offset:.0f})")
 
         # Accept fit if:
         # 1. R² is reasonable
         # 2. sigma is positive
-        # 3. Fitted contrast is meaningful (at least 3% of range)
-        min_r2 = 0.4  # Lower threshold to accept more fits
-        if r_squared > min_r2 and sigma > 0.01 and fit_contrast > 0.03:
+        # 3. Fitted contrast is close to actual contrast (within 50%)
+        # 4. Edge position is reasonable (within edge_margin of expected radius)
+        min_r2 = 0.5  # Lowered - sharp edges may have lower R² due to pixelation
+        fit_accepted = (
+            r_squared > min_r2 and
+            sigma > 0.01 and
+            contrast_ratio > 0.2 and  # Fit contrast at least 20% of actual
+            edge_offset < edge_margin  # Edge found within expected region
+        )
+
+        if fit_accepted:
             sigmas.append(sigma)
             r_squareds.append(r_squared)
             fit_details.append({
@@ -231,6 +316,15 @@ def measure_blur_sigmoid(
                 'contrast': fit_contrast,
                 'r_edge': r_edge
             })
+        elif verbose and i < 8:
+            reasons = []
+            if r_squared <= min_r2:
+                reasons.append(f"R²={r_squared:.2f}≤{min_r2}")
+            if contrast_ratio <= 0.2:
+                reasons.append(f"contrast={contrast_ratio:.1%}≤20%")
+            if edge_offset >= edge_margin:
+                reasons.append(f"edge_off={edge_offset:.0f}≥{edge_margin}")
+            print(f"    ^ REJECTED: {', '.join(reasons)}")
 
     if len(sigmas) == 0:
         return BlurMeasurement(
