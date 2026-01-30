@@ -401,7 +401,7 @@ class CalibrationGUI:
         canvas_container = ttk.Frame(preview_frame)
         canvas_container.pack(fill='both', expand=True)
 
-        self.preview_canvas = tk.Canvas(canvas_container, width=450, height=450, bg='#d0d0d0')
+        self.preview_canvas = tk.Canvas(canvas_container, width=450, height=450, bg='#d0d0d0', highlightthickness=0, bd=0)
         self.preview_canvas.pack(pady=5)
 
         # Position slider
@@ -1218,8 +1218,15 @@ The synthetic blur will match your camera!"""
             try:
                 import pandas as pd
                 df = pd.read_csv(positions_file)
-                pos_dict = dict(zip(df['filename'], df['z_position_mm']))
-                self._append_stats_text(f"\nLoaded positions from: {Path(positions_file).name}")
+                # Use first column as filename, second as position (ignore column names)
+                filenames_col = df.iloc[:, 0].astype(str)
+                positions_col = df.iloc[:, 1].astype(float)
+                pos_dict = {}
+                for fn, pos in zip(filenames_col, positions_col):
+                    pos_dict[fn] = pos
+                    # Also store without extension for flexible matching
+                    pos_dict[Path(fn).stem] = pos
+                self._append_stats_text(f"\nLoaded {len(df)} positions from: {Path(positions_file).name}")
             except Exception as e:
                 self._append_stats_text(f"\n⚠️  Error loading CSV: {e}")
 
@@ -1236,11 +1243,18 @@ The synthetic blur will match your camera!"""
                 self.zstack_images.append(img)
                 self.zstack_filenames.append(img_path.name)
 
-                if pos_dict and img_path.name in pos_dict:
-                    # Use CSV positions if available
-                    temp_positions.append(pos_dict[img_path.name])
+                # Try to get position from CSV (try full name, then stem)
+                csv_pos = None
+                if pos_dict:
+                    if img_path.name in pos_dict:
+                        csv_pos = pos_dict[img_path.name]
+                    elif img_path.stem in pos_dict:
+                        csv_pos = pos_dict[img_path.stem]
+
+                if csv_pos is not None:
+                    temp_positions.append(csv_pos)
                 else:
-                    # Always interpolate based on actual image count
+                    # Fallback to interpolation
                     z_min = float(self.z_min_var.get())
                     z_max = float(self.z_max_var.get())
                     z = z_min + (z_max - z_min) * i / (n_files - 1) if n_files > 1 else 0
