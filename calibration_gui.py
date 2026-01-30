@@ -1628,7 +1628,10 @@ The synthetic blur will match your camera!"""
 
             n = len(self.zstack_images)
             for i, img in enumerate(self.zstack_images):
-                measurement = measure_blur_auto(img, center, radius, method)
+                z = self.zstack_positions[i] if i < len(self.zstack_positions) else 0
+                print(f"\n[{i+1}/{n}] Measuring image at z = {z:.2f} mm")
+                measurement = measure_blur_auto(img, center, radius, method, verbose=True)
+                print(f"  => σ = {measurement.sigma:.3f} px, confidence = {measurement.confidence:.3f}")
                 self.sigma_values.append(measurement.sigma)
                 self.blur_measurements.append(measurement)
 
@@ -1656,9 +1659,11 @@ The synthetic blur will match your camera!"""
                 except ValueError:
                     pass
 
-            measurement = measure_blur_auto(self.zstack_images[idx], center, radius, method)
-
             z = self.zstack_positions[idx] if idx < len(self.zstack_positions) else 0
+            print(f"\n[Single] Measuring image #{idx+1} at z = {z:.2f} mm")
+            measurement = measure_blur_auto(self.zstack_images[idx], center, radius, method, verbose=True)
+            print(f"  => σ = {measurement.sigma:.3f} px, confidence = {measurement.confidence:.3f}")
+
             messagebox.showinfo(
                 "Single Measurement",
                 f"Image #{idx + 1} (z = {z:.2f} mm)\n\n"

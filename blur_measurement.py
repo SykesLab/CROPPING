@@ -43,16 +43,69 @@ def sigmoid(r: np.ndarray, I_bg: float, I_sphere: float, r_edge: float, sigma: f
     Returns:
         Intensity values
     """
-    # Avoid overflow in exp
-    z = np.clip((r - r_edge) / max(sigma, 0.1), -50, 50)
+    # Avoid division by zero and overflow in exp
+    # Use 0.001 as minimum to allow sharp edge fitting (was 0.1 which prevented sharp fits)
+    sigma_safe = max(sigma, 0.001)
+    z = np.clip((r - r_edge) / sigma_safe, -50, 50)
     return I_bg - (I_bg - I_sphere) / (1 + np.exp(z))
+
+
+def _fit_sigmoid_multi_start(
+    r_valid: np.ndarray,
+    intensities: np.ndarray,
+    radius: float,
+    I_bg_init: float,
+    I_sphere_init: float
+) -> Tuple[Optional[np.ndarray], float, float]:
+    """
+    Fit sigmoid with multiple starting points to avoid local minima.
+
+    Returns:
+        (best_popt, best_r_squared, best_residual) or (None, 0, inf) if all fail
+    """
+    # Try multiple initial sigma values to avoid local minima
+    sigma_inits = [0.1, 0.5, 1.0, 2.0, 5.0, 10.0]
+
+    best_popt = None
+    best_r_squared = -np.inf
+    best_residual = np.inf
+
+    for sigma_init in sigma_inits:
+        try:
+            popt, _ = curve_fit(
+                sigmoid, r_valid, intensities,
+                p0=[I_bg_init, I_sphere_init, radius, sigma_init],
+                bounds=(
+                    [0, 0, radius * 0.5, 0.01],
+                    [1, 1, radius * 1.5, 50]
+                ),
+                maxfev=1000
+            )
+
+            # Calculate fit quality
+            fitted = sigmoid(r_valid, *popt)
+            residual = np.sum((intensities - fitted) ** 2)
+            ss_tot = np.sum((intensities - np.mean(intensities)) ** 2)
+            r_squared = 1 - (residual / ss_tot) if ss_tot > 0 else 0
+
+            # Keep best fit (lowest residual)
+            if residual < best_residual:
+                best_popt = popt
+                best_r_squared = r_squared
+                best_residual = residual
+
+        except (RuntimeError, ValueError):
+            continue
+
+    return best_popt, best_r_squared, best_residual
 
 
 def measure_blur_sigmoid(
     image: np.ndarray,
     center: Optional[Tuple[int, int]] = None,
     radius: Optional[int] = None,
-    num_rays: int = 36
+    num_rays: int = 36,
+    verbose: bool = False
 ) -> BlurMeasurement:
     """
     Measure blur by fitting sigmoid to edge profiles.
@@ -65,6 +118,7 @@ def measure_blur_sigmoid(
         center: (x, y) center of sphere. If None, auto-detects.
         radius: Approximate radius of sphere. If None, auto-detects.
         num_rays: Number of radial profiles to extract
+        verbose: If True, print diagnostic information
 
     Returns:
         BlurMeasurement with sigma and details
@@ -85,9 +139,35 @@ def measure_blur_sigmoid(
     cx, cy = center
     h, w = image.shape[:2]
 
+    if verbose:
+        print(f"  Detected: center=({cx}, {cy}), radius={radius}")
+
+    # Check for sufficient contrast
+    # Create masks for inner sphere and outer background
+    y_grid, x_grid = np.ogrid[:h, :w]
+    dist = np.sqrt((x_grid - cx)**2 + (y_grid - cy)**2)
+    inner_mask = dist < radius * 0.6
+    outer_mask = (dist > radius * 1.2) & (dist < radius * 1.8)
+
+    if np.any(inner_mask) and np.any(outer_mask):
+        I_sphere_est = np.median(image[inner_mask])
+        I_bg_est = np.median(image[outer_mask])
+        contrast = abs(I_bg_est - I_sphere_est)
+        if verbose:
+            print(f"  Contrast: {contrast:.3f} (I_sphere={I_sphere_est:.3f}, I_bg={I_bg_est:.3f})")
+
+        if contrast < 0.05:
+            return BlurMeasurement(
+                sigma=0.0, method='sigmoid', confidence=0.0,
+                details={'error': f'Insufficient contrast: {contrast:.3f}'}
+            )
+    else:
+        contrast = None
+
     # Extract radial profiles
     sigmas = []
     r_squareds = []
+    fit_details = []
 
     for i in range(num_rays):
         angle = 2 * np.pi * i / num_rays
@@ -113,41 +193,44 @@ def measure_blur_sigmoid(
         # Get intensity profile
         intensities = image[y_valid, x_valid]
 
-        # Fit sigmoid
-        try:
-            # Initial guesses - use start of profile (inside sphere) and end (background)
-            I_bg_init = np.median(intensities[-10:])
-            I_sphere_init = np.median(intensities[:10])
-            r_edge_init = radius
-            sigma_init = 2.0
+        # Initial guesses from profile
+        I_bg_init = np.median(intensities[-10:])
+        I_sphere_init = np.median(intensities[:10])
 
-            popt, pcov = curve_fit(
-                sigmoid, r_valid, intensities,
-                p0=[I_bg_init, I_sphere_init, r_edge_init, sigma_init],
-                bounds=(
-                    [0, 0, radius * 0.5, 0.01],  # Allow very sharp edges (σ >= 0.01)
-                    [1, 1, radius * 1.5, 50]
-                ),
-                maxfev=1000
-            )
+        # Use multi-start optimization
+        popt, r_squared, residual = _fit_sigmoid_multi_start(
+            r_valid, intensities, radius, I_bg_init, I_sphere_init
+        )
 
-            I_bg, I_sphere, r_edge, sigma = popt
-
-            # Calculate R-squared
-            fitted = sigmoid(r_valid, *popt)
-            ss_res = np.sum((intensities - fitted) ** 2)
-            ss_tot = np.sum((intensities - np.mean(intensities)) ** 2)
-            r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
-
-            # Accept fit if R² is reasonable (lower threshold for sharp edges)
-            # Sharp edges (small sigma) get lower R² due to noise dominating
-            min_r2 = 0.5 if sigma < 1.0 else 0.7
-            if r_squared > min_r2 and sigma > 0.01:
-                sigmas.append(sigma)
-                r_squareds.append(r_squared)
-
-        except (RuntimeError, ValueError):
+        if popt is None:
+            if verbose:
+                print(f"  Ray {i}: fit failed")
             continue
+
+        I_bg, I_sphere, r_edge, sigma = popt
+
+        # Check if fit makes physical sense
+        fit_contrast = abs(I_bg - I_sphere)
+
+        if verbose and i < 8:  # Only print first 8 rays in verbose mode
+            print(f"  Ray {i}: σ={sigma:.3f}, R²={r_squared:.3f}, "
+                  f"contrast={fit_contrast:.3f}, r_edge={r_edge:.1f}")
+
+        # Accept fit if:
+        # 1. R² is reasonable
+        # 2. sigma is positive
+        # 3. Fitted contrast is meaningful (at least 3% of range)
+        min_r2 = 0.4  # Lower threshold to accept more fits
+        if r_squared > min_r2 and sigma > 0.01 and fit_contrast > 0.03:
+            sigmas.append(sigma)
+            r_squareds.append(r_squared)
+            fit_details.append({
+                'angle': np.degrees(angle),
+                'sigma': sigma,
+                'r_squared': r_squared,
+                'contrast': fit_contrast,
+                'r_edge': r_edge
+            })
 
     if len(sigmas) == 0:
         return BlurMeasurement(
@@ -159,6 +242,9 @@ def measure_blur_sigmoid(
     sigma_final = np.median(sigmas)
     confidence = np.mean(r_squareds)
 
+    if verbose:
+        print(f"  Result: σ={sigma_final:.3f} px (median of {len(sigmas)} fits)")
+
     return BlurMeasurement(
         sigma=sigma_final,
         method='sigmoid',
@@ -167,7 +253,10 @@ def measure_blur_sigmoid(
             'num_rays_used': len(sigmas),
             'sigma_std': np.std(sigmas),
             'mean_r_squared': np.mean(r_squareds),
-            'all_sigmas': sigmas
+            'all_sigmas': sigmas,
+            'center': (cx, cy),
+            'radius': radius,
+            'contrast': contrast
         }
     )
 
@@ -400,7 +489,8 @@ def measure_blur_auto(
     image: np.ndarray,
     center: Optional[Tuple[int, int]] = None,
     radius: Optional[int] = None,
-    method: str = 'sigmoid'
+    method: str = 'sigmoid',
+    verbose: bool = False
 ) -> BlurMeasurement:
     """
     Measure blur using the specified method.
@@ -410,12 +500,13 @@ def measure_blur_auto(
         center: (x, y) center of sphere. If None, auto-detects.
         radius: Approximate radius. If None, auto-detects.
         method: 'sigmoid', 'gradient', or 'laplacian'
+        verbose: If True, print diagnostic information
 
     Returns:
         BlurMeasurement result
     """
     if method == 'sigmoid':
-        return measure_blur_sigmoid(image, center, radius)
+        return measure_blur_sigmoid(image, center, radius, verbose=verbose)
     elif method == 'gradient':
         return measure_blur_gradient(image, center, radius)
     elif method == 'laplacian':
