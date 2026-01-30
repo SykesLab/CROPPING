@@ -125,7 +125,7 @@ def measure_blur_sigmoid(
                 sigmoid, r_valid, intensities,
                 p0=[I_bg_init, I_sphere_init, r_edge_init, sigma_init],
                 bounds=(
-                    [0, 0, radius * 0.5, 0.1],
+                    [0, 0, radius * 0.5, 0.01],  # Allow very sharp edges (σ >= 0.01)
                     [1, 1, radius * 1.5, 50]
                 ),
                 maxfev=1000
@@ -139,7 +139,7 @@ def measure_blur_sigmoid(
             ss_tot = np.sum((intensities - np.mean(intensities)) ** 2)
             r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
 
-            if r_squared > 0.8 and sigma > 0.1:
+            if r_squared > 0.8 and sigma > 0.01:  # Allow very sharp edges
                 sigmas.append(sigma)
                 r_squareds.append(r_squared)
 

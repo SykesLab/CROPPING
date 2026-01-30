@@ -470,14 +470,8 @@ class CalibrationGUI:
         measure_header = ttk.Label(measure_col, text="Step 1: Measure Blur", font=('TkDefaultFont', 10, 'bold'))
         measure_header.pack(anchor='w', pady=(0, 5))
 
-        # Method selection
-        method_frame = ttk.LabelFrame(measure_col, text="Method", padding=5)
-        method_frame.pack(fill='x', pady=2)
-
+        # Blur measurement method (sigmoid edge fitting)
         self.blur_method_var = tk.StringVar(value="sigmoid")
-        ttk.Radiobutton(method_frame, text="Sigmoid (recommended)", variable=self.blur_method_var, value="sigmoid").pack(anchor='w')
-        ttk.Radiobutton(method_frame, text="Gradient (Sobel)", variable=self.blur_method_var, value="gradient").pack(anchor='w')
-        ttk.Radiobutton(method_frame, text="Laplacian", variable=self.blur_method_var, value="laplacian").pack(anchor='w')
 
         # Sphere detection
         sphere_frame = ttk.LabelFrame(measure_col, text="Sphere Detection", padding=5)
@@ -1319,7 +1313,16 @@ The synthetic blur will match your camera!"""
         except ValueError:
             focus_offset = 0.0
 
-        self.zstack_positions = [pos - focus_offset for pos in temp_positions]
+        defocus_positions = [pos - focus_offset for pos in temp_positions]
+
+        # Sort everything by position so slider goes in order
+        if self.zstack_images:
+            sorted_indices = np.argsort(defocus_positions)
+            self.zstack_images = [self.zstack_images[i] for i in sorted_indices]
+            self.zstack_filenames = [self.zstack_filenames[i] for i in sorted_indices]
+            self.zstack_positions = [defocus_positions[i] for i in sorted_indices]
+        else:
+            self.zstack_positions = defocus_positions
 
         # Create stats
         if self.zstack_images:
@@ -1731,6 +1734,27 @@ The synthetic blur will match your camera!"""
 
         approach = self.approach_var.get()
 
+        # Filter out failed measurements (σ = 0 means fitting failed completely)
+        filtered_positions = []
+        filtered_sigmas = []
+
+        for z, sigma in zip(self.zstack_positions, self.sigma_values):
+            if sigma > 0:  # Only exclude actual failures (σ = 0)
+                filtered_positions.append(z)
+                filtered_sigmas.append(sigma)
+
+        n_filtered = len(self.sigma_values) - len(filtered_sigmas)
+        if n_filtered > 0:
+            self._append_stats_text(f"\n\nFiltered out {n_filtered} failed measurements (σ = 0)")
+
+        if len(filtered_sigmas) < 5:
+            messagebox.showerror("Error", f"Only {len(filtered_sigmas)} valid measurements after filtering. Need at least 5.")
+            return
+
+        # Store filtered data for plotting
+        self.filtered_positions = filtered_positions
+        self.filtered_sigmas = filtered_sigmas
+
         try:
             # Clear all previous calibrations first
             self.calibration_a = None
@@ -1738,7 +1762,7 @@ The synthetic blur will match your camera!"""
             self.calibration_hybrid = None
 
             if approach == 'A':
-                self.calibration_a = calibrate_approach_a(self.zstack_positions, self.sigma_values)
+                self.calibration_a = calibrate_approach_a(filtered_positions, filtered_sigmas)
                 self._display_results_a()
 
             elif approach == 'B':
@@ -1748,7 +1772,7 @@ The synthetic blur will match your camera!"""
                     focus_distance_mm=float(self.optical_vars['focus_distance'].get()),
                     pixel_size_mm=float(self.optical_vars['pixel_size'].get())
                 )
-                self.calibration_b = calibrate_approach_b(self.zstack_positions, self.sigma_values, optical)
+                self.calibration_b = calibrate_approach_b(filtered_positions, filtered_sigmas, optical)
                 self._display_results_b()
 
             else:  # hybrid
@@ -1759,7 +1783,7 @@ The synthetic blur will match your camera!"""
                     pixel_size_mm=float(self.optical_vars['pixel_size'].get())
                 )
                 ref_d = float(self.ref_defocus_var.get())
-                self.calibration_hybrid = calibrate_hybrid(self.zstack_positions, self.sigma_values, optical, ref_d)
+                self.calibration_hybrid = calibrate_hybrid(filtered_positions, filtered_sigmas, optical, ref_d)
                 self._display_results_hybrid()
 
             self._update_calibration_plot()
@@ -1902,13 +1926,23 @@ The synthetic blur will now match your real camera!
 
         self.calib_ax.clear()
 
-        z = np.array(self.zstack_positions)
-        sigma = np.array(self.sigma_values)
+        # Use filtered data if available, otherwise all data
+        if hasattr(self, 'filtered_positions') and self.filtered_positions:
+            z_valid = np.array(self.filtered_positions)
+            sigma_valid = np.array(self.filtered_sigmas)
 
-        # Remove NaN
-        valid = ~np.isnan(sigma)
-        z_valid = z[valid]
-        sigma_valid = sigma[valid]
+            # Also show filtered-out points in gray (σ = 0 means failed)
+            z_all = np.array(self.zstack_positions)
+            sigma_all = np.array(self.sigma_values)
+            mask = sigma_all <= 0
+            if np.any(mask):
+                self.calib_ax.scatter(z_all[mask], sigma_all[mask], c='lightgray', alpha=0.5, s=20, label='Failed')
+        else:
+            z = np.array(self.zstack_positions)
+            sigma = np.array(self.sigma_values)
+            valid = ~np.isnan(sigma)
+            z_valid = z[valid]
+            sigma_valid = sigma[valid]
 
         # Plot data points
         self.calib_ax.scatter(z_valid, sigma_valid, c='blue', label='Measured', alpha=0.7, s=40)
