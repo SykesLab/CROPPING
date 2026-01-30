@@ -247,11 +247,22 @@ class CalibrationGUI:
         ttk.Entry(row2, textvariable=self.positions_file_var, width=35).pack(side='left', padx=5)
         ttk.Button(row2, text="Browse", command=self._browse_positions_file).pack(side='left')
 
+        # CSV info feedback (blue text)
+        self.positions_csv_info_var = tk.StringVar(value="")
         ttk.Label(
             self.folder_source_frame,
-            text="CSV should have columns: filename, z_position_mm",
-            font=('TkDefaultFont', 8), foreground='gray'
+            textvariable=self.positions_csv_info_var,
+            font=('TkDefaultFont', 8), foreground='blue'
         ).pack(anchor='w', pady=(2, 0))
+
+        # Focus position (for converting stage positions to defocus)
+        row3 = ttk.Frame(self.folder_source_frame)
+        row3.pack(fill='x', pady=2)
+        ttk.Label(row3, text="Focus at position:", width=14).pack(side='left')
+        self.folder_focus_var = tk.StringVar(value="0")
+        ttk.Entry(row3, textvariable=self.folder_focus_var, width=6).pack(side='left', padx=2)
+        ttk.Label(row3, text="mm", font=('', 8)).pack(side='left', padx=2)
+        ttk.Button(row3, text="Find Focus", command=self._find_focus_from_images).pack(side='left', padx=10)
 
         # Generate positions (inside folder source frame)
         gen_frame = ttk.Frame(self.folder_source_frame)
@@ -355,8 +366,6 @@ class CalibrationGUI:
         self.load_btn = ttk.Button(load_btn_frame, text="Load Z-Stack Images", command=self._load_zstack)
         self.load_btn.pack(side='left', padx=5)
 
-        ttk.Button(load_btn_frame, text="Scan Folder", command=self._scan_zstack_folder).pack(side='left')
-
         # Auto-crop section
         crop_frame = ttk.LabelFrame(left_panel, text="Auto-Crop to Sphere", padding=5)
         crop_frame.pack(fill='x', pady=5)
@@ -401,7 +410,11 @@ class CalibrationGUI:
         canvas_container = ttk.Frame(preview_frame)
         canvas_container.pack(fill='both', expand=True)
 
-        self.preview_canvas = tk.Canvas(canvas_container, width=450, height=450, bg='#d0d0d0', highlightthickness=0, bd=0)
+        # Get the ttk theme background color
+        style = ttk.Style()
+        bg_color = style.lookup('TFrame', 'background') or self.root.cget('bg')
+
+        self.preview_canvas = tk.Canvas(canvas_container, width=450, height=450, bg=bg_color, highlightthickness=0, bd=0)
         self.preview_canvas.pack(pady=5)
 
         # Position slider
@@ -952,75 +965,43 @@ The synthetic blur will match your camera!"""
         )
         if file:
             self.positions_file_var.set(file)
+            self._preview_positions_csv(file)
 
-    def _scan_zstack_folder(self):
-        """Scan folder or .cine folder and report what's found."""
-        source_type = self.source_type_var.get()
-
-        if source_type == "cine":
-            self._scan_cine_folder()
-        else:
-            self._scan_image_folder()
-
-    def _scan_cine_folder(self):
-        """Scan folder of .cine files and report info."""
-        folder_path = self.cine_folder_var.get()
-        if not folder_path:
-            messagebox.showerror("Error", "Please select a .cine folder first")
-            return
-
-        if not Path(folder_path).exists():
-            messagebox.showerror("Error", f"Folder not found: {folder_path}")
-            return
-
-        loader = CineFolderLoader(folder_path)
-        if loader.num_files == 0:
-            self._update_stats_text(f"Scan Results\n" + "=" * 40 + "\n\nNo .cine files found in folder")
-            self.load_status_var.set("No .cine files found")
-            return
-
-        info = loader.get_info()
-        self._update_stats_text(f"Scan Results for: {Path(folder_path).name}\n" + "=" * 40)
-        self._append_stats_text(f"\n\n.cine files: {info['num_files']}")
-        self._append_stats_text(f"\nImage size: {info['image_width']} × {info['image_height']} px")
-        self._append_stats_text(f"\n\nFiles:")
-        for fn in info['filenames'][:10]:  # Show first 10
-            self._append_stats_text(f"\n  {fn}")
-        if len(info['filenames']) > 10:
-            self._append_stats_text(f"\n  ... and {len(info['filenames']) - 10} more")
-
-        # Show position mapping preview (linear interpolation)
+    def _preview_positions_csv(self, csv_path: str):
+        """Preview contents of positions CSV and show info."""
         try:
-            stage_start = float(self.stage_start_var.get())
-            stage_end = float(self.stage_end_var.get())
-            stage_focus = float(self.stage_focus_var.get())
+            import pandas as pd
+            df = pd.read_csv(csv_path)
 
-            n_positions = info['num_files']
-            z_start = stage_start - stage_focus
-            z_end = stage_end - stage_focus
-            z_step = (z_end - z_start) / (n_positions - 1) if n_positions > 1 else 0
+            if len(df.columns) < 2:
+                self.positions_csv_info_var.set("CSV needs at least 2 columns")
+                return
 
-            self._append_stats_text(f"\n\nWith current settings:")
-            self._append_stats_text(f"\n  Stage range: {stage_start} to {stage_end} mm")
-            self._append_stats_text(f"\n  Focus at stage: {stage_focus} mm")
-            self._append_stats_text(f"\n  Positions: {n_positions}")
-            self._append_stats_text(f"\n  Defocus range: {z_start:.1f} to {z_end:.1f} mm")
-            self._append_stats_text(f"\n  Z step: {z_step:.3f} mm")
+            # Use second column as positions (first is filename)
+            positions = df.iloc[:, 1].astype(float).values
+            n_positions = len(positions)
+            pos_min = positions.min()
+            pos_max = positions.max()
 
-            self._append_stats_text(f"\n\nNote: Files are sorted alphabetically and positions")
-            self._append_stats_text(f"\nare linearly interpolated across the stage range.")
+            # Calculate approximate step
+            if n_positions > 1:
+                sorted_pos = np.sort(positions)
+                steps = np.diff(sorted_pos)
+                avg_step = np.mean(steps)
+                self.positions_csv_info_var.set(
+                    f"CSV: {n_positions} positions, {pos_min:.1f} to {pos_max:.1f} mm, step ~{avg_step:.2f} mm"
+                )
+            else:
+                self.positions_csv_info_var.set(f"CSV: {n_positions} position at {pos_min:.1f} mm")
 
-        except ValueError:
-            self._append_stats_text("\n\n⚠️ Invalid stage parameters")
+        except Exception as e:
+            self.positions_csv_info_var.set(f"Error reading CSV: {e}")
 
-        self.load_status_var.set(f"Found {info['num_files']} .cine files - ready to load")
-        self.cine_folder_loader = loader
-
-    def _scan_image_folder(self):
-        """Scan image folder and report what's found."""
+    def _find_focus_from_images(self):
+        """Find focus position by measuring sharpness across images."""
         folder = self.zstack_folder_var.get()
         if not folder:
-            messagebox.showerror("Error", "Please select a folder first")
+            messagebox.showerror("Error", "Please select an image folder first")
             return
 
         folder = Path(folder)
@@ -1028,35 +1009,101 @@ The synthetic blur will match your camera!"""
             messagebox.showerror("Error", f"Folder not found: {folder}")
             return
 
+        # Find images
         extensions = ['.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp']
         image_files = []
         for ext in extensions:
             image_files.extend(folder.glob(f'*{ext}'))
             image_files.extend(folder.glob(f'*{ext.upper()}'))
-
         image_files = sorted(set(image_files))
 
-        # Update stats display
-        self._update_stats_text(f"Scan Results for: {folder.name}\n" + "=" * 40 + f"\n\nImages found: {len(image_files)}")
+        if not image_files:
+            messagebox.showerror("Error", "No images found in folder")
+            return
 
-        if image_files:
-            # Check first image size
-            img = cv2.imread(str(image_files[0]), cv2.IMREAD_GRAYSCALE)
-            if img is not None:
-                h, w = img.shape
-                self._append_stats_text(f"\nImage size: {w} × {h} px")
+        # Load positions from CSV if available
+        positions_file = self.positions_file_var.get()
+        positions = []
 
-            # Check for positions CSV
-            csv_path = folder / "positions.csv"
-            if csv_path.exists():
-                self._append_stats_text(f"\n\nPositions CSV found: {csv_path.name}")
-            else:
-                self._append_stats_text("\n\n⚠️  No positions.csv found")
-                self._append_stats_text("\n    Use 'Generate Positions' or provide CSV")
+        if positions_file and Path(positions_file).exists():
+            try:
+                import pandas as pd
+                df = pd.read_csv(positions_file)
+                # Build position dict (first col = filename, second col = position)
+                filenames_col = df.iloc[:, 0].astype(str)
+                positions_col = df.iloc[:, 1].astype(float)
+                pos_dict = {}
+                for fn, pos in zip(filenames_col, positions_col):
+                    pos_dict[fn] = pos
+                    pos_dict[Path(fn).stem] = pos
 
-            self.load_status_var.set(f"Found {len(image_files)} images - ready to load")
+                # Match positions to images
+                for img_path in image_files:
+                    if img_path.name in pos_dict:
+                        positions.append(pos_dict[img_path.name])
+                    elif img_path.stem in pos_dict:
+                        positions.append(pos_dict[img_path.stem])
+                    else:
+                        positions.append(None)
+            except Exception as e:
+                messagebox.showerror("Error", f"Error reading CSV: {e}")
+                return
         else:
-            self.load_status_var.set("No images found in folder")
+            # No CSV - use generated positions or linear interpolation
+            try:
+                z_min = float(self.z_min_var.get())
+                z_max = float(self.z_max_var.get())
+                n_files = len(image_files)
+                for i in range(n_files):
+                    z = z_min + (z_max - z_min) * i / (n_files - 1) if n_files > 1 else z_min
+                    positions.append(z)
+            except ValueError:
+                messagebox.showerror("Error", "Invalid Z range values")
+                return
+
+        self.load_status_var.set("Measuring sharpness to find focus...")
+        self.root.update_idletasks()
+
+        # Measure sharpness for each image
+        sharpness_values = []
+        valid_positions = []
+        valid_filenames = []
+
+        for i, img_path in enumerate(image_files):
+            img = cv2.imread(str(img_path), cv2.IMREAD_GRAYSCALE)
+            if img is not None and positions[i] is not None:
+                laplacian = cv2.Laplacian(img, cv2.CV_64F)
+                sharpness = laplacian.var()
+                sharpness_values.append(sharpness)
+                valid_positions.append(positions[i])
+                valid_filenames.append(img_path.name)
+
+            self.load_progress_var.set((i + 1) / len(image_files) * 100)
+            self.root.update_idletasks()
+
+        if not sharpness_values:
+            messagebox.showerror("Error", "Could not measure sharpness")
+            return
+
+        # Find the sharpest frame
+        max_idx = np.argmax(sharpness_values)
+        focus_position = valid_positions[max_idx]
+
+        # Update the focus position
+        self.folder_focus_var.set(f"{focus_position:.2f}")
+
+        # Show results
+        self._update_stats_text(f"Focus Detection Results\n" + "=" * 40)
+        self._append_stats_text(f"\n\nAnalyzed {len(sharpness_values)} images")
+        self._append_stats_text(f"\nSharpest image: #{max_idx + 1}")
+        self._append_stats_text(f"\nFilename: {valid_filenames[max_idx]}")
+        self._append_stats_text(f"\nPosition: {focus_position:.2f} mm")
+        self._append_stats_text(f"\nSharpness (Laplacian var): {sharpness_values[max_idx]:.1f}")
+        self._append_stats_text(f"\n\nFocus position has been auto-filled.")
+        self._append_stats_text(f"\nDefocus will be calculated as: position - {focus_position:.2f}")
+
+        self.load_status_var.set(f"Focus found at position {focus_position:.2f} mm")
+        self.load_progress_var.set(100)
 
     def _generate_positions(self):
         """Generate positions from range."""
@@ -1157,14 +1204,17 @@ The synthetic blur will match your camera!"""
 
         # Create stats
         h, w = self.zstack_images[0].shape
-        z_step = abs(positions[1] - positions[0]) if len(positions) > 1 else 0
+        z_min = min(self.zstack_positions)
+        z_max = max(self.zstack_positions)
+        n_pos = len(self.zstack_positions)
+        z_step = (z_max - z_min) / (n_pos - 1) if n_pos > 1 else 0
 
         self.zstack_stats = ZStackStats(
             num_images=len(self.zstack_images),
             image_width=w,
             image_height=h,
-            z_min=min(self.zstack_positions),
-            z_max=max(self.zstack_positions),
+            z_min=z_min,
+            z_max=z_max,
             z_step=z_step
         )
 
@@ -1263,18 +1313,29 @@ The synthetic blur will match your camera!"""
             self.load_progress_var.set((i + 1) / n_files * 100)
             self.root.update_idletasks()
 
-        self.zstack_positions = temp_positions
+        # Apply focus offset to convert stage positions to defocus
+        try:
+            focus_offset = float(self.folder_focus_var.get())
+        except ValueError:
+            focus_offset = 0.0
+
+        self.zstack_positions = [pos - focus_offset for pos in temp_positions]
 
         # Create stats
         if self.zstack_images:
             h, w = self.zstack_images[0].shape
+            z_min = min(self.zstack_positions)
+            z_max = max(self.zstack_positions)
+            n_pos = len(self.zstack_positions)
+            z_step = (z_max - z_min) / (n_pos - 1) if n_pos > 1 else 0
+
             self.zstack_stats = ZStackStats(
                 num_images=len(self.zstack_images),
                 image_width=w,
                 image_height=h,
-                z_min=min(self.zstack_positions),
-                z_max=max(self.zstack_positions),
-                z_step=abs(self.zstack_positions[1] - self.zstack_positions[0]) if len(self.zstack_positions) > 1 else 0
+                z_min=z_min,
+                z_max=z_max,
+                z_step=z_step
             )
 
             # Update slider
@@ -1285,7 +1346,9 @@ The synthetic blur will match your camera!"""
             self._update_stats_text(f"Loaded Z-Stack\n" + "=" * 40)
             self._append_stats_text(f"\nImages: {self.zstack_stats.num_images}")
             self._append_stats_text(f"\nSize: {w} × {h} px")
-            self._append_stats_text(f"\nZ range: {self.zstack_stats.z_min:.1f} to {self.zstack_stats.z_max:.1f} mm")
+            if focus_offset != 0:
+                self._append_stats_text(f"\nFocus at position: {focus_offset:.2f} mm")
+            self._append_stats_text(f"\nDefocus range: {self.zstack_stats.z_min:.1f} to {self.zstack_stats.z_max:.1f} mm")
             self._append_stats_text(f"\nZ step: {self.zstack_stats.z_step:.2f} mm")
 
         self.load_status_var.set(f"Loaded {len(self.zstack_images)} images")
