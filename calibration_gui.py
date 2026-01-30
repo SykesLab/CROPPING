@@ -3,9 +3,9 @@ Calibration GUI for Rho (ρ) Determination
 
 A GUI application for calibrating the blur-to-depth conversion constant ρ.
 Supports three approaches:
-- Approach A: Direct empirical (σ = ρ × |d|)
-- Approach B: Optical formula + ρ
-- Hybrid: Approach A calibration converted to Approach B format
+- Fit from Data: Direct empirical fit (σ = ρ × |d|)
+- Calculate from Optics: Uses optical CoC formula with ρ correction
+- Both: Fits from data and converts to optics format (recommended)
 
 Usage:
     python calibration_gui.py
@@ -522,9 +522,9 @@ class CalibrationGUI:
         approach_frame.pack(fill='x', pady=2)
 
         self.approach_var = tk.StringVar(value="hybrid")
-        ttk.Radiobutton(approach_frame, text="Hybrid (recommended)", variable=self.approach_var, value="hybrid", command=self._on_approach_change).pack(anchor='w')
-        ttk.Radiobutton(approach_frame, text="A: Direct Empirical", variable=self.approach_var, value="A", command=self._on_approach_change).pack(anchor='w')
-        ttk.Radiobutton(approach_frame, text="B: Optical Formula", variable=self.approach_var, value="B", command=self._on_approach_change).pack(anchor='w')
+        ttk.Radiobutton(approach_frame, text="Estimated Optics (recommended)", variable=self.approach_var, value="hybrid", command=self._on_approach_change).pack(anchor='w')
+        ttk.Radiobutton(approach_frame, text="Unknown Optics", variable=self.approach_var, value="A", command=self._on_approach_change).pack(anchor='w')
+        ttk.Radiobutton(approach_frame, text="Known Optics", variable=self.approach_var, value="B", command=self._on_approach_change).pack(anchor='w')
 
         # Optical parameters
         self.optical_frame = ttk.LabelFrame(calib_col, text="Optical Params", padding=5)
@@ -1799,17 +1799,17 @@ The synthetic blur will match your camera!"""
             messagebox.showerror("Calibration Error", str(e))
 
     def _display_results_a(self):
-        """Display Approach A results."""
+        """Display Fit from Data results."""
         r = self.calibration_a
         text = f"""{'=' * 50}
-APPROACH A: DIRECT EMPIRICAL CALIBRATION
+FIT FROM DATA
 {'=' * 50}
 
 Fitted model: σ = ρ × |z| + σ₀
 
 RESULTS:
   ρ = {r.rho_px_per_mm:.4f} px/mm
-  σ₀ = {r.sigma_0:.2f} px (residual blur at focus)
+  σ₀ = {r.sigma_0:.2f} px (blur at focus)
   R² = {r.r_squared:.4f}
   Points used: {r.num_points}
 
@@ -1822,11 +1822,11 @@ EXAMPLE:
         self._set_results_text(text)
 
     def _display_results_b(self):
-        """Display Approach B results."""
+        """Display Calculate from Optics results."""
         r = self.calibration_b
         o = r.optical_params
         text = f"""{'=' * 50}
-APPROACH B: OPTICAL FORMULA + ρ
+CALCULATE FROM OPTICS
 {'=' * 50}
 
 Optical parameters used:
@@ -1854,17 +1854,17 @@ FOR TRAINING GUI:
         o = b.optical_params
 
         text = f"""{'=' * 50}
-HYBRID CALIBRATION (RECOMMENDED)
+CALIBRATION RESULTS
 {'=' * 50}
 
-APPROACH A FIT (Direct):
-  ρ_direct = {a.rho_px_per_mm:.4f} px/mm
-  σ₀ = {a.sigma_0:.2f} px
+FROM DATA FIT:
+  ρ = {a.rho_px_per_mm:.4f} px/mm
+  σ₀ = {a.sigma_0:.2f} px (blur at focus)
   R² = {a.r_squared:.4f}
 
-CONVERTED TO APPROACH B:
+FOR OPTICS MODEL:
   Reference defocus: {h.conversion_reference_d} mm
-  ρ_formula = {b.rho:.4f}
+  ρ = {b.rho:.4f}
 
 {'=' * 50}
 FOR TRAINING GUI - COPY THESE VALUES:
@@ -1957,18 +1957,18 @@ The synthetic blur will now match your real camera!
             a = self.calibration_hybrid.direct_result
             z_fit = np.linspace(z_valid.min(), z_valid.max(), 100)
             sigma_fit = a.rho_px_per_mm * np.abs(z_fit) + a.sigma_0
-            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Hybrid: ρ = {a.rho_px_per_mm:.3f} px/mm', linewidth=2)
+            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Fit: ρ = {a.rho_px_per_mm:.3f} px/mm', linewidth=2)
         elif self.calibration_a:
             a = self.calibration_a
             z_fit = np.linspace(z_valid.min(), z_valid.max(), 100)
             sigma_fit = a.rho_px_per_mm * np.abs(z_fit) + a.sigma_0
-            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Direct: ρ = {a.rho_px_per_mm:.3f} px/mm', linewidth=2)
+            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Fit: ρ = {a.rho_px_per_mm:.3f} px/mm', linewidth=2)
         elif self.calibration_b:
             b = self.calibration_b
             z_fit = np.linspace(z_valid.min(), z_valid.max(), 100)
             # For approach B, compute sigma from CoC formula
             sigma_fit = np.array([b.rho * b.optical_params.calculate_coc(z) for z in z_fit])
-            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Optical: ρ = {b.rho:.3f}', linewidth=2)
+            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Optics: ρ = {b.rho:.3f}', linewidth=2)
 
         self.calib_ax.set_xlabel('Defocus z (mm)')
         self.calib_ax.set_ylabel('Blur σ (pixels)')
