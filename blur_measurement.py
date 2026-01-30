@@ -139,7 +139,10 @@ def measure_blur_sigmoid(
             ss_tot = np.sum((intensities - np.mean(intensities)) ** 2)
             r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
 
-            if r_squared > 0.8 and sigma > 0.01:  # Allow very sharp edges
+            # Accept fit if R² is reasonable (lower threshold for sharp edges)
+            # Sharp edges (small sigma) get lower R² due to noise dominating
+            min_r2 = 0.5 if sigma < 1.0 else 0.7
+            if r_squared > min_r2 and sigma > 0.01:
                 sigmas.append(sigma)
                 r_squareds.append(r_squared)
 
@@ -149,7 +152,7 @@ def measure_blur_sigmoid(
     if len(sigmas) == 0:
         return BlurMeasurement(
             sigma=0.0, method='sigmoid', confidence=0.0,
-            details={'error': 'Could not fit sigmoid to any rays'}
+            details={'error': f'Could not fit sigmoid to any of {num_rays} rays'}
         )
 
     # Use median to be robust to outliers
