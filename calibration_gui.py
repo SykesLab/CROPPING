@@ -2,10 +2,16 @@
 Calibration GUI for Rho (ρ) Determination
 
 A GUI application for calibrating the blur-to-depth conversion constant ρ.
-Supports three approaches:
-- Fit from Data: Direct empirical fit (σ = ρ × |d|)
-- Calculate from Optics: Uses optical CoC formula with ρ correction
-- Both: Fits from data and converts to optics format (recommended)
+Supports three modes (see LABWORKPIPELINELINK.md for full details):
+
+- Estimated Optics (recommended): Enter rough guesses for optical params,
+  fit ρ from data. The ρ value compensates for estimation errors.
+
+- Unknown Optics: No optical params needed. Simple linear model σ = ρ × |z|.
+  Outputs ρ in px/mm. Use when you know nothing about your camera.
+
+- Known Optics: Enter exact camera specs. Fits small correction ρ ≈ 1.0.
+  Use when you have documented/measured optical parameters.
 
 Usage:
     python calibration_gui.py
@@ -1957,18 +1963,18 @@ The ρ value compensates for any errors in your estimates!
             a = self.calibration_hybrid.direct_result
             z_fit = np.linspace(z_valid.min(), z_valid.max(), 100)
             sigma_fit = a.rho_px_per_mm * np.abs(z_fit) + a.sigma_0
-            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Fit: ρ = {a.rho_px_per_mm:.3f} px/mm', linewidth=2)
+            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Estimated: ρ = {a.rho_px_per_mm:.3f} px/mm', linewidth=2)
         elif self.calibration_a:
             a = self.calibration_a
             z_fit = np.linspace(z_valid.min(), z_valid.max(), 100)
             sigma_fit = a.rho_px_per_mm * np.abs(z_fit) + a.sigma_0
-            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Fit: ρ = {a.rho_px_per_mm:.3f} px/mm', linewidth=2)
+            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Unknown: ρ = {a.rho_px_per_mm:.3f} px/mm', linewidth=2)
         elif self.calibration_b:
             b = self.calibration_b
             z_fit = np.linspace(z_valid.min(), z_valid.max(), 100)
-            # For approach B, compute sigma from CoC formula
+            # For Known Optics, compute sigma from CoC formula
             sigma_fit = np.array([b.rho * b.optical_params.calculate_coc(z) for z in z_fit])
-            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Optics: ρ = {b.rho:.3f}', linewidth=2)
+            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Known: ρ = {b.rho:.3f}', linewidth=2)
 
         self.calib_ax.set_xlabel('Defocus z (mm)')
         self.calib_ax.set_ylabel('Blur σ (pixels)')
