@@ -1799,10 +1799,10 @@ The synthetic blur will match your camera!"""
             messagebox.showerror("Calibration Error", str(e))
 
     def _display_results_a(self):
-        """Display Fit from Data results."""
+        """Display Unknown Optics results."""
         r = self.calibration_a
         text = f"""{'=' * 50}
-FIT FROM DATA
+UNKNOWN OPTICS - Simple Linear Model
 {'=' * 50}
 
 Fitted model: σ = ρ × |z| + σ₀
@@ -1816,27 +1816,27 @@ RESULTS:
 DEPTH CONVERSION:
   |depth_mm| = (σ - {r.sigma_0:.2f}) / {r.rho_px_per_mm:.4f}
 
-EXAMPLE:
-  σ = 18 px → |depth| = {(18 - r.sigma_0) / r.rho_px_per_mm:.1f} mm
+NOTE: This mode doesn't use optical parameters.
+For Training GUI, use "Estimated Optics" instead.
 """
         self._set_results_text(text)
 
     def _display_results_b(self):
-        """Display Calculate from Optics results."""
+        """Display Known Optics results."""
         r = self.calibration_b
         o = r.optical_params
         text = f"""{'=' * 50}
-CALCULATE FROM OPTICS
+KNOWN OPTICS - Full CoC Formula
 {'=' * 50}
 
-Optical parameters used:
+Your exact optical parameters:
   f = {o.focal_length_mm} mm
   N = f/{o.f_number}
   D = {o.focus_distance_mm} mm
   pixel = {o.pixel_size_mm} mm
 
 RESULTS:
-  ρ = {r.rho:.4f} (dimensionless correction factor)
+  ρ = {r.rho:.4f} (should be ≈1.0 if params are accurate)
   R² = {r.r_squared:.4f}
   Points used: {r.num_points}
 
@@ -1847,24 +1847,24 @@ FOR TRAINING GUI:
         self._set_results_text(text)
 
     def _display_results_hybrid(self):
-        """Display Hybrid results."""
+        """Display Estimated Optics results."""
         h = self.calibration_hybrid
         a = h.direct_result
         b = h.formula_result
         o = b.optical_params
 
         text = f"""{'=' * 50}
-CALIBRATION RESULTS
+ESTIMATED OPTICS - Best of Both
 {'=' * 50}
 
-FROM DATA FIT:
+Fitted from data:
   ρ = {a.rho_px_per_mm:.4f} px/mm
   σ₀ = {a.sigma_0:.2f} px (blur at focus)
   R² = {a.r_squared:.4f}
 
-FOR OPTICS MODEL:
+Converted for Training GUI:
   Reference defocus: {h.conversion_reference_d} mm
-  ρ = {b.rho:.4f}
+  ρ = {b.rho:.4f} (compensates for estimation errors)
 
 {'=' * 50}
 FOR TRAINING GUI - COPY THESE VALUES:
@@ -1875,7 +1875,7 @@ FOR TRAINING GUI - COPY THESE VALUES:
   pixel_size_mm: {o.pixel_size_mm}
   rho: {b.rho:.4f}
 
-The synthetic blur will now match your real camera!
+The ρ value compensates for any errors in your estimates!
 """
         self._set_results_text(text)
 
