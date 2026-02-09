@@ -2,10 +2,11 @@
 Calibration Core Module
 
 This module handles the core calibration logic for determining rho (ρ).
-Supports three approaches:
-- Approach A: Direct empirical (σ = ρ × |d|)
-- Approach B: Optical formula + ρ (σ = ρ × CoC)
-- Hybrid: Approach A calibration converted to Approach B format
+Supports two user-facing approaches:
+- Estimated Optics (Hybrid): Fits linear model from data, converts to dimensionless ρ
+- Known Optics (Approach B): Uses optical formula directly (σ = ρ × CoC)
+
+Internal functions (calibrate_approach_a) are used by the Hybrid approach.
 """
 
 import numpy as np
@@ -29,12 +30,69 @@ class OpticalParams:
     focus_distance_mm: float = 300.0
     pixel_size_mm: float = 0.01
 
+    @property
+    def aperture_diameter_mm(self) -> float:
+        """Calculate aperture diameter from focal length and f-number."""
+        return self.focal_length_mm / self.f_number
+
+    @property
+    def imaging_distance_mm(self) -> float:
+        """
+        Calculate imaging distance using thin lens equation.
+
+        From: 1/f = 1/D + 1/u0
+        Therefore: u0 = f × D / (D - f)
+
+        Where:
+            D = focus_distance (object distance when in focus)
+            u0 = imaging_distance (image distance)
+            f = focal_length
+        """
+        f = self.focal_length_mm
+        D = self.focus_distance_mm
+
+        if D <= f:
+            # Object inside focal length - invalid for real imaging
+            return D  # Fallback
+
+        return f * D / (D - f)
+
+    def to_training_format(self, rho: float = 1.0) -> Dict:
+        """
+        Convert to training module's expected format.
+
+        Args:
+            rho: The calibrated rho value (dimensionless)
+
+        Returns:
+            Dict compatible with training optical_config.yaml
+        """
+        return {
+            'optics': {
+                'focal_length_mm': self.focal_length_mm,
+                'aperture_diameter_mm': self.aperture_diameter_mm,
+                'focus_distance_mm': self.focus_distance_mm,
+                'imaging_distance_mm': self.imaging_distance_mm,
+                'pixel_size_mm': self.pixel_size_mm
+            },
+            'blur': {
+                'rho': rho
+            }
+        }
+
     def calculate_coc(self, defocus_mm: float) -> float:
         """
         Calculate theoretical Circle of Confusion in pixels.
 
-        CoC_mm = |f² × d| / (N × D × (D + d))
-        CoC_px = CoC_mm / pixel_size
+        Uses Wang et al. formula (Physics of Fluids, 2022):
+            CoC = D_lens × u₀ × |1/F - 1/u₀ - 1/(d + d₀)|
+
+        Where:
+            D_lens = aperture diameter (mm)
+            u₀ = imaging distance (mm)
+            F = focal length (mm)
+            d₀ = focus distance (mm)
+            d = defocus distance (mm)
 
         Args:
             defocus_mm: Distance from focal plane (mm)
@@ -42,15 +100,21 @@ class OpticalParams:
         Returns:
             CoC in pixels
         """
-        f = self.focal_length_mm
-        N = self.f_number
-        D = self.focus_distance_mm
-        d = D + defocus_mm
+        F = self.focal_length_mm
+        d0 = self.focus_distance_mm
+        u0 = self.imaging_distance_mm
+        D_lens = self.aperture_diameter_mm
 
-        if d <= 0:
+        # Object distance
+        object_dist = defocus_mm + d0
+
+        if object_dist <= 0:
             return float('inf')
 
-        coc_mm = abs((f * f * defocus_mm) / (N * D * d))
+        # Wang et al. formula
+        term1 = 1.0 / F - 1.0 / u0
+        term2 = 1.0 / object_dist
+        coc_mm = D_lens * u0 * abs(term1 - term2)
         coc_px = coc_mm / self.pixel_size_mm
 
         return coc_px
@@ -414,7 +478,10 @@ def export_calibration_yaml(
     result_hybrid: CalibrationResultHybrid,
     camera: str = "unknown",
     aperture_setting: str = "unknown",
-    focal_plane_offset_mm: float = 0.0
+    focal_plane_offset_mm: float = 0.0,
+    defocus_range_mm: Optional[Tuple[float, float]] = None,
+    reference_resolution: Optional[int] = None,
+    calibration_mode: str = "optical"
 ) -> Dict:
     """
     Export calibration results to YAML-compatible dict.
@@ -424,6 +491,9 @@ def export_calibration_yaml(
         camera: Camera identifier
         aperture_setting: Aperture setting description
         focal_plane_offset_mm: Offset from reference camera
+        defocus_range_mm: Optional (min, max) defocus range from z-stack
+        reference_resolution: Image size (px) where sigma was measured (for scaling)
+        calibration_mode: Calibration mode (optical/direct)
 
     Returns:
         Dictionary ready for YAML export
@@ -431,10 +501,11 @@ def export_calibration_yaml(
     a = result_hybrid.direct_result
     b = result_hybrid.formula_result
 
-    return {
+    result = {
         'camera': camera,
         'aperture_setting': aperture_setting,
         'approach': 'hybrid',
+        'calibration_mode': calibration_mode,
 
         'direct': {
             'rho_px_per_mm': float(a.rho_px_per_mm),
@@ -453,8 +524,39 @@ def export_calibration_yaml(
 
         'focal_plane_offset_mm': focal_plane_offset_mm,
 
+        # Reference resolution where sigma was measured (for cross-resolution scaling)
+        'reference_resolution': reference_resolution,
+
         'conversion': {
             'reference_defocus_mm': result_hybrid.conversion_reference_d,
             'method': 'rho_formula = (rho_direct * d_ref) / CoC(d_ref)'
+        },
+
+        # Training-compatible format (can be copied directly to optical_config.yaml)
+        'training_config': {
+            'optics': {
+                'focal_length_mm': b.optical_params.focal_length_mm,
+                'aperture_diameter_mm': b.optical_params.aperture_diameter_mm,
+                'focus_distance_mm': b.optical_params.focus_distance_mm,
+                'imaging_distance_mm': b.optical_params.imaging_distance_mm,
+                'pixel_size_mm': b.optical_params.pixel_size_mm
+            },
+            'blur': {
+                'rho': float(b.rho)
+            },
+            # Calibration camera info (for cross-camera/resolution scaling)
+            'calibration': {
+                'pixel_size_mm': b.optical_params.pixel_size_mm,
+                'reference_resolution': reference_resolution
+            }
         }
     }
+
+    # Add defocus range if provided
+    if defocus_range_mm is not None:
+        result['defocus_range_mm'] = [float(defocus_range_mm[0]), float(defocus_range_mm[1])]
+        result['training_config']['data'] = {
+            'defocus_range_mm': [float(defocus_range_mm[0]), float(defocus_range_mm[1])]
+        }
+
+    return result

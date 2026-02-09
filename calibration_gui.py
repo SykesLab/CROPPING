@@ -2,13 +2,10 @@
 Calibration GUI for Rho (ρ) Determination
 
 A GUI application for calibrating the blur-to-depth conversion constant ρ.
-Supports three modes (see LABWORKPIPELINELINK.md for full details):
+Supports two modes:
 
 - Estimated Optics (recommended): Enter rough guesses for optical params,
   fit ρ from data. The ρ value compensates for estimation errors.
-
-- Unknown Optics: No optical params needed. Simple linear model σ = ρ × |z|.
-  Outputs ρ in px/mm. Use when you know nothing about your camera.
 
 - Known Optics: Enter exact camera specs. Fits small correction ρ ≈ 1.0.
   Use when you have documented/measured optical parameters.
@@ -82,6 +79,7 @@ import tkinter as tk
 from tkinter import ttk, filedialog, messagebox, scrolledtext
 import threading
 import queue
+import webbrowser
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
@@ -95,8 +93,8 @@ from blur_measurement import (
     measure_blur_auto, measure_blur_batch, detect_sphere, get_sphere_mask, BlurMeasurement
 )
 from calibration_core import (
-    OpticalParams, CalibrationResultA, CalibrationResultB, CalibrationResultHybrid,
-    calibrate_approach_a, calibrate_approach_b, calibrate_hybrid,
+    OpticalParams, CalibrationResultB, CalibrationResultHybrid,
+    calibrate_approach_b, calibrate_hybrid,
     find_focal_plane, validate_calibration, export_calibration_yaml
 )
 from cine_loader import CineFolderLoader, check_pyphantom, PYPHANTOM_AVAILABLE
@@ -152,7 +150,6 @@ class CalibrationGUI:
         self.blur_measurements: List[BlurMeasurement] = []
         self.sigma_values: List[float] = []
 
-        self.calibration_a: Optional[CalibrationResultA] = None
         self.calibration_b: Optional[CalibrationResultB] = None
         self.calibration_hybrid: Optional[CalibrationResultHybrid] = None
 
@@ -523,13 +520,46 @@ class CalibrationGUI:
         calib_header = ttk.Label(calib_col, text="Step 2: Fit ρ", font=('TkDefaultFont', 10, 'bold'))
         calib_header.pack(anchor='w', pady=(0, 5))
 
+        # Calibration Mode selection (NEW - before approach)
+        cal_mode_frame = ttk.LabelFrame(calib_col, text="Calibration Mode", padding=5)
+        cal_mode_frame.pack(fill='x', pady=2)
+
+        self.calibration_mode_var = tk.StringVar(value="optical")
+
+        mode_row = ttk.Frame(cal_mode_frame)
+        mode_row.pack(fill='x', pady=2)
+
+        ttk.Radiobutton(
+            mode_row,
+            text="Optical Formula",
+            variable=self.calibration_mode_var,
+            value="optical",
+            command=self._on_calibration_mode_change
+        ).pack(side='left', padx=10)
+
+        ttk.Radiobutton(
+            mode_row,
+            text="Direct Calibration",
+            variable=self.calibration_mode_var,
+            value="direct",
+            command=self._on_calibration_mode_change
+        ).pack(side='left', padx=10)
+
+        # Mode description
+        cal_mode_desc = ttk.Label(
+            cal_mode_frame,
+            text="Select mode to show relevant calibration parameters.",
+            font=('', 8),
+            foreground='gray'
+        )
+        cal_mode_desc.pack(anchor='w', pady=(5, 0))
+
         # Approach selection
         approach_frame = ttk.LabelFrame(calib_col, text="Approach", padding=5)
         approach_frame.pack(fill='x', pady=2)
 
         self.approach_var = tk.StringVar(value="hybrid")
         ttk.Radiobutton(approach_frame, text="Estimated Optics (recommended)", variable=self.approach_var, value="hybrid", command=self._on_approach_change).pack(anchor='w')
-        ttk.Radiobutton(approach_frame, text="Unknown Optics", variable=self.approach_var, value="A", command=self._on_approach_change).pack(anchor='w')
         ttk.Radiobutton(approach_frame, text="Known Optics", variable=self.approach_var, value="B", command=self._on_approach_change).pack(anchor='w')
 
         # Optical parameters
@@ -547,14 +577,17 @@ class CalibrationGUI:
             var = tk.StringVar(value=default)
             self.optical_vars[key] = var
             ttk.Entry(row, textvariable=var, width=10).pack(side='left')
+            # Add [?] info button for pixel_size to help lookup camera datasheet
+            if key == 'pixel_size':
+                ttk.Button(row, text="?", width=2, command=self._lookup_pixel_size).pack(side='left', padx=2)
 
-        # Reference defocus
-        ref_row = ttk.Frame(self.optical_frame)
-        ref_row.pack(fill='x', pady=1)
-        ttk.Label(ref_row, text="Ref d:", width=8).pack(side='left')
+        # Reference defocus (only for Estimated Optics)
+        self.ref_row = ttk.Frame(self.optical_frame)
+        self.ref_row.pack(fill='x', pady=1)
+        ttk.Label(self.ref_row, text="Ref d:", width=8).pack(side='left')
         self.ref_defocus_var = tk.StringVar(value="5.0")
-        ttk.Entry(ref_row, textvariable=self.ref_defocus_var, width=10).pack(side='left')
-        ttk.Label(ref_row, text="mm", font=('', 7)).pack(side='left')
+        ttk.Entry(self.ref_row, textvariable=self.ref_defocus_var, width=10).pack(side='left')
+        ttk.Label(self.ref_row, text="mm", font=('', 7)).pack(side='left')
 
         # Calibrate button
         self.calibrate_btn = ttk.Button(calib_col, text="▶ Calibrate ρ", command=self._run_calibration)
@@ -1690,7 +1723,14 @@ The synthetic blur will match your camera!"""
             summary += f"\nTotal images: {len(self.sigma_values)}"
             summary += f"\nValid measurements: {len(valid_sigmas)}"
             summary += f"\nσ range: {min(valid_sigmas):.2f} - {max(valid_sigmas):.2f} px"
-            summary += f"\nσ at z=0: {valid_sigmas[len(valid_sigmas) // 2]:.2f} px (approx)"
+
+            # Find σ at z closest to 0
+            if self.zstack_positions and len(self.zstack_positions) == len(self.sigma_values):
+                idx_closest = np.argmin(np.abs(np.array(self.zstack_positions)))
+                sigma_at_focus = self.sigma_values[idx_closest]
+                z_at_focus = self.zstack_positions[idx_closest]
+                if not np.isnan(sigma_at_focus):
+                    summary += f"\nσ at z={z_at_focus:.2f}mm: {sigma_at_focus:.2f} px"
 
             self.measure_summary_text.configure(state='normal')
             self.measure_summary_text.delete('1.0', 'end')
@@ -1729,13 +1769,32 @@ The synthetic blur will match your camera!"""
         """Handle approach selection change."""
         approach = self.approach_var.get()
 
-        # Enable/disable optical params based on approach
-        state = 'normal' if approach in ['B', 'hybrid'] else 'disabled'
-        for child in self.optical_frame.winfo_children():
-            if isinstance(child, ttk.Frame):
-                for widget in child.winfo_children():
-                    if isinstance(widget, ttk.Entry):
-                        widget.configure(state=state)
+        # Show/hide Ref d field - only needed for Estimated Optics (hybrid)
+        if approach == 'hybrid':
+            self.ref_row.pack(fill='x', pady=1)
+        else:
+            self.ref_row.pack_forget()
+
+    def _on_calibration_mode_change(self):
+        """Handle calibration mode change between optical and direct."""
+        mode = self.calibration_mode_var.get()
+
+        if mode == "optical":
+            # Show optical calibration parameters (if they exist in frames)
+            # Adjust based on actual GUI structure
+            if hasattr(self, 'optical_cal_params_frame'):
+                self.optical_cal_params_frame.pack(fill='x', pady=5)
+            if hasattr(self, 'direct_cal_params_frame'):
+                self.direct_cal_params_frame.pack_forget()
+            print("Calibration Mode: Optical Formula")
+
+        else:  # direct mode
+            # Show direct calibration parameters
+            if hasattr(self, 'optical_cal_params_frame'):
+                self.optical_cal_params_frame.pack_forget()
+            if hasattr(self, 'direct_cal_params_frame'):
+                self.direct_cal_params_frame.pack(fill='x', pady=5)
+            print("Calibration Mode: Direct Calibration")
 
     def _run_calibration(self):
         """Run the calibration."""
@@ -1768,15 +1827,10 @@ The synthetic blur will match your camera!"""
 
         try:
             # Clear all previous calibrations first
-            self.calibration_a = None
             self.calibration_b = None
             self.calibration_hybrid = None
 
-            if approach == 'A':
-                self.calibration_a = calibrate_approach_a(filtered_positions, filtered_sigmas)
-                self._display_results_a()
-
-            elif approach == 'B':
+            if approach == 'B':
                 optical = OpticalParams(
                     focal_length_mm=float(self.optical_vars['focal_length'].get()),
                     f_number=float(self.optical_vars['f_number'].get()),
@@ -1803,29 +1857,6 @@ The synthetic blur will match your camera!"""
 
         except Exception as e:
             messagebox.showerror("Calibration Error", str(e))
-
-    def _display_results_a(self):
-        """Display Unknown Optics results."""
-        r = self.calibration_a
-        text = f"""{'=' * 50}
-UNKNOWN OPTICS - Simple Linear Model
-{'=' * 50}
-
-Fitted model: σ = ρ × |z| + σ₀
-
-RESULTS:
-  ρ = {r.rho_px_per_mm:.4f} px/mm
-  σ₀ = {r.sigma_0:.2f} px (blur at focus)
-  R² = {r.r_squared:.4f}
-  Points used: {r.num_points}
-
-DEPTH CONVERSION:
-  |depth_mm| = (σ - {r.sigma_0:.2f}) / {r.rho_px_per_mm:.4f}
-
-NOTE: This mode doesn't use optical parameters.
-For Training GUI, use "Estimated Optics" instead.
-"""
-        self._set_results_text(text)
 
     def _display_results_b(self):
         """Display Known Optics results."""
@@ -1918,11 +1949,15 @@ The ρ value compensates for any errors in your estimates!
 
     def _validate_fit(self):
         """Validate the current fit."""
-        if not self.calibration_hybrid and not self.calibration_a:
+        if not self.calibration_hybrid and not self.calibration_b:
             messagebox.showerror("Error", "Run calibration first")
             return
 
-        result = self.calibration_hybrid.direct_result if self.calibration_hybrid else self.calibration_a
+        if self.calibration_hybrid:
+            result = self.calibration_hybrid.direct_result
+        else:
+            # For Known Optics (B), create a minimal result object for validation
+            result = self.calibration_b
         is_valid, warnings = validate_calibration(result)
 
         if is_valid:
@@ -1964,11 +1999,6 @@ The ρ value compensates for any errors in your estimates!
             z_fit = np.linspace(z_valid.min(), z_valid.max(), 100)
             sigma_fit = a.rho_px_per_mm * np.abs(z_fit) + a.sigma_0
             self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Estimated: ρ = {a.rho_px_per_mm:.3f} px/mm', linewidth=2)
-        elif self.calibration_a:
-            a = self.calibration_a
-            z_fit = np.linspace(z_valid.min(), z_valid.max(), 100)
-            sigma_fit = a.rho_px_per_mm * np.abs(z_fit) + a.sigma_0
-            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Unknown: ρ = {a.rho_px_per_mm:.3f} px/mm', linewidth=2)
         elif self.calibration_b:
             b = self.calibration_b
             z_fit = np.linspace(z_valid.min(), z_valid.max(), 100)
@@ -1992,9 +2022,6 @@ The ρ value compensates for any errors in your estimates!
         if self.calibration_hybrid:
             rho = self.calibration_hybrid.direct_result.rho_px_per_mm
             return ('hybrid', self.calibration_hybrid, rho)
-        elif self.calibration_a:
-            rho = self.calibration_a.rho_px_per_mm
-            return ('A', self.calibration_a, rho)
         elif self.calibration_b:
             # For approach B, estimate rho_px_per_mm at reference defocus
             ref_d = float(self.ref_defocus_var.get())
@@ -2127,11 +2154,24 @@ The ρ value compensates for any errors in your estimates!
         if not self.calibration_hybrid:
             return
 
+        # Get defocus range from z-stack positions
+        defocus_range = None
+        if self.zstack_positions and len(self.zstack_positions) > 0:
+            defocus_range = (min(self.zstack_positions), max(self.zstack_positions))
+
+        # Get reference resolution from loaded images
+        reference_resolution = None
+        if self.zstack_stats:
+            reference_resolution = max(self.zstack_stats.image_width, self.zstack_stats.image_height)
+
         yaml_dict = export_calibration_yaml(
             self.calibration_hybrid,
             camera=self.camera_var.get(),
             aperture_setting=self.aperture_var.get(),
-            focal_plane_offset_mm=float(self.focal_offset_var.get()) if self.focal_offset_var.get() else 0.0
+            focal_plane_offset_mm=float(self.focal_offset_var.get()) if self.focal_offset_var.get() else 0.0,
+            defocus_range_mm=defocus_range,
+            reference_resolution=reference_resolution,
+            calibration_mode=self.calibration_mode_var.get()
         )
 
         yaml_str = yaml.dump(yaml_dict, default_flow_style=False, sort_keys=False)
@@ -2154,11 +2194,24 @@ The ρ value compensates for any errors in your estimates!
 
         # Export YAML
         if self.export_yaml_var.get():
+            # Get defocus range from z-stack positions
+            defocus_range = None
+            if self.zstack_positions and len(self.zstack_positions) > 0:
+                defocus_range = (min(self.zstack_positions), max(self.zstack_positions))
+
+            # Get reference resolution from loaded images
+            reference_resolution = None
+            if self.zstack_stats:
+                reference_resolution = max(self.zstack_stats.image_width, self.zstack_stats.image_height)
+
             yaml_dict = export_calibration_yaml(
                 self.calibration_hybrid,
                 camera=self.camera_var.get(),
                 aperture_setting=self.aperture_var.get(),
-                focal_plane_offset_mm=float(self.focal_offset_var.get()) if self.focal_offset_var.get() else 0.0
+                focal_plane_offset_mm=float(self.focal_offset_var.get()) if self.focal_offset_var.get() else 0.0,
+                defocus_range_mm=defocus_range,
+                reference_resolution=reference_resolution,
+                calibration_mode=self.calibration_mode_var.get()
             )
             yaml_path = output_dir / "calibration_results.yaml"
             with open(yaml_path, 'w') as f:
@@ -2194,6 +2247,37 @@ The ρ value compensates for any errors in your estimates!
             messagebox.showinfo("Copied", f"ρ = {rho:.4f} copied to clipboard\n\nPaste this in Training GUI's 'ρ (blur constant)' field")
         else:
             messagebox.showerror("Error", "Run calibration first")
+
+    def _lookup_pixel_size(self):
+        """Open browser to search for camera pixel size datasheet."""
+        # Try to get camera name from loaded .cine files
+        camera_name = None
+        if self.cine_folder_loader and self.cine_folder_loader.cine_files:
+            # Try to extract camera info from first cine file
+            try:
+                from cine_loader import CineLoader
+                first_cine = self.cine_folder_loader.cine_files[0]
+                loader = CineLoader(str(first_cine))
+                if loader.cine_obj is not None:
+                    # pyphantom may have camera info in cine_obj attributes
+                    # Try common attribute names
+                    for attr in ['camera', 'cameraModel', 'camera_model', 'CameraModel']:
+                        if hasattr(loader.cine_obj, attr):
+                            camera_name = getattr(loader.cine_obj, attr)
+                            break
+            except Exception:
+                pass
+
+        # Build search query
+        if camera_name:
+            query = f"{camera_name} datasheet pixel size"
+            search_url = f"https://www.google.com/search?q={query.replace(' ', '+')}"
+            webbrowser.open(search_url)
+        else:
+            # No camera detected - open generic search with placeholder
+            query = "[enter camera name] datasheet pixel size"
+            search_url = f"https://www.google.com/search?q={query.replace(' ', '+')}"
+            webbrowser.open(search_url)
 
     # =========================================================================
     # Message Processing
