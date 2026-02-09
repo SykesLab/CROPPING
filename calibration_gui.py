@@ -554,13 +554,8 @@ class CalibrationGUI:
         )
         cal_mode_desc.pack(anchor='w', pady=(5, 0))
 
-        # Approach selection
-        approach_frame = ttk.LabelFrame(calib_col, text="Approach", padding=5)
-        approach_frame.pack(fill='x', pady=2)
-
+        # Internal approach state (was previously a UI selector, now always "hybrid" = recommended)
         self.approach_var = tk.StringVar(value="hybrid")
-        ttk.Radiobutton(approach_frame, text="Estimated Optics (recommended)", variable=self.approach_var, value="hybrid", command=self._on_approach_change).pack(anchor='w')
-        ttk.Radiobutton(approach_frame, text="Known Optics", variable=self.approach_var, value="B", command=self._on_approach_change).pack(anchor='w')
 
         # Optical parameters
         self.optical_frame = ttk.LabelFrame(calib_col, text="Optical Params", padding=5)
@@ -1765,35 +1760,18 @@ The synthetic blur will match your camera!"""
     # =========================================================================
     # Event Handlers - Tab 3
     # =========================================================================
-    def _on_approach_change(self):
-        """Handle approach selection change."""
-        approach = self.approach_var.get()
-
-        # Show/hide Ref d field - only needed for Estimated Optics (hybrid)
-        if approach == 'hybrid':
-            self.ref_row.pack(fill='x', pady=1)
-        else:
-            self.ref_row.pack_forget()
-
     def _on_calibration_mode_change(self):
         """Handle calibration mode change between optical and direct."""
         mode = self.calibration_mode_var.get()
 
         if mode == "optical":
-            # Show optical calibration parameters (if they exist in frames)
-            # Adjust based on actual GUI structure
-            if hasattr(self, 'optical_cal_params_frame'):
-                self.optical_cal_params_frame.pack(fill='x', pady=5)
-            if hasattr(self, 'direct_cal_params_frame'):
-                self.direct_cal_params_frame.pack_forget()
+            # Show ref_row (needed for optical mode with hybrid approach)
+            self.ref_row.pack(fill='x', pady=1)
             print("Calibration Mode: Optical Formula")
 
         else:  # direct mode
-            # Show direct calibration parameters
-            if hasattr(self, 'optical_cal_params_frame'):
-                self.optical_cal_params_frame.pack_forget()
-            if hasattr(self, 'direct_cal_params_frame'):
-                self.direct_cal_params_frame.pack(fill='x', pady=5)
+            # Hide ref_row (not needed for direct mode)
+            self.ref_row.pack_forget()
             print("Calibration Mode: Direct Calibration")
 
     def _run_calibration(self):
