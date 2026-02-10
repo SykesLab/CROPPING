@@ -99,6 +99,7 @@ from calibration_core import (
     export_calibration_yaml_direct
 )
 from cine_loader import CineFolderLoader, check_pyphantom, PYPHANTOM_AVAILABLE
+from sphere_processing import process_sphere_image
 
 # Try to import matplotlib for plotting
 try:
@@ -382,10 +383,24 @@ class CalibrationGUI:
         ttk.Entry(crop_row1, textvariable=self.crop_padding_var, width=8).pack(side='left')
         ttk.Label(crop_row1, text="around sphere", font=('', 8), foreground='gray').pack(side='left', padx=5)
 
+        crop_row1b = ttk.Frame(crop_frame)
+        crop_row1b.pack(fill='x', pady=2)
+        ttk.Label(crop_row1b, text="Output size (px):", width=12).pack(side='left')
+        self.crop_output_size_var = tk.StringVar(value="128")
+        ttk.Entry(crop_row1b, textvariable=self.crop_output_size_var, width=8).pack(side='left')
+        ttk.Label(crop_row1b, text="match training image size", font=('', 8), foreground='gray').pack(side='left', padx=5)
+
+        crop_row1c = ttk.Frame(crop_frame)
+        crop_row1c.pack(fill='x', pady=2)
+        self.upper_contour_var = tk.BooleanVar(value=True)
+        ttk.Checkbutton(crop_row1c, text="Upper contour only (avoids stage)",
+                        variable=self.upper_contour_var).pack(side='left')
+
         crop_row2 = ttk.Frame(crop_frame)
         crop_row2.pack(fill='x', pady=2)
         self.crop_btn = ttk.Button(crop_row2, text="Auto-Crop All", command=self._auto_crop_to_sphere)
         self.crop_btn.pack(side='left', padx=2)
+        ttk.Button(crop_row2, text="Process Spheres", command=self._process_spheres).pack(side='left', padx=2)
         ttk.Button(crop_row2, text="Save Cropped", command=self._save_cropped_images).pack(side='left', padx=2)
         self.crop_status_var = tk.StringVar(value="")
         ttk.Label(crop_row2, textvariable=self.crop_status_var, font=('', 8), foreground='blue').pack(side='left', padx=5)
@@ -1509,26 +1524,99 @@ The synthetic blur will match your camera!"""
             self.load_progress_var.set((i + 1) / len(self.zstack_images) * 100)
             self.root.update_idletasks()
 
-        # Replace images with cropped versions
-        self.zstack_images = cropped_images
+        # Resize to output size if specified
+        try:
+            output_size = int(self.crop_output_size_var.get())
+        except ValueError:
+            output_size = 0
+
+        if output_size > 0 and (output_size != crop_w or output_size != crop_h):
+            resized_images = []
+            for img in cropped_images:
+                resized = cv2.resize(img, (output_size, output_size), interpolation=cv2.INTER_AREA)
+                resized_images.append(resized)
+            self.zstack_images = resized_images
+            final_size = output_size
+        else:
+            self.zstack_images = cropped_images
+            final_size = crop_w
 
         # Update stats
         if self.zstack_stats:
-            self.zstack_stats.image_width = crop_w
-            self.zstack_stats.image_height = crop_h
+            self.zstack_stats.image_width = final_size
+            self.zstack_stats.image_height = final_size
 
         # Update display
         self._update_stats_text(
             f"Images: {len(self.zstack_images)}\n"
-            f"Size: {crop_w} x {crop_h} (cropped)\n"
+            f"Size: {final_size} x {final_size} (cropped)\n"
             f"Z range: {self.zstack_stats.z_min:.2f} to {self.zstack_stats.z_max:.2f} mm"
         )
 
         self._update_preview(int(self.preview_slider.get()))
-        self.crop_status_var.set(f"Cropped to {crop_w}x{crop_h}")
+        self.crop_status_var.set(f"Cropped to {final_size}x{final_size}")
         self.load_progress_var.set(0)
 
-        messagebox.showinfo("Auto-Crop", f"Cropped {len(self.zstack_images)} images to {crop_w}x{crop_h} pixels\nCentered on sphere at ({cx}, {cy})")
+        messagebox.showinfo("Auto-Crop", f"Cropped {len(self.zstack_images)} images to {final_size}x{final_size} pixels\nCentered on sphere at ({cx}, {cy})")
+
+    def _process_spheres(self):
+        """Process loaded images: detect sphere, mirror, blacken interior, crop, resize."""
+        if not self.zstack_images:
+            messagebox.showerror("Error", "No images loaded")
+            return
+
+        try:
+            output_size = int(self.crop_output_size_var.get())
+        except ValueError:
+            messagebox.showerror("Error", "Invalid output size")
+            return
+
+        upper_only = self.upper_contour_var.get()
+
+        self.crop_status_var.set("Processing spheres...")
+        self.root.update_idletasks()
+
+        processed_images = []
+        failed = []
+
+        for i, img in enumerate(self.zstack_images):
+            processed, sphere_info = process_sphere_image(
+                img, upper_only=upper_only, output_size=output_size
+            )
+            if processed is not None:
+                processed_images.append(processed)
+            else:
+                failed.append(i)
+                # Keep original if detection fails
+                processed_images.append(img)
+
+            self.load_progress_var.set((i + 1) / len(self.zstack_images) * 100)
+            self.root.update_idletasks()
+
+        self.zstack_images = processed_images
+
+        # Update stats
+        if self.zstack_stats:
+            self.zstack_stats.image_width = output_size
+            self.zstack_stats.image_height = output_size
+
+        # Update display
+        self._update_stats_text(
+            f"Images: {len(self.zstack_images)}\n"
+            f"Size: {output_size} x {output_size} (processed)\n"
+            f"Z range: {self.zstack_stats.z_min:.2f} to {self.zstack_stats.z_max:.2f} mm"
+        )
+
+        self._update_preview(int(self.preview_slider.get()))
+        self.load_progress_var.set(0)
+
+        fail_msg = f"\n{len(failed)} frames failed sphere detection (kept original)." if failed else ""
+        self.crop_status_var.set(f"Processed to {output_size}x{output_size}")
+        messagebox.showinfo(
+            "Process Spheres",
+            f"Processed {len(self.zstack_images)} images to {output_size}x{output_size} pixels"
+            f"\n(mirror + blacken + crop + resize){fail_msg}"
+        )
 
     def _save_cropped_images(self):
         """Save cropped images to 'Cropped Z-Stack' subfolder next to script."""
