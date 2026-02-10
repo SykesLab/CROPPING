@@ -93,9 +93,10 @@ from blur_measurement import (
     measure_blur_auto, measure_blur_batch, detect_sphere, get_sphere_mask, BlurMeasurement
 )
 from calibration_core import (
-    OpticalParams, CalibrationResultB, CalibrationResultHybrid,
-    calibrate_approach_b, calibrate_hybrid,
-    find_focal_plane, validate_calibration, export_calibration_yaml
+    OpticalParams, CalibrationResultA, CalibrationResultB, CalibrationResultHybrid,
+    calibrate_approach_a, calibrate_approach_b, calibrate_hybrid,
+    find_focal_plane, validate_calibration, export_calibration_yaml,
+    export_calibration_yaml_direct
 )
 from cine_loader import CineFolderLoader, check_pyphantom, PYPHANTOM_AVAILABLE
 
@@ -152,6 +153,7 @@ class CalibrationGUI:
 
         self.calibration_b: Optional[CalibrationResultB] = None
         self.calibration_hybrid: Optional[CalibrationResultHybrid] = None
+        self.calibration_direct: Optional[CalibrationResultA] = None
 
         # Multi-camera storage
         self.camera_calibrations: Dict[str, CalibrationResultHybrid] = {}
@@ -1805,12 +1807,20 @@ The synthetic blur will match your camera!"""
         self.filtered_positions = filtered_positions
         self.filtered_sigmas = filtered_sigmas
 
+        mode = self.calibration_mode_var.get()
+
         try:
             # Clear all previous calibrations first
             self.calibration_b = None
             self.calibration_hybrid = None
+            self.calibration_direct = None
 
-            if approach == 'B':
+            if mode == 'direct':
+                # Direct mode: just fit σ = ρ × |z| + σ₀, no optical params needed
+                self.calibration_direct = calibrate_approach_a(filtered_positions, filtered_sigmas)
+                self._display_results_direct()
+
+            elif approach == 'B':
                 optical = OpticalParams(
                     focal_length_mm=float(self.optical_vars['focal_length'].get()),
                     f_number=float(self.optical_vars['f_number'].get()),
@@ -1820,7 +1830,7 @@ The synthetic blur will match your camera!"""
                 self.calibration_b = calibrate_approach_b(filtered_positions, filtered_sigmas, optical)
                 self._display_results_b()
 
-            else:  # hybrid
+            else:  # hybrid (optical mode)
                 optical = OpticalParams(
                     focal_length_mm=float(self.optical_vars['focal_length'].get()),
                     f_number=float(self.optical_vars['f_number'].get()),
@@ -1896,6 +1906,29 @@ The ρ value compensates for any errors in your estimates!
 """
         self._set_results_text(text)
 
+    def _display_results_direct(self):
+        """Display Direct Calibration results."""
+        a = self.calibration_direct
+        text = f"""{'=' * 50}
+DIRECT CALIBRATION - Linear Fit
+{'=' * 50}
+
+Fitted from data (no optical params needed):
+  ρ_direct = {a.rho_px_per_mm:.4f} px/mm
+  σ₀ = {a.sigma_0:.2f} px (blur at focus)
+  R² = {a.r_squared:.4f}
+  Points used: {a.num_points}
+
+Formula: σ = ρ_direct × |defocus| + σ₀
+
+{'=' * 50}
+FOR TRAINING GUI:
+{'=' * 50}
+  Export this calibration file, then load it in
+  Training GUI with "Direct Calibration" mode.
+"""
+        self._set_results_text(text)
+
     def _set_results_text(self, text):
         """Set results text widget content."""
         self.results_text.configure(state='normal')
@@ -1905,35 +1938,42 @@ The ρ value compensates for any errors in your estimates!
 
     def _update_fit_quality(self):
         """Update fit quality display."""
-        if self.calibration_hybrid:
+        if self.calibration_direct:
+            a = self.calibration_direct
+        elif self.calibration_hybrid:
             a = self.calibration_hybrid.direct_result
-            is_valid, warnings = validate_calibration(a)
+        else:
+            return
 
-            quality = f"Fit Quality Assessment\n" + "=" * 30
-            quality += f"\n\nR² = {a.r_squared:.4f}"
-            quality += " ✓ Good" if a.r_squared > 0.95 else " ⚠️ Fair" if a.r_squared > 0.9 else " ❌ Poor"
-            quality += f"\nσ₀ = {a.sigma_0:.2f} px"
-            quality += " ✓" if a.sigma_0 < 3 else " ⚠️ High"
+        is_valid, warnings = validate_calibration(a)
 
-            if warnings:
-                quality += "\n\nWarnings:"
-                for w in warnings:
-                    quality += f"\n  • {w}"
-            else:
-                quality += "\n\n✓ Calibration looks good!"
+        quality = f"Fit Quality Assessment\n" + "=" * 30
+        quality += f"\n\nR² = {a.r_squared:.4f}"
+        quality += " ✓ Good" if a.r_squared > 0.95 else " ⚠️ Fair" if a.r_squared > 0.9 else " ❌ Poor"
+        quality += f"\nσ₀ = {a.sigma_0:.2f} px"
+        quality += " ✓" if a.sigma_0 < 3 else " ⚠️ High"
 
-            self.fit_quality_text.configure(state='normal')
-            self.fit_quality_text.delete('1.0', 'end')
-            self.fit_quality_text.insert('1.0', quality)
-            self.fit_quality_text.configure(state='disabled')
+        if warnings:
+            quality += "\n\nWarnings:"
+            for w in warnings:
+                quality += f"\n  • {w}"
+        else:
+            quality += "\n\n✓ Calibration looks good!"
+
+        self.fit_quality_text.configure(state='normal')
+        self.fit_quality_text.delete('1.0', 'end')
+        self.fit_quality_text.insert('1.0', quality)
+        self.fit_quality_text.configure(state='disabled')
 
     def _validate_fit(self):
         """Validate the current fit."""
-        if not self.calibration_hybrid and not self.calibration_b:
+        if not self.calibration_hybrid and not self.calibration_b and not self.calibration_direct:
             messagebox.showerror("Error", "Run calibration first")
             return
 
-        if self.calibration_hybrid:
+        if self.calibration_direct:
+            result = self.calibration_direct
+        elif self.calibration_hybrid:
             result = self.calibration_hybrid.direct_result
         else:
             # For Known Optics (B), create a minimal result object for validation
@@ -1974,7 +2014,12 @@ The ρ value compensates for any errors in your estimates!
         self.calib_ax.scatter(z_valid, sigma_valid, c='blue', label='Measured', alpha=0.7, s=40)
 
         # Plot fit based on which calibration is active
-        if self.calibration_hybrid:
+        if self.calibration_direct:
+            a = self.calibration_direct
+            z_fit = np.linspace(z_valid.min(), z_valid.max(), 100)
+            sigma_fit = a.rho_px_per_mm * np.abs(z_fit) + a.sigma_0
+            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Direct: ρ = {a.rho_px_per_mm:.3f} px/mm', linewidth=2)
+        elif self.calibration_hybrid:
             a = self.calibration_hybrid.direct_result
             z_fit = np.linspace(z_valid.min(), z_valid.max(), 100)
             sigma_fit = a.rho_px_per_mm * np.abs(z_fit) + a.sigma_0
@@ -1999,7 +2044,10 @@ The ρ value compensates for any errors in your estimates!
     # =========================================================================
     def _get_current_calibration(self):
         """Get the current active calibration and its rho in px/mm."""
-        if self.calibration_hybrid:
+        if self.calibration_direct:
+            rho = self.calibration_direct.rho_px_per_mm
+            return ('direct', self.calibration_direct, rho)
+        elif self.calibration_hybrid:
             rho = self.calibration_hybrid.direct_result.rho_px_per_mm
             return ('hybrid', self.calibration_hybrid, rho)
         elif self.calibration_b:
@@ -2131,7 +2179,7 @@ The ρ value compensates for any errors in your estimates!
 
     def _update_export_preview(self):
         """Update export preview."""
-        if not self.calibration_hybrid:
+        if not self.calibration_hybrid and not self.calibration_direct:
             return
 
         # Get defocus range from z-stack positions
@@ -2144,15 +2192,31 @@ The ρ value compensates for any errors in your estimates!
         if self.zstack_stats:
             reference_resolution = max(self.zstack_stats.image_width, self.zstack_stats.image_height)
 
-        yaml_dict = export_calibration_yaml(
-            self.calibration_hybrid,
-            camera=self.camera_var.get(),
-            aperture_setting=self.aperture_var.get(),
-            focal_plane_offset_mm=float(self.focal_offset_var.get()) if self.focal_offset_var.get() else 0.0,
-            defocus_range_mm=defocus_range,
-            reference_resolution=reference_resolution,
-            calibration_mode=self.calibration_mode_var.get()
-        )
+        if self.calibration_direct:
+            # Direct mode: export without optical params
+            pixel_size = None
+            try:
+                pixel_size = float(self.optical_vars['pixel_size'].get())
+            except (ValueError, KeyError):
+                pass
+            yaml_dict = export_calibration_yaml_direct(
+                self.calibration_direct,
+                camera=self.camera_var.get(),
+                aperture_setting=self.aperture_var.get(),
+                pixel_size_mm=pixel_size,
+                defocus_range_mm=defocus_range,
+                reference_resolution=reference_resolution,
+            )
+        else:
+            yaml_dict = export_calibration_yaml(
+                self.calibration_hybrid,
+                camera=self.camera_var.get(),
+                aperture_setting=self.aperture_var.get(),
+                focal_plane_offset_mm=float(self.focal_offset_var.get()) if self.focal_offset_var.get() else 0.0,
+                defocus_range_mm=defocus_range,
+                reference_resolution=reference_resolution,
+                calibration_mode=self.calibration_mode_var.get()
+            )
 
         yaml_str = yaml.dump(yaml_dict, default_flow_style=False, sort_keys=False)
 
@@ -2163,7 +2227,7 @@ The ρ value compensates for any errors in your estimates!
 
     def _export_calibration(self):
         """Export calibration results."""
-        if not self.calibration_hybrid:
+        if not self.calibration_hybrid and not self.calibration_direct:
             messagebox.showerror("Error", "Run calibration first")
             return
 
@@ -2184,15 +2248,30 @@ The ρ value compensates for any errors in your estimates!
             if self.zstack_stats:
                 reference_resolution = max(self.zstack_stats.image_width, self.zstack_stats.image_height)
 
-            yaml_dict = export_calibration_yaml(
-                self.calibration_hybrid,
-                camera=self.camera_var.get(),
-                aperture_setting=self.aperture_var.get(),
-                focal_plane_offset_mm=float(self.focal_offset_var.get()) if self.focal_offset_var.get() else 0.0,
-                defocus_range_mm=defocus_range,
-                reference_resolution=reference_resolution,
-                calibration_mode=self.calibration_mode_var.get()
-            )
+            if self.calibration_direct:
+                pixel_size = None
+                try:
+                    pixel_size = float(self.optical_vars['pixel_size'].get())
+                except (ValueError, KeyError):
+                    pass
+                yaml_dict = export_calibration_yaml_direct(
+                    self.calibration_direct,
+                    camera=self.camera_var.get(),
+                    aperture_setting=self.aperture_var.get(),
+                    pixel_size_mm=pixel_size,
+                    defocus_range_mm=defocus_range,
+                    reference_resolution=reference_resolution,
+                )
+            else:
+                yaml_dict = export_calibration_yaml(
+                    self.calibration_hybrid,
+                    camera=self.camera_var.get(),
+                    aperture_setting=self.aperture_var.get(),
+                    focal_plane_offset_mm=float(self.focal_offset_var.get()) if self.focal_offset_var.get() else 0.0,
+                    defocus_range_mm=defocus_range,
+                    reference_resolution=reference_resolution,
+                    calibration_mode=self.calibration_mode_var.get()
+                )
             yaml_path = output_dir / "calibration_results.yaml"
             with open(yaml_path, 'w') as f:
                 yaml.dump(yaml_dict, f, default_flow_style=False, sort_keys=False)
@@ -2220,7 +2299,12 @@ The ρ value compensates for any errors in your estimates!
 
     def _copy_rho(self):
         """Copy ρ value to clipboard."""
-        if self.calibration_hybrid:
+        if self.calibration_direct:
+            rho = self.calibration_direct.rho_px_per_mm
+            self.root.clipboard_clear()
+            self.root.clipboard_append(f"{rho:.4f}")
+            messagebox.showinfo("Copied", f"ρ_direct = {rho:.4f} px/mm copied to clipboard")
+        elif self.calibration_hybrid:
             rho = self.calibration_hybrid.formula_result.rho
             self.root.clipboard_clear()
             self.root.clipboard_append(f"{rho:.4f}")

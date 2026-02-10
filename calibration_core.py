@@ -560,3 +560,51 @@ def export_calibration_yaml(
         }
 
     return result
+
+
+def export_calibration_yaml_direct(
+    result: CalibrationResultA,
+    camera: str = "unknown",
+    aperture_setting: str = "unknown",
+    pixel_size_mm: Optional[float] = None,
+    defocus_range_mm: Optional[Tuple[float, float]] = None,
+    reference_resolution: Optional[int] = None,
+) -> Dict:
+    """
+    Export direct-only calibration results to YAML-compatible dict.
+
+    No optical parameters needed — just the linear fit results.
+
+    Args:
+        result: Direct calibration result (Approach A)
+        camera: Camera identifier
+        aperture_setting: Aperture setting description
+        pixel_size_mm: Pixel size in mm (for cross-resolution scaling)
+        defocus_range_mm: Optional (min, max) defocus range from z-stack
+        reference_resolution: Image size (px) where sigma was measured
+
+    Returns:
+        Dictionary ready for YAML export
+    """
+    output = {
+        'camera': camera,
+        'aperture_setting': aperture_setting,
+        'calibration_mode': 'direct',
+
+        'direct': {
+            'rho_px_per_mm': float(result.rho_px_per_mm),
+            'sigma_0': float(result.sigma_0),
+            'r_squared': float(result.r_squared),
+            'num_points': result.num_points
+        },
+
+        'reference_resolution': reference_resolution,
+    }
+
+    if pixel_size_mm is not None:
+        output['pixel_size_mm'] = float(pixel_size_mm)
+
+    if defocus_range_mm is not None:
+        output['defocus_range_mm'] = [float(defocus_range_mm[0]), float(defocus_range_mm[1])]
+
+    return output
