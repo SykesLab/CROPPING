@@ -358,12 +358,7 @@ class CalibrationGUI:
         camera_combo.pack(side='left')
         ttk.Label(meta_row1, text="(g=green, m=mono, v=violet)", font=('', 8), foreground='gray').pack(side='left', padx=5)
 
-        meta_row2 = ttk.Frame(meta_frame)
-        meta_row2.pack(fill='x', pady=2)
-        ttk.Label(meta_row2, text="Aperture:", width=12).pack(side='left')
-        self.aperture_var = tk.StringVar(value="position_1")
-        ttk.Entry(meta_row2, textvariable=self.aperture_var, width=15).pack(side='left')
-        ttk.Label(meta_row2, text="(f/4, f/5.6, or custom label)", font=('', 8), foreground='gray').pack(side='left', padx=5)
+        self.aperture_var = tk.StringVar(value="unknown")
 
         # Load button
         load_btn_frame = ttk.Frame(left_panel)
@@ -372,16 +367,10 @@ class CalibrationGUI:
         self.load_btn = ttk.Button(load_btn_frame, text="Load Z-Stack Images", command=self._load_zstack)
         self.load_btn.pack(side='left', padx=5)
 
-        # Auto-crop section
-        crop_frame = ttk.LabelFrame(left_panel, text="Auto-Crop to Sphere", padding=5)
+        # Sphere processing section
+        crop_frame = ttk.LabelFrame(left_panel, text="Sphere Processing", padding=5)
         crop_frame.pack(fill='x', pady=5)
-
-        crop_row1 = ttk.Frame(crop_frame)
-        crop_row1.pack(fill='x', pady=2)
-        ttk.Label(crop_row1, text="Padding (px):", width=12).pack(side='left')
-        self.crop_padding_var = tk.StringVar(value="50")
-        ttk.Entry(crop_row1, textvariable=self.crop_padding_var, width=8).pack(side='left')
-        ttk.Label(crop_row1, text="around sphere", font=('', 8), foreground='gray').pack(side='left', padx=5)
+        self.crop_padding_var = tk.StringVar(value="50")  # kept for internal use
 
         crop_row1b = ttk.Frame(crop_frame)
         crop_row1b.pack(fill='x', pady=2)
@@ -398,10 +387,8 @@ class CalibrationGUI:
 
         crop_row2 = ttk.Frame(crop_frame)
         crop_row2.pack(fill='x', pady=2)
-        self.crop_btn = ttk.Button(crop_row2, text="Auto-Crop All", command=self._auto_crop_to_sphere)
-        self.crop_btn.pack(side='left', padx=2)
         ttk.Button(crop_row2, text="Process Spheres", command=self._process_spheres).pack(side='left', padx=2)
-        ttk.Button(crop_row2, text="Save Cropped", command=self._save_cropped_images).pack(side='left', padx=2)
+        ttk.Button(crop_row2, text="Save Processed", command=self._save_cropped_images).pack(side='left', padx=2)
         self.crop_status_var = tk.StringVar(value="")
         ttk.Label(crop_row2, textvariable=self.crop_status_var, font=('', 8), foreground='blue').pack(side='left', padx=5)
 
