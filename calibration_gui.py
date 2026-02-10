@@ -1765,13 +1765,15 @@ The synthetic blur will match your camera!"""
         mode = self.calibration_mode_var.get()
 
         if mode == "optical":
-            # Show ref_row (needed for optical mode with hybrid approach)
+            # Show optical params and ref_row (needed for optical mode)
+            # Pack before calibrate button to maintain layout order
+            self.optical_frame.pack(fill='x', pady=2, before=self.calibrate_btn)
             self.ref_row.pack(fill='x', pady=1)
             print("Calibration Mode: Optical Formula")
 
         else:  # direct mode
-            # Hide ref_row (not needed for direct mode)
-            self.ref_row.pack_forget()
+            # Hide optical params entirely (not needed for direct mode)
+            self.optical_frame.pack_forget()
             print("Calibration Mode: Direct Calibration")
 
     def _run_calibration(self):
