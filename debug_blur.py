@@ -1,5 +1,5 @@
 """
-Debug script to visualize what's happening during sigmoid blur measurement.
+Debug script to visualize what's happening during erf blur measurement.
 
 This helps diagnose why sharp images near focus are returning wrong σ values.
 """
@@ -9,7 +9,7 @@ import cv2
 import matplotlib.pyplot as plt
 from pathlib import Path
 from scipy.optimize import curve_fit
-from blur_measurement import sigmoid, detect_sphere, get_sphere_mask
+from blur_measurement import erf_edge, detect_sphere, get_sphere_mask
 
 
 def debug_blur_measurement(image_path: str, save_dir: str = None):
@@ -20,7 +20,7 @@ def debug_blur_measurement(image_path: str, save_dir: str = None):
     1. Detected sphere center and radius
     2. The radial rays being sampled
     3. Intensity profiles along each ray
-    4. Sigmoid fits and resulting sigma values
+    4. Erf fits and resulting sigma values
     """
     # Load image
     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
@@ -103,7 +103,7 @@ def debug_blur_measurement(image_path: str, save_dir: str = None):
         # Get intensity profile
         intensities = img_float[y_valid, x_valid]
 
-        # Fit sigmoid
+        # Fit erf edge profile
         try:
             I_bg_init = np.median(intensities[-10:])
             I_sphere_init = np.median(intensities[:10])
@@ -111,7 +111,7 @@ def debug_blur_measurement(image_path: str, save_dir: str = None):
             sigma_init = 2.0
 
             popt, pcov = curve_fit(
-                sigmoid, r_valid, intensities,
+                erf_edge, r_valid, intensities,
                 p0=[I_bg_init, I_sphere_init, r_edge_init, sigma_init],
                 bounds=(
                     [0, 0, radius * 0.5, 0.01],
@@ -123,7 +123,7 @@ def debug_blur_measurement(image_path: str, save_dir: str = None):
             I_bg, I_sphere, r_edge, sigma_fit = popt
 
             # Calculate R-squared
-            fitted = sigmoid(r_valid, *popt)
+            fitted = erf_edge(r_valid, *popt)
             ss_res = np.sum((intensities - fitted) ** 2)
             ss_tot = np.sum((intensities - np.mean(intensities)) ** 2)
             r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
@@ -168,20 +168,20 @@ def debug_blur_measurement(image_path: str, save_dir: str = None):
     ax4.legend(fontsize=8)
     ax4.grid(True, alpha=0.3)
 
-    # 5. Fitted sigmoids
+    # 5. Fitted erf profiles
     ax5 = axes[1, 1]
     for data in ray_data:
         if 'popt' in data:
             ax5.plot(data['r_valid'], data['intensities'], 'o', color=data['color'],
                      alpha=0.3, markersize=2)
             r_smooth = np.linspace(data['r_valid'][0], data['r_valid'][-1], 100)
-            fitted = sigmoid(r_smooth, *data['popt'])
+            fitted = erf_edge(r_smooth, *data['popt'])
             ax5.plot(r_smooth, fitted, color=data['color'], linewidth=2,
                      label=f"σ={data['sigma']:.2f}, R²={data['r_squared']:.2f}")
     ax5.axvline(x=radius, color='black', linestyle='--')
     ax5.set_xlabel('Radial distance (pixels)')
     ax5.set_ylabel('Intensity')
-    ax5.set_title('Sigmoid fits')
+    ax5.set_title('Erf fits')
     ax5.legend(fontsize=8)
     ax5.grid(True, alpha=0.3)
 
@@ -212,7 +212,7 @@ Image statistics:
   Mean: {img.mean():.1f}
 """
     else:
-        summary = "No successful sigmoid fits!"
+        summary = "No successful erf fits!"
 
     ax6.text(0.1, 0.9, summary, transform=ax6.transAxes, fontsize=10,
              verticalalignment='top', fontfamily='monospace')

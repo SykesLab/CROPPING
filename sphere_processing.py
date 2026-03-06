@@ -29,7 +29,13 @@ def find_sphere_center(
     if img.ndim != 2:
         return None
 
-    blur = cv2.GaussianBlur(img, (5, 5), 0)
+    # Canny requires uint8 — normalize if needed
+    if img.dtype != np.uint8:
+        img_u8 = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    else:
+        img_u8 = img
+
+    blur = cv2.GaussianBlur(img_u8, (5, 5), 0)
     edges = cv2.Canny(blur, 50, 150)
 
     contours, _ = cv2.findContours(edges, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
@@ -80,13 +86,17 @@ def blacken_sphere_interior(
     edge_margin_px: int = 2,
 ) -> np.ndarray:
     """
-    Black out sphere interior, stopping slightly short of the fitted edge.
+    Fill sphere interior with the sphere's own colour, stopping slightly short of the fitted edge.
+
+    Samples the median intensity from the deep interior (within 50% of radius)
+    and fills with that value — like a colour pipette — so the filled region
+    matches the sphere rather than introducing a black artefact.
 
     Args:
         img: Input image
         center_x, center_y: Sphere center coordinates
         radius: Sphere radius in pixels
-        radius_fraction: Fraction of radius to black out (default 0.98)
+        radius_fraction: Fraction of radius to fill (default 0.98)
         edge_margin_px: Additional margin in pixels from edge (default 2)
     """
     if radius <= 0:
@@ -99,7 +109,19 @@ def blacken_sphere_interior(
 
     Y, X = np.ogrid[:h, :w]
     dist_sq = (X - center_x) ** 2 + (Y - center_y) ** 2
-    img[dist_sq < (r_eff ** 2)] = 0
+
+    # Sample sphere colour from deep interior (within 50% of radius, far from edge)
+    sample_r = int(radius * 0.5)
+    if sample_r > 0:
+        interior_mask = dist_sq < (sample_r ** 2)
+        if np.any(interior_mask):
+            fill_value = float(np.median(img[interior_mask]))
+        else:
+            fill_value = 0.0
+    else:
+        fill_value = 0.0
+
+    img[dist_sq < (r_eff ** 2)] = fill_value
     return img
 
 
@@ -160,6 +182,36 @@ def crop_to_square(
     return crop[sy1:sy2, sx1:sx2]
 
 
+def _apply_sphere_pipeline(
+    img: np.ndarray,
+    cx: int,
+    cy: int,
+    radius: int,
+    output_size: int | None = None,
+) -> np.ndarray:
+    """Apply mirror → blacken → crop → normalize to uint8 → resize."""
+    processed = mirror_from_center(img.copy(), cy)
+    processed = blacken_sphere_interior(
+        processed, cx, cy, radius, radius_fraction=0.50, edge_margin_px=0
+    )
+    processed = crop_to_square(processed, cx, cy, radius, padding=1.2)
+
+    # Normalize to uint8 after processing (not before) so that the
+    # blackened interior doesn't compress edge dynamic range
+    if processed.dtype != np.uint8:
+        processed = cv2.normalize(processed, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
+    if output_size is not None and output_size > 0:
+        h, w = processed.shape[:2]
+        if h != output_size or w != output_size:
+            processed = cv2.resize(
+                processed, (output_size, output_size),
+                interpolation=cv2.INTER_AREA
+            )
+
+    return processed
+
+
 def process_sphere_image(
     img: np.ndarray,
     upper_only: bool = True,
@@ -181,17 +233,70 @@ def process_sphere_image(
         return None, None
 
     cx, cy, radius = result
+    processed = _apply_sphere_pipeline(img, cx, cy, radius, output_size)
+    return processed, (cx, cy, radius)
 
-    processed = mirror_from_center(img.copy(), cy)
-    processed = blacken_sphere_interior(processed, cx, cy, radius)
-    processed = crop_to_square(processed, cx, cy, radius, padding=1.2)
 
-    if output_size is not None and output_size > 0:
-        h, w = processed.shape[:2]
-        if h != output_size or w != output_size:
-            processed = cv2.resize(
-                processed, (output_size, output_size),
-                interpolation=cv2.INTER_AREA
-            )
+def find_consensus_sphere(
+    images: list[np.ndarray],
+    upper_only: bool = True,
+) -> tuple[int, int, int] | None:
+    """
+    Detect sphere on all frames and return the consensus (median) circle.
+
+    In a z-stack the sphere doesn't move — only focus changes. Out-of-focus
+    frames may detect noise instead of the sphere. By taking the median of
+    all detections, we get the true sphere position.
+
+    Returns:
+        (cx, cy, radius) or None if no detections at all
+    """
+    detections = []
+    for img in images:
+        result = find_sphere_center(img, upper_only=upper_only)
+        if result is not None:
+            detections.append(result)
+
+    if not detections:
+        return None
+
+    cxs = [d[0] for d in detections]
+    cys = [d[1] for d in detections]
+    radii = [d[2] for d in detections]
+
+    cx = int(np.median(cxs))
+    cy = int(np.median(cys))
+    radius = int(np.median(radii))
+
+    return cx, cy, radius
+
+
+def process_sphere_stack(
+    images: list[np.ndarray],
+    upper_only: bool = True,
+    output_size: int | None = None,
+) -> tuple[list[np.ndarray], tuple | None]:
+    """
+    Process a z-stack of sphere images using a single consensus detection.
+
+    Detects the sphere across all frames, finds the consensus center/radius,
+    then applies the pipeline to every frame with the same parameters.
+
+    Args:
+        images: List of grayscale images (z-stack)
+        upper_only: Use upper contour only for circle fitting
+        output_size: If set, resize output to this square size
+
+    Returns:
+        (processed_images, (cx, cy, radius)) or (original_images, None) if detection fails
+    """
+    sphere = find_consensus_sphere(images, upper_only=upper_only)
+    if sphere is None:
+        return list(images), None
+
+    cx, cy, radius = sphere
+    processed = []
+    for img in images:
+        processed.append(_apply_sphere_pipeline(img, cx, cy, radius, output_size))
 
     return processed, (cx, cy, radius)

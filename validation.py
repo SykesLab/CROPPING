@@ -85,7 +85,7 @@ def load_validation_images(
 
 def measure_blur_from_images(
     images: List[Tuple[Path, np.ndarray]],
-    method: str = 'sigmoid'
+    method: str = 'erf'
 ) -> List[Tuple[Path, float, BlurMeasurement]]:
     """
     Measure blur from a list of images.

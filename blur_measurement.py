@@ -74,8 +74,8 @@ def _fit_erf_multi_start(
         (best_popt, best_r_squared, best_residual) or (None, 0, inf) if all fail
     """
     # Try multiple initial sigma values to avoid local minima
-    # Include very small values for sharp edges
-    sigma_inits = [0.1, 0.3, 0.5, 1.0, 2.0, 5.0, 10.0]
+    # Include small values for sharp edges and large values for heavily defocused images
+    sigma_inits = [0.1, 0.3, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0]
 
     best_popt = None
     best_r_squared = -np.inf
@@ -92,7 +92,7 @@ def _fit_erf_multi_start(
                 p0=[I_bg_init, I_sphere_init, radius, sigma_init],
                 bounds=(
                     [0, 0, r_min, 0.01],  # Edge must be within sampled region
-                    [1, 1, r_max, 50]
+                    [1, 1, r_max, 500]
                 ),
                 maxfev=2000
             )
@@ -191,8 +191,8 @@ def measure_blur_erf(
     fit_details = []
 
     # Determine edge sampling window based on expected blur
-    # Start with a reasonable window, will capture edge for sigma up to ~20px
-    edge_margin = max(30, int(radius * 0.1))  # Sample ± this many pixels from edge
+    # Use 30% of radius to capture wide blur transitions (large defocus → large σ)
+    edge_margin = max(80, int(radius * 0.3))  # Sample ± this many pixels from edge
 
     if verbose:
         print(f"  Edge margin: {edge_margin} px, sampling r=[{radius-edge_margin}, {radius+edge_margin}]")
