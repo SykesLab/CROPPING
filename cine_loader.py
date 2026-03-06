@@ -152,7 +152,7 @@ class CineLoader:
             return False
 
     def _load_frame(self, frame_idx: int) -> Optional[np.ndarray]:
-        """Load a single frame as grayscale uint8."""
+        """Load a single frame as grayscale float32 (raw values, no normalization)."""
         if self.cine_obj is None or _utils_module is None:
             return None
 
@@ -163,11 +163,9 @@ class CineLoader:
 
             # Convert to grayscale if needed
             if arr.ndim == 3:
-                arr = cv2.cvtColor(arr.astype(np.uint8), cv2.COLOR_BGR2GRAY)
+                arr = cv2.cvtColor(arr.astype(np.uint8), cv2.COLOR_BGR2GRAY).astype(np.float32)
 
-            # Normalize to 0-255
-            arr = cv2.normalize(arr, None, 0, 255, cv2.NORM_MINMAX)
-            return arr.astype(np.uint8)
+            return arr
 
         except Exception as e:
             print(f"[CineLoader] Error loading frame {frame_idx}: {e}")
@@ -271,7 +269,7 @@ class CineLoader:
                             frames_to_avg.append(f.astype(np.float32))
 
                 if frames_to_avg:
-                    avg = np.mean(frames_to_avg, axis=0).astype(np.uint8)
+                    avg = np.mean(frames_to_avg, axis=0).astype(np.float32)
                     images.append(avg)
                 else:
                     images.append(None)
@@ -432,7 +430,7 @@ class CineFolderLoader:
                         frames.append(f.astype(np.float32))
 
             if frames:
-                return np.mean(frames, axis=0).astype(np.uint8)
+                return np.mean(frames, axis=0).astype(np.float32)
             return None
 
     def load_zstack(

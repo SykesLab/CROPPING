@@ -99,7 +99,7 @@ from calibration_core import (
     export_calibration_yaml_direct
 )
 from cine_loader import CineFolderLoader, check_pyphantom, PYPHANTOM_AVAILABLE
-from sphere_processing import process_sphere_image
+from sphere_processing import process_sphere_stack
 
 # Try to import matplotlib for plotting
 try:
@@ -372,13 +372,6 @@ class CalibrationGUI:
         crop_frame.pack(fill='x', pady=5)
         self.crop_padding_var = tk.StringVar(value="50")  # kept for internal use
 
-        crop_row1b = ttk.Frame(crop_frame)
-        crop_row1b.pack(fill='x', pady=2)
-        ttk.Label(crop_row1b, text="Output size (px):", width=12).pack(side='left')
-        self.crop_output_size_var = tk.StringVar(value="128")
-        ttk.Entry(crop_row1b, textvariable=self.crop_output_size_var, width=8).pack(side='left')
-        ttk.Label(crop_row1b, text="match training image size", font=('', 8), foreground='gray').pack(side='left', padx=5)
-
         crop_row1c = ttk.Frame(crop_frame)
         crop_row1c.pack(fill='x', pady=2)
         self.upper_contour_var = tk.BooleanVar(value=True)
@@ -477,8 +470,8 @@ class CalibrationGUI:
         measure_header = ttk.Label(measure_col, text="Step 1: Measure Blur", font=('TkDefaultFont', 10, 'bold'))
         measure_header.pack(anchor='w', pady=(0, 5))
 
-        # Blur measurement method (sigmoid edge fitting)
-        self.blur_method_var = tk.StringVar(value="sigmoid")
+        # Blur measurement method (erf edge fitting)
+        self.blur_method_var = tk.StringVar(value="erf")
 
         # Sphere detection
         sphere_frame = ttk.LabelFrame(measure_col, text="Sphere Detection", padding=5)
@@ -937,13 +930,25 @@ The synthetic blur will match your camera!"""
             self.load_progress_var.set(current / total * 100)
             self.root.update_idletasks()
 
-        # Use temporary defocus = 0 (we'll calculate stage positions)
-        images, _, filenames = self.cine_folder_loader.load_zstack(
-            z_start=stage_start,
-            z_end=stage_end,
-            frame_idx=frame_idx,
-            progress_callback=progress_callback
-        )
+        # Load frames — use CSV positions if available, otherwise linear interpolation
+        csv_path = self.cine_positions_csv_var.get()
+        use_csv = csv_path and Path(csv_path).exists()
+
+        if use_csv:
+            # Load with CSV (use offset=0 to get raw stage positions)
+            images, stage_positions, filenames = self.cine_folder_loader.load_with_positions_csv(
+                csv_path=csv_path,
+                stage_offset=0.0,
+                frame_idx=frame_idx
+            )
+        else:
+            # Linear interpolation
+            images, stage_positions, filenames = self.cine_folder_loader.load_zstack(
+                z_start=stage_start,
+                z_end=stage_end,
+                frame_idx=frame_idx,
+                progress_callback=progress_callback
+            )
 
         if not images:
             messagebox.showerror("Error", "No frames extracted")
@@ -952,20 +957,16 @@ The synthetic blur will match your camera!"""
         # Measure sharpness (Laplacian variance) for each frame
         sharpness_values = []
         for img in images:
-            laplacian = cv2.Laplacian(img, cv2.CV_64F)
+            img_u8 = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) if img.dtype != np.uint8 else img
+            laplacian = cv2.Laplacian(img_u8, cv2.CV_64F)
             sharpness = laplacian.var()
             sharpness_values.append(sharpness)
 
         # Find the sharpest frame
         max_idx = np.argmax(sharpness_values)
 
-        # Calculate the corresponding stage position
-        n_files = len(images)
-        if n_files == 1:
-            focus_stage = (stage_start + stage_end) / 2
-        else:
-            t = max_idx / (n_files - 1)
-            focus_stage = stage_start + t * (stage_end - stage_start)
+        # Get the stage position of the sharpest frame
+        focus_stage = stage_positions[max_idx]
 
         # Update the focus position
         self.stage_focus_var.set(f"{focus_stage:.2f}")
@@ -973,7 +974,7 @@ The synthetic blur will match your camera!"""
         # Show results
         self._update_stats_text(f"Focus Detection Results\n" + "=" * 40)
         self._append_stats_text(f"\n\nAnalyzed {len(images)} frames")
-        self._append_stats_text(f"\nSharpest frame: #{max_idx + 1} of {n_files}")
+        self._append_stats_text(f"\nSharpest frame: #{max_idx + 1} of {len(images)}")
         self._append_stats_text(f"\nFilename: {filenames[max_idx]}")
         self._append_stats_text(f"\nSharpness (Laplacian var): {sharpness_values[max_idx]:.1f}")
         self._append_stats_text(f"\n\nEstimated focus at stage: {focus_stage:.2f} mm")
@@ -1230,9 +1231,11 @@ The synthetic blur will match your camera!"""
             messagebox.showerror("Error", "No frames extracted from .cine files")
             return
 
-        self.zstack_images = images
-        self.zstack_positions = positions
-        self.zstack_filenames = filenames
+        # Sort by defocus position so slider goes in order
+        sorted_indices = np.argsort(positions)
+        self.zstack_images = [images[i] for i in sorted_indices]
+        self.zstack_positions = [positions[i] for i in sorted_indices]
+        self.zstack_filenames = [filenames[i] for i in sorted_indices]
 
         # Create stats
         h, w = self.zstack_images[0].shape
@@ -1407,6 +1410,10 @@ The synthetic blur will match your camera!"""
 
             self.preview_label_var.set(f"z = {z:.2f} mm\n(#{idx + 1} of {len(self.zstack_images)})")
 
+            # Normalize to uint8 for display if needed (e.g. raw cine float32)
+            if img.dtype != np.uint8:
+                img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+
             # Resize for display
             h, w = img.shape
             max_size = 450
@@ -1429,9 +1436,15 @@ The synthetic blur will match your camera!"""
 
         sharpness = []
         for img in self.zstack_images:
-            # Use uint8 directly - OpenCV supports uint8 -> CV_64F
-            lap = cv2.Laplacian(img, cv2.CV_64F)
-            sharpness.append(lap.var())
+            img_u8 = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) if img.dtype != np.uint8 else img
+            lap = cv2.Laplacian(img_u8, cv2.CV_64F)
+            # Mask out blackened interior (zeros from sphere processing)
+            # so artificial edges don't dominate the sharpness metric
+            mask = img_u8 > 5
+            if mask.any():
+                sharpness.append(lap[mask].var())
+            else:
+                sharpness.append(0.0)
 
         best_idx = int(np.argmax(sharpness))
         best_z = self.zstack_positions[best_idx] if best_idx < len(self.zstack_positions) else 0
@@ -1466,7 +1479,13 @@ The synthetic blur will match your camera!"""
         self.root.update_idletasks()
 
         # Find sharpest frame (best for detection)
-        sharpness = [cv2.Laplacian(img, cv2.CV_64F).var() for img in self.zstack_images]
+        # Mask out zeros to handle blackened sphere interiors
+        sharpness = []
+        for img in self.zstack_images:
+            img_u8 = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) if img.dtype != np.uint8 else img
+            lap = cv2.Laplacian(img_u8, cv2.CV_64F)
+            mask = img_u8 > 5
+            sharpness.append(lap[mask].var() if mask.any() else 0.0)
         best_idx = int(np.argmax(sharpness))
 
         self.crop_status_var.set("Detecting sphere...")
@@ -1498,7 +1517,6 @@ The synthetic blur will match your camera!"""
             y1 = max(0, y2 - crop_size)
 
         crop_w = x2 - x1
-        crop_h = y2 - y1
 
         self.crop_status_var.set(f"Cropping {len(self.zstack_images)} images...")
         self.root.update_idletasks()
@@ -1511,22 +1529,8 @@ The synthetic blur will match your camera!"""
             self.load_progress_var.set((i + 1) / len(self.zstack_images) * 100)
             self.root.update_idletasks()
 
-        # Resize to output size if specified
-        try:
-            output_size = int(self.crop_output_size_var.get())
-        except ValueError:
-            output_size = 0
-
-        if output_size > 0 and (output_size != crop_w or output_size != crop_h):
-            resized_images = []
-            for img in cropped_images:
-                resized = cv2.resize(img, (output_size, output_size), interpolation=cv2.INTER_AREA)
-                resized_images.append(resized)
-            self.zstack_images = resized_images
-            final_size = output_size
-        else:
-            self.zstack_images = cropped_images
-            final_size = crop_w
+        self.zstack_images = cropped_images
+        final_size = crop_w
 
         # Update stats
         if self.zstack_stats:
@@ -1547,15 +1551,9 @@ The synthetic blur will match your camera!"""
         messagebox.showinfo("Auto-Crop", f"Cropped {len(self.zstack_images)} images to {final_size}x{final_size} pixels\nCentered on sphere at ({cx}, {cy})")
 
     def _process_spheres(self):
-        """Process loaded images: detect sphere, mirror, blacken interior, crop, resize."""
+        """Process loaded images: detect sphere, mirror, blacken interior, crop."""
         if not self.zstack_images:
             messagebox.showerror("Error", "No images loaded")
-            return
-
-        try:
-            output_size = int(self.crop_output_size_var.get())
-        except ValueError:
-            messagebox.showerror("Error", "Invalid output size")
             return
 
         upper_only = self.upper_contour_var.get()
@@ -1563,46 +1561,37 @@ The synthetic blur will match your camera!"""
         self.crop_status_var.set("Processing spheres...")
         self.root.update_idletasks()
 
-        processed_images = []
-        failed = []
+        processed_images, sphere_info = process_sphere_stack(
+            self.zstack_images, upper_only=upper_only
+        )
 
-        for i, img in enumerate(self.zstack_images):
-            processed, sphere_info = process_sphere_image(
-                img, upper_only=upper_only, output_size=output_size
-            )
-            if processed is not None:
-                processed_images.append(processed)
-            else:
-                failed.append(i)
-                # Keep original if detection fails
-                processed_images.append(img)
-
-            self.load_progress_var.set((i + 1) / len(self.zstack_images) * 100)
-            self.root.update_idletasks()
+        if sphere_info is not None:
+            cx, cy, r = sphere_info
+            print(f"  Consensus sphere: center=({cx},{cy}) radius={r}")
+        else:
+            print("  WARNING: No sphere detected in any frame")
 
         self.zstack_images = processed_images
 
-        # Update stats
-        if self.zstack_stats:
-            self.zstack_stats.image_width = output_size
-            self.zstack_stats.image_height = output_size
+        # Update stats with actual processed image size
+        if self.zstack_stats and self.zstack_images:
+            h, w = self.zstack_images[0].shape[:2]
+            self.zstack_stats.image_width = w
+            self.zstack_stats.image_height = h
 
-        # Update display
-        self._update_stats_text(
-            f"Images: {len(self.zstack_images)}\n"
-            f"Size: {output_size} x {output_size} (processed)\n"
-            f"Z range: {self.zstack_stats.z_min:.2f} to {self.zstack_stats.z_max:.2f} mm"
-        )
+            self._update_stats_text(
+                f"Images: {len(self.zstack_images)}\n"
+                f"Size: {w} x {h} (processed)\n"
+                f"Z range: {self.zstack_stats.z_min:.2f} to {self.zstack_stats.z_max:.2f} mm"
+            )
 
         self._update_preview(int(self.preview_slider.get()))
         self.load_progress_var.set(0)
 
-        fail_msg = f"\n{len(failed)} frames failed sphere detection (kept original)." if failed else ""
-        self.crop_status_var.set(f"Processed to {output_size}x{output_size}")
+        self.crop_status_var.set("Processed (mirror + blacken + crop)")
         messagebox.showinfo(
             "Process Spheres",
-            f"Processed {len(self.zstack_images)} images to {output_size}x{output_size} pixels"
-            f"\n(mirror + blacken + crop + resize){fail_msg}"
+            f"Processed {len(self.zstack_images)} images\n(mirror + blacken + crop)"
         )
 
     def _save_cropped_images(self):
@@ -1627,6 +1616,9 @@ The synthetic blur will match your camera!"""
                 out_name = f"crop_{i:04d}.png"
 
             out_path = output_path / out_name
+            # Normalize to uint8 for saving if needed
+            if img.dtype != np.uint8:
+                img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
             cv2.imwrite(str(out_path), img)
 
             self.load_progress_var.set((i + 1) / len(self.zstack_images) * 100)
@@ -1664,6 +1656,9 @@ The synthetic blur will match your camera!"""
         idx = int(self.preview_slider.get())
         if 0 <= idx < len(self.zstack_images):
             img = self.zstack_images[idx].copy()
+            # Normalize to uint8 for display if needed
+            if img.dtype != np.uint8:
+                img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
             img_color = cv2.cvtColor(img, cv2.COLOR_GRAY2RGB)
 
             # Get actual mask and draw its contour (not a fitted circle)

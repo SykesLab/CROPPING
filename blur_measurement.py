@@ -5,7 +5,7 @@ This module provides different methods to measure blur (sigma) from calibration 
 Each method quantifies how blurry a sphere or edge appears in an image.
 
 Methods:
-1. Sigmoid edge fitting (recommended) - fits sigmoid to edge profile
+1. Erf edge fitting (recommended) - fits error function to edge profile (physically exact for Gaussian blur)
 2. Gradient-based (Sobel) - measures average gradient magnitude at edges
 3. Laplacian variance - simple sharpness metric (inverse relationship to blur)
 """
@@ -14,6 +14,7 @@ import numpy as np
 import cv2
 from scipy.optimize import curve_fit
 from scipy.ndimage import sobel, gaussian_filter
+from scipy.special import erf
 from typing import Tuple, Optional, Dict, List
 from dataclasses import dataclass
 
@@ -27,30 +28,30 @@ class BlurMeasurement:
     details: Dict  # Method-specific details
 
 
-def sigmoid(r: np.ndarray, I_bg: float, I_sphere: float, r_edge: float, sigma: float) -> np.ndarray:
+def erf_edge(r: np.ndarray, I_bg: float, I_sphere: float, r_edge: float, sigma: float) -> np.ndarray:
     """
-    Sigmoid function for edge profile fitting.
+    Error function edge profile — physical model for Gaussian-blurred step edge.
 
-    I(r) = I_bg - (I_bg - I_sphere) / (1 + exp((r - r_edge) / sigma))
+    I(r) = (I_bg + I_sphere)/2 + (I_bg - I_sphere)/2 × erf((r - r_edge) / (σ√2))
+
+    A sharp step edge convolved with a Gaussian of std σ produces exactly this
+    profile, so the fitted σ is the true Gaussian blur sigma.
 
     Args:
         r: Radial positions (pixels)
         I_bg: Background intensity
         I_sphere: Sphere intensity
         r_edge: Edge position
-        sigma: Blur width (what we want to measure)
+        sigma: Gaussian blur sigma (what we want to measure)
 
     Returns:
         Intensity values
     """
-    # Avoid division by zero and overflow in exp
-    # Use 0.001 as minimum to allow sharp edge fitting (was 0.1 which prevented sharp fits)
     sigma_safe = max(sigma, 0.001)
-    z = np.clip((r - r_edge) / sigma_safe, -50, 50)
-    return I_bg - (I_bg - I_sphere) / (1 + np.exp(z))
+    return (I_bg + I_sphere) / 2 + (I_bg - I_sphere) / 2 * erf((r - r_edge) / (sigma_safe * np.sqrt(2)))
 
 
-def _fit_sigmoid_multi_start(
+def _fit_erf_multi_start(
     r_valid: np.ndarray,
     intensities: np.ndarray,
     radius: float,
@@ -59,7 +60,7 @@ def _fit_sigmoid_multi_start(
     edge_margin: float = 30.0
 ) -> Tuple[Optional[np.ndarray], float, float]:
     """
-    Fit sigmoid with multiple starting points to avoid local minima.
+    Fit erf edge profile with multiple starting points to avoid local minima.
 
     Args:
         r_valid: Radial positions of samples
@@ -87,7 +88,7 @@ def _fit_sigmoid_multi_start(
     for sigma_init in sigma_inits:
         try:
             popt, _ = curve_fit(
-                sigmoid, r_valid, intensities,
+                erf_edge, r_valid, intensities,
                 p0=[I_bg_init, I_sphere_init, radius, sigma_init],
                 bounds=(
                     [0, 0, r_min, 0.01],  # Edge must be within sampled region
@@ -97,7 +98,7 @@ def _fit_sigmoid_multi_start(
             )
 
             # Calculate fit quality
-            fitted = sigmoid(r_valid, *popt)
+            fitted = erf_edge(r_valid, *popt)
             residual = np.sum((intensities - fitted) ** 2)
             ss_tot = np.sum((intensities - np.mean(intensities)) ** 2)
             r_squared = 1 - (residual / ss_tot) if ss_tot > 0 else 0
@@ -114,7 +115,7 @@ def _fit_sigmoid_multi_start(
     return best_popt, best_r_squared, best_residual
 
 
-def measure_blur_sigmoid(
+def measure_blur_erf(
     image: np.ndarray,
     center: Optional[Tuple[int, int]] = None,
     radius: Optional[int] = None,
@@ -122,10 +123,12 @@ def measure_blur_sigmoid(
     verbose: bool = False
 ) -> BlurMeasurement:
     """
-    Measure blur by fitting sigmoid to edge profiles.
+    Measure blur by fitting erf (error function) to edge profiles.
 
     This method extracts radial intensity profiles from the sphere center
-    outward, fits a sigmoid to each profile, and averages the sigma values.
+    outward, fits an erf edge model to each profile, and takes the median
+    sigma. The erf is the physically exact result of convolving a step edge
+    with a Gaussian, so the fitted sigma is the true Gaussian blur sigma.
 
     Args:
         image: Grayscale image (0-255 or 0-1)
@@ -146,7 +149,7 @@ def measure_blur_sigmoid(
         center, radius = detect_sphere(image)
         if center is None:
             return BlurMeasurement(
-                sigma=0.0, method='sigmoid', confidence=0.0,
+                sigma=0.0, method='erf', confidence=0.0,
                 details={'error': 'Could not detect sphere'}
             )
 
@@ -172,7 +175,7 @@ def measure_blur_sigmoid(
 
         if contrast < 0.05:
             return BlurMeasurement(
-                sigma=0.0, method='sigmoid', confidence=0.0,
+                sigma=0.0, method='erf', confidence=0.0,
                 details={'error': f'Insufficient contrast: {contrast:.3f}'}
             )
     else:
@@ -221,14 +224,10 @@ def measure_blur_sigmoid(
         end_r = min(radius + edge_margin, max_r_for_ray)
 
         if end_r <= start_r:
-            if verbose and i < 3:
-                print(f"  Ray {i}: skipped, no valid range (start={start_r:.0f}, end={end_r:.0f}, max_r={max_r_for_ray:.0f})")
             continue
 
         r_values = np.arange(start_r, end_r, 0.5)  # Sub-pixel sampling
         if len(r_values) < 20:
-            if verbose and i < 3:
-                print(f"  Ray {i}: skipped, only {len(r_values)} samples in range [{start_r:.0f}, {end_r:.0f}]")
             continue
 
         # Get sub-pixel coordinates
@@ -244,8 +243,6 @@ def measure_blur_sigmoid(
         # Ensure within bounds (should mostly pass now due to max_r calculation)
         valid = (x0 >= 0) & (x1 < w) & (y0 >= 0) & (y1 < h)
         if np.sum(valid) < 20:
-            if verbose and i < 3:
-                print(f"  Ray {i}: skipped, {np.sum(valid)}/{len(valid)} valid after bounds check")
             continue
 
         r_valid = r_values[valid]
@@ -266,18 +263,12 @@ def measure_blur_sigmoid(
         I_bg_init = I_bg_est
         I_sphere_init = I_sphere_est
 
-        if verbose and i < 3:
-            print(f"  Ray {i}: {len(r_valid)} samples, r=[{r_valid.min():.0f},{r_valid.max():.0f}], "
-                  f"I=[{intensities.min():.3f},{intensities.max():.3f}], range={intensities.max()-intensities.min():.3f}")
-
         # Use multi-start optimization
-        popt, r_squared, residual = _fit_sigmoid_multi_start(
+        popt, r_squared, residual = _fit_erf_multi_start(
             r_valid, intensities, radius, I_bg_init, I_sphere_init, edge_margin
         )
 
         if popt is None:
-            if verbose and i < 8:
-                print(f"  Ray {i}: fit failed (all starting points failed)")
             continue
 
         I_bg, I_sphere, r_edge, sigma = popt
@@ -288,10 +279,6 @@ def measure_blur_sigmoid(
         # Calculate acceptance metrics
         contrast_ratio = fit_contrast / contrast if contrast else 1.0
         edge_offset = abs(r_edge - radius)
-
-        if verbose and i < 8:  # Only print first 8 rays in verbose mode
-            print(f"  Ray {i}: σ={sigma:.3f}, R²={r_squared:.3f}, "
-                  f"contrast={fit_contrast:.3f} ({contrast_ratio:.1%}), r_edge={r_edge:.1f} (off={edge_offset:.0f})")
 
         # Accept fit if:
         # 1. R² is reasonable
@@ -316,20 +303,11 @@ def measure_blur_sigmoid(
                 'contrast': fit_contrast,
                 'r_edge': r_edge
             })
-        elif verbose and i < 8:
-            reasons = []
-            if r_squared <= min_r2:
-                reasons.append(f"R²={r_squared:.2f}≤{min_r2}")
-            if contrast_ratio <= 0.2:
-                reasons.append(f"contrast={contrast_ratio:.1%}≤20%")
-            if edge_offset >= edge_margin:
-                reasons.append(f"edge_off={edge_offset:.0f}≥{edge_margin}")
-            print(f"    ^ REJECTED: {', '.join(reasons)}")
 
     if len(sigmas) == 0:
         return BlurMeasurement(
-            sigma=0.0, method='sigmoid', confidence=0.0,
-            details={'error': f'Could not fit sigmoid to any of {num_rays} rays'}
+            sigma=0.0, method='erf', confidence=0.0,
+            details={'error': f'Could not fit erf to any of {num_rays} rays'}
         )
 
     # Use median to be robust to outliers
@@ -337,11 +315,11 @@ def measure_blur_sigmoid(
     confidence = np.mean(r_squareds)
 
     if verbose:
-        print(f"  Result: σ={sigma_final:.3f} px (median of {len(sigmas)} fits)")
+        print(f"  Rays: {len(sigmas)}/{num_rays} accepted, σ={sigma_final:.3f} px")
 
     return BlurMeasurement(
         sigma=sigma_final,
-        method='sigmoid',
+        method='erf',
         confidence=confidence,
         details={
             'num_rays_used': len(sigmas),
@@ -583,7 +561,7 @@ def measure_blur_auto(
     image: np.ndarray,
     center: Optional[Tuple[int, int]] = None,
     radius: Optional[int] = None,
-    method: str = 'sigmoid',
+    method: str = 'erf',
     verbose: bool = False
 ) -> BlurMeasurement:
     """
@@ -593,14 +571,14 @@ def measure_blur_auto(
         image: Grayscale image
         center: (x, y) center of sphere. If None, auto-detects.
         radius: Approximate radius. If None, auto-detects.
-        method: 'sigmoid', 'gradient', or 'laplacian'
+        method: 'erf', 'gradient', or 'laplacian'
         verbose: If True, print diagnostic information
 
     Returns:
         BlurMeasurement result
     """
-    if method == 'sigmoid':
-        return measure_blur_sigmoid(image, center, radius, verbose=verbose)
+    if method == 'erf':
+        return measure_blur_erf(image, center, radius, verbose=verbose)
     elif method == 'gradient':
         return measure_blur_gradient(image, center, radius)
     elif method == 'laplacian':
@@ -612,7 +590,7 @@ def measure_blur_auto(
 def measure_blur_batch(
     images: List[np.ndarray],
     positions: List[float],
-    method: str = 'sigmoid',
+    method: str = 'erf',
     center: Optional[Tuple[int, int]] = None,
     radius: Optional[int] = None
 ) -> Tuple[List[float], List[float], List[BlurMeasurement]]:
