@@ -12,7 +12,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import cv2
 
-from cine_io import group_cines_by_droplet, safe_load_cine
+from cine_io import group_cines_by_droplet, safe_load_cine, get_camera_model_from_path
 from config import CROP_SAFETY_PIXELS, OUTPUT_ROOT, FOCUS_METRICS_ENABLED
 from cropping import crop_droplet_with_sphere_guard
 from focus_metrics import compute_all_focus_metrics
@@ -234,6 +234,7 @@ def generate_folder_outputs(
             "droplet_id",
             "camera",
             "cine_file",
+            "camera_model",
             "first_frame",
             "last_frame",
             "best_frame",
@@ -265,6 +266,9 @@ def generate_folder_outputs(
                     continue
 
                 timing["n_outputs"] += 1
+
+                # Get camera model from .cine file
+                camera_model = get_camera_model_from_path(path) or ""
 
                 curve = info.get("curve")
                 first = info.get("first", 0)
@@ -365,6 +369,7 @@ def generate_folder_outputs(
                     droplet_id,
                     cam,
                     path.name,
+                    camera_model,
                     first,
                     last,
                     best_idx,
@@ -412,6 +417,7 @@ def write_folder_csv(
                 "droplet_id",
                 "camera",
                 "cine_file",
+                "camera_model",
                 "best_frame",
                 "dark_fraction",
                 "y_top",
@@ -433,6 +439,9 @@ def write_folder_csv(
                     path = info.get("path")
                     if path is None:
                         continue
+
+                    # Get camera model from .cine file
+                    camera_model = get_camera_model_from_path(path) or ""
 
                     curve = info.get("curve")
                     best_idx = info.get("best", 0)
@@ -468,6 +477,7 @@ def write_folder_csv(
                         droplet_id,
                         cam,
                         path.name,
+                        camera_model,
                         best_idx,
                         dark_val,
                         y_top,
