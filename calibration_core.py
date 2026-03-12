@@ -481,7 +481,8 @@ def export_calibration_yaml(
     focal_plane_offset_mm: float = 0.0,
     defocus_range_mm: Optional[Tuple[float, float]] = None,
     reference_resolution: Optional[int] = None,
-    calibration_mode: str = "optical"
+    calibration_mode: str = "optical",
+    scale_calib_px_per_mm: Optional[float] = None,
 ) -> Dict:
     """
     Export calibration results to YAML-compatible dict.
@@ -511,7 +512,11 @@ def export_calibration_yaml(
             'rho_px_per_mm': float(a.rho_px_per_mm),
             'sigma_0': float(a.sigma_0),
             'r_squared': float(a.r_squared),
-            'num_points': a.num_points
+            'num_points': a.num_points,
+            **(
+                {'scale_calib_px_per_mm': float(scale_calib_px_per_mm)}
+                if scale_calib_px_per_mm is not None else {}
+            ),
         },
 
         'optical_params': {
@@ -547,7 +552,11 @@ def export_calibration_yaml(
             # Calibration camera info (for cross-camera/resolution scaling)
             'calibration': {
                 'pixel_size_mm': b.optical_params.pixel_size_mm,
-                'reference_resolution': reference_resolution
+                'reference_resolution': reference_resolution,
+                **(
+                    {'scale_calib_px_per_mm': float(scale_calib_px_per_mm)}
+                    if scale_calib_px_per_mm is not None else {}
+                ),
             }
         }
     }
@@ -569,6 +578,7 @@ def export_calibration_yaml_direct(
     pixel_size_mm: Optional[float] = None,
     defocus_range_mm: Optional[Tuple[float, float]] = None,
     reference_resolution: Optional[int] = None,
+    scale_calib_px_per_mm: Optional[float] = None,
 ) -> Dict:
     """
     Export direct-only calibration results to YAML-compatible dict.
@@ -586,19 +596,33 @@ def export_calibration_yaml_direct(
     Returns:
         Dictionary ready for YAML export
     """
+    direct_section = {
+        'rho_px_per_mm': float(result.rho_px_per_mm),
+        'sigma_0': float(result.sigma_0),
+        'r_squared': float(result.r_squared),
+        'num_points': result.num_points,
+    }
+    if scale_calib_px_per_mm is not None:
+        direct_section['scale_calib_px_per_mm'] = float(scale_calib_px_per_mm)
+
     output = {
         'camera': camera,
         'aperture_setting': aperture_setting,
         'calibration_mode': 'direct',
 
-        'direct': {
-            'rho_px_per_mm': float(result.rho_px_per_mm),
-            'sigma_0': float(result.sigma_0),
-            'r_squared': float(result.r_squared),
-            'num_points': result.num_points
-        },
+        'direct': direct_section,
 
         'reference_resolution': reference_resolution,
+
+        # Ready-to-paste block for optical_config.yaml training section
+        'training_config': {
+            'rho_direct': float(result.rho_px_per_mm),
+            'sigma_0': float(result.sigma_0),
+            **(
+                {'scale_calib_px_per_mm': float(scale_calib_px_per_mm)}
+                if scale_calib_px_per_mm is not None else {}
+            ),
+        },
     }
 
     if pixel_size_mm is not None:

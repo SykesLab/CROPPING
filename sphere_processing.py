@@ -188,12 +188,17 @@ def _apply_sphere_pipeline(
     cy: int,
     radius: int,
     output_size: int | None = None,
+    mirror: bool = True,
+    blacken: bool = True,
 ) -> np.ndarray:
-    """Apply mirror → blacken → crop → normalize to uint8 → resize."""
-    processed = mirror_from_center(img.copy(), cy)
-    processed = blacken_sphere_interior(
-        processed, cx, cy, radius, radius_fraction=0.50, edge_margin_px=0
-    )
+    """Apply crop → normalize to uint8 → resize, with optional mirror and blacken steps."""
+    processed = img.copy()
+    if mirror:
+        processed = mirror_from_center(processed, cy)
+    if blacken:
+        processed = blacken_sphere_interior(
+            processed, cx, cy, radius, radius_fraction=0.50, edge_margin_px=0
+        )
     processed = crop_to_square(processed, cx, cy, radius, padding=1.2)
 
     # Normalize to uint8 after processing (not before) so that the
@@ -275,6 +280,8 @@ def process_sphere_stack(
     images: list[np.ndarray],
     upper_only: bool = True,
     output_size: int | None = None,
+    mirror: bool = True,
+    blacken: bool = True,
 ) -> tuple[list[np.ndarray], tuple | None]:
     """
     Process a z-stack of sphere images using a single consensus detection.
@@ -286,6 +293,8 @@ def process_sphere_stack(
         images: List of grayscale images (z-stack)
         upper_only: Use upper contour only for circle fitting
         output_size: If set, resize output to this square size
+        mirror: Apply vertical mirror about sphere centre (calibration only)
+        blacken: Fill sphere interior with median value (calibration only)
 
     Returns:
         (processed_images, (cx, cy, radius)) or (original_images, None) if detection fails
@@ -297,6 +306,7 @@ def process_sphere_stack(
     cx, cy, radius = sphere
     processed = []
     for img in images:
-        processed.append(_apply_sphere_pipeline(img, cx, cy, radius, output_size))
+        processed.append(_apply_sphere_pipeline(img, cx, cy, radius, output_size,
+                                                mirror=mirror, blacken=blacken))
 
     return processed, (cx, cy, radius)

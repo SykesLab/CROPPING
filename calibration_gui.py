@@ -166,6 +166,10 @@ class CalibrationGUI:
         # Preview image reference (prevent garbage collection)
         self._preview_photo = None
 
+        # Calibration camera scale (px/mm), computed after sphere processing
+        self.scale_calib_px_per_mm = None
+        self.sphere_diameter_mm_var = tk.StringVar(value="10.0")
+
         # Build UI
         self._create_ui()
 
@@ -377,6 +381,13 @@ class CalibrationGUI:
         self.upper_contour_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(crop_row1c, text="Upper contour only (avoids stage)",
                         variable=self.upper_contour_var).pack(side='left')
+
+        crop_row1d = ttk.Frame(crop_frame)
+        crop_row1d.pack(fill='x', pady=2)
+        ttk.Label(crop_row1d, text="Sphere diameter (mm):").pack(side='left')
+        ttk.Entry(crop_row1d, textvariable=self.sphere_diameter_mm_var, width=6).pack(side='left', padx=5)
+        ttk.Label(crop_row1d, text="(physical size of calibration sphere)",
+                  foreground='gray', font=('', 8)).pack(side='left')
 
         crop_row2 = ttk.Frame(crop_frame)
         crop_row2.pack(fill='x', pady=2)
@@ -1568,6 +1579,26 @@ The synthetic blur will match your camera!"""
         if sphere_info is not None:
             cx, cy, r = sphere_info
             print(f"  Consensus sphere: center=({cx},{cy}) radius={r}")
+
+            # Use sharpest frame for scale measurement — blur expands apparent diameter at defocus
+            sharpness = []
+            for img in self.zstack_images:
+                img_u8 = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) if img.dtype != np.uint8 else img
+                lap = cv2.Laplacian(img_u8, cv2.CV_64F)
+                mask = img_u8 > 5
+                sharpness.append(lap[mask].var() if mask.any() else 0.0)
+            best_idx = int(np.argmax(sharpness))
+            _, r_sharp = detect_sphere(self.zstack_images[best_idx])
+            r_for_scale = r_sharp if r_sharp is not None else r
+            print(f"  Sharpest frame #{best_idx}: radius={r_for_scale} px (used for scale)")
+
+            try:
+                d_mm = float(self.sphere_diameter_mm_var.get())
+                if d_mm > 0:
+                    self.scale_calib_px_per_mm = (r_for_scale * 2) / d_mm
+                    print(f"  Calibration camera scale: {self.scale_calib_px_per_mm:.2f} px/mm")
+            except ValueError:
+                pass
         else:
             print("  WARNING: No sphere detected in any frame")
 
@@ -2276,6 +2307,7 @@ FOR TRAINING GUI:
                 pixel_size_mm=pixel_size,
                 defocus_range_mm=defocus_range,
                 reference_resolution=reference_resolution,
+                scale_calib_px_per_mm=self.scale_calib_px_per_mm,
             )
         else:
             yaml_dict = export_calibration_yaml(
@@ -2285,7 +2317,8 @@ FOR TRAINING GUI:
                 focal_plane_offset_mm=float(self.focal_offset_var.get()) if self.focal_offset_var.get() else 0.0,
                 defocus_range_mm=defocus_range,
                 reference_resolution=reference_resolution,
-                calibration_mode=self.calibration_mode_var.get()
+                calibration_mode=self.calibration_mode_var.get(),
+                scale_calib_px_per_mm=self.scale_calib_px_per_mm,
             )
 
         yaml_str = yaml.dump(yaml_dict, default_flow_style=False, sort_keys=False)
@@ -2331,6 +2364,7 @@ FOR TRAINING GUI:
                     pixel_size_mm=pixel_size,
                     defocus_range_mm=defocus_range,
                     reference_resolution=reference_resolution,
+                    scale_calib_px_per_mm=self.scale_calib_px_per_mm,
                 )
             else:
                 yaml_dict = export_calibration_yaml(
@@ -2340,7 +2374,8 @@ FOR TRAINING GUI:
                     focal_plane_offset_mm=float(self.focal_offset_var.get()) if self.focal_offset_var.get() else 0.0,
                     defocus_range_mm=defocus_range,
                     reference_resolution=reference_resolution,
-                    calibration_mode=self.calibration_mode_var.get()
+                    calibration_mode=self.calibration_mode_var.get(),
+                    scale_calib_px_per_mm=self.scale_calib_px_per_mm,
                 )
             yaml_path = output_dir / "calibration_results.yaml"
             with open(yaml_path, 'w') as f:
