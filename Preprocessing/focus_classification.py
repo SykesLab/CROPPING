@@ -15,6 +15,7 @@ import matplotlib.pyplot as plt
 import pandas as pd
 
 from config import OUTPUT_ROOT
+from crop_blur_measurement import measure_erf_blur
 from focus_metrics import classify_folder_focus
 
 logger = logging.getLogger(__name__)
@@ -152,6 +153,28 @@ def run_focus_classification() -> None:
     sharp_only_df = combined_df[combined_df['focus_class'] == 'sharp'].copy()
     # Add diameter column
     sharp_only_df["diameter_px"] = sharp_only_df["y_bottom"] - sharp_only_df["y_top"]
+
+    # Measure native blur sigma (Gaussian erf fit) for each sharp crop
+    print(f"\n  Measuring native blur for {len(sharp_only_df)} sharp crops...")
+    native_blur = []
+    n_measured = 0
+    for crop_path in sharp_only_df['crop_path']:
+        sigma = None
+        try:
+            import cv2 as _cv2
+            img = _cv2.imread(str(crop_path), _cv2.IMREAD_GRAYSCALE)
+            if img is not None:
+                sigma = measure_erf_blur(img)
+                if sigma is not None:
+                    n_measured += 1
+        except Exception:
+            pass
+        native_blur.append(sigma)
+    sharp_only_df["native_blur_sigma"] = native_blur
+    print(f"  Measured: {n_measured}/{len(sharp_only_df)} crops "
+          f"(mean={sharp_only_df['native_blur_sigma'].mean():.2f} px, "
+          f"std={sharp_only_df['native_blur_sigma'].std():.2f} px)")
+
     sharp_path = focus_dir / "sharp_crops.csv"
     sharp_only_df.to_csv(sharp_path, index=False)
     print(f"  Saved sharp crops list: Focus/{sharp_path.name} ({len(sharp_only_df)} crops)")
