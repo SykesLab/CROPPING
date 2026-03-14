@@ -83,6 +83,65 @@ def safe_load_cine(path: Path) -> Optional[Any]:
         return None
 
 
+def get_camera_model(cine_obj: Any) -> Optional[str]:
+    """
+    Extract camera model name from a loaded .cine object.
+
+    Tries various attribute names that pyphantom may expose for camera info.
+
+    Args:
+        cine_obj: A loaded pyphantom Cine object
+
+    Returns:
+        Camera model string if found, None otherwise
+    """
+    if cine_obj is None:
+        return None
+
+    # Try various attribute names that pyphantom may use
+    attr_names = [
+        'camera',
+        'cameraModel',
+        'camera_model',
+        'CameraModel',
+        'camera_name',
+        'cameraName',
+    ]
+
+    for attr in attr_names:
+        if hasattr(cine_obj, attr):
+            val = getattr(cine_obj, attr)
+            if val is not None and str(val).strip():
+                return str(val).strip()
+
+    # Try accessing via header/metadata dict if available
+    for meta_attr in ['header', 'metadata', 'info', 'setup']:
+        if hasattr(cine_obj, meta_attr):
+            meta = getattr(cine_obj, meta_attr)
+            if isinstance(meta, dict):
+                for key in ['camera', 'Camera', 'cameraModel', 'CameraModel', 'camera_model']:
+                    if key in meta and meta[key]:
+                        return str(meta[key]).strip()
+
+    return None
+
+
+def get_camera_model_from_path(path: Path) -> Optional[str]:
+    """
+    Load a .cine file and extract the camera model.
+
+    Args:
+        path: Path to .cine file
+
+    Returns:
+        Camera model string if found, None otherwise
+    """
+    cine_obj = safe_load_cine(path)
+    if cine_obj is None:
+        return None
+    return get_camera_model(cine_obj)
+
+
 def iter_subfolders(root: Path) -> List[Path]:
     """Get sorted list of subdirectories."""
     return [p for p in sorted(root.iterdir()) if p.is_dir()]
