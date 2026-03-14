@@ -479,12 +479,10 @@ def detect_sphere(image: np.ndarray) -> Tuple[Optional[Tuple[int, int]], Optiona
     """
     Auto-detect sphere center and radius in image.
 
-    Uses Otsu thresholding to get binary mask, then finds center as the
+    Uses get_sphere_mask() for thresholding, then finds center as the
     midpoint between opposite extremes:
     - cx = (leftmost + rightmost) / 2
     - cy = (topmost + bottommost) / 2
-
-    This gives a geometric center that works for irregular/elliptical shapes.
 
     Args:
         image: Grayscale image
@@ -492,19 +490,11 @@ def detect_sphere(image: np.ndarray) -> Tuple[Optional[Tuple[int, int]], Optiona
     Returns:
         (center, radius) or (None, None) if not found
     """
-    # Ensure uint8 for OpenCV
-    if image.max() <= 1:
-        img_uint8 = (image * 255).astype(np.uint8)
-    else:
-        img_uint8 = image.astype(np.uint8)
+    mask = get_sphere_mask(image)
+    if mask is None:
+        return None, None
 
-    # Apply slight blur to reduce noise
-    blurred = cv2.GaussianBlur(img_uint8, (5, 5), 1)
-
-    # Otsu thresholding - automatically finds optimal threshold
-    _, mask = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-
-    # Find all white (sphere) pixels
+    # Find all sphere pixels
     white_pixels = np.where(mask == 255)
     if len(white_pixels[0]) == 0:
         return None, None
@@ -533,6 +523,10 @@ def detect_sphere(image: np.ndarray) -> Tuple[Optional[Tuple[int, int]], Optiona
     radius_y = (bottom_y - top_y) / 2
     radius = int((radius_x + radius_y) / 2)
 
+    # Sanity check: reject if not roughly circular (aspect ratio > 1.3)
+    if min(radius_x, radius_y) > 0 and max(radius_x, radius_y) / min(radius_x, radius_y) > 1.3:
+        return None, None
+
     return (cx, cy), radius
 
 
@@ -553,6 +547,13 @@ def get_sphere_mask(image: np.ndarray) -> Optional[np.ndarray]:
 
     blurred = cv2.GaussianBlur(img_uint8, (5, 5), 1)
     _, mask = cv2.threshold(blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    # Keep only the largest connected component (eliminates corner/edge noise)
+    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    if num_labels < 2:
+        return None
+    largest = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+    mask = np.where(labels == largest, np.uint8(255), np.uint8(0))
 
     return mask
 
