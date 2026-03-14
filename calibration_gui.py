@@ -449,7 +449,8 @@ class CalibrationGUI:
         ttk.Button(focal_frame, text="Detect Sphere", command=self._detect_sphere_in_preview).pack(side='left', padx=5)
         ttk.Label(focal_frame, text="|", foreground='gray').pack(side='left', padx=5)
         ttk.Button(focal_frame, text="Verify", command=self._auto_detect_focal, width=6).pack(side='left')
-        ttk.Label(focal_frame, text="(verify sharpest is at z=0)", foreground='gray', font=('', 8)).pack(side='left', padx=5)
+        ttk.Button(focal_frame, text="Re-zero", command=self._re_zero_stack, width=7).pack(side='left', padx=5)
+        ttk.Label(focal_frame, text="(re-zero z around sharpest frame)", foreground='gray', font=('', 8)).pack(side='left', padx=5)
 
         self.focal_info_var = tk.StringVar(value="")
         ttk.Label(focal_frame, textvariable=self.focal_info_var, foreground='blue', font=('', 9)).pack(side='left', padx=10)
@@ -1449,8 +1450,6 @@ The synthetic blur will match your camera!"""
         for img in self.zstack_images:
             img_u8 = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) if img.dtype != np.uint8 else img
             lap = cv2.Laplacian(img_u8, cv2.CV_64F)
-            # Mask out blackened interior (zeros from sphere processing)
-            # so artificial edges don't dominate the sharpness metric
             mask = img_u8 > 5
             if mask.any():
                 sharpness.append(lap[mask].var())
@@ -1473,6 +1472,56 @@ The synthetic blur will match your camera!"""
         else:
             self.focal_info_var.set(f"⚠ Sharpest at z = {best_z:.2f} mm (expected ~0)")
         self._append_stats_text(f"\n\nSanity check: sharpest image at z = {best_z:.2f} mm")
+
+    def _re_zero_stack(self):
+        """Re-zero z-positions around sharpest frame and sort the stack."""
+        if not self.zstack_images:
+            messagebox.showerror("Error", "No images loaded")
+            return
+
+        sharpness = []
+        for img in self.zstack_images:
+            img_u8 = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) if img.dtype != np.uint8 else img
+            lap = cv2.Laplacian(img_u8, cv2.CV_64F)
+            mask = img_u8 > 5
+            if mask.any():
+                sharpness.append(lap[mask].var())
+            else:
+                sharpness.append(0.0)
+
+        best_idx = int(np.argmax(sharpness))
+        best_z = self.zstack_positions[best_idx] if best_idx < len(self.zstack_positions) else 0
+
+        # Re-zero z-positions so sharpest frame = 0
+        shift = best_z
+        new_positions = [z - shift for z in self.zstack_positions]
+
+        # Sort stack by new z-position (most negative to most positive)
+        sorted_indices = sorted(range(len(new_positions)), key=lambda i: new_positions[i])
+        self.zstack_images = [self.zstack_images[i] for i in sorted_indices]
+        self.zstack_positions = [new_positions[i] for i in sorted_indices]
+
+        # Find where z=0 ended up after sorting
+        new_focus_idx = sorted_indices.index(best_idx)
+
+        if self.zstack_stats:
+            self.zstack_stats.focal_plane_idx = new_focus_idx
+            self.zstack_stats.focal_plane_z = 0.0
+            self.zstack_stats.z_min = self.zstack_positions[0]
+            self.zstack_stats.z_max = self.zstack_positions[-1]
+
+        self.preview_slider.set(new_focus_idx)
+        self._update_preview(new_focus_idx)
+
+        if abs(shift) < 0.01:
+            self.focal_info_var.set(f"✓ Focus already at z = 0 mm")
+        else:
+            self.focal_info_var.set(f"✓ Re-zeroed: shifted by {shift:+.2f} mm, stack sorted")
+        self._update_stats_text(
+            f"Images: {len(self.zstack_images)}\n"
+            f"Size: {self.zstack_images[0].shape[1]} x {self.zstack_images[0].shape[0]}\n"
+            f"Z range: {self.zstack_positions[0]:.2f} to {self.zstack_positions[-1]:.2f} mm"
+        )
 
     def _auto_crop_to_sphere(self):
         """Auto-crop all images to sphere region with padding."""
@@ -1562,7 +1611,7 @@ The synthetic blur will match your camera!"""
         messagebox.showinfo("Auto-Crop", f"Cropped {len(self.zstack_images)} images to {final_size}x{final_size} pixels\nCentered on sphere at ({cx}, {cy})")
 
     def _process_spheres(self):
-        """Process loaded images: detect sphere, mirror, blacken interior, crop."""
+        """Process loaded images: detect sphere, mirror, crop."""
         if not self.zstack_images:
             messagebox.showerror("Error", "No images loaded")
             return
@@ -1573,7 +1622,7 @@ The synthetic blur will match your camera!"""
         self.root.update_idletasks()
 
         processed_images, sphere_info = process_sphere_stack(
-            self.zstack_images, upper_only=upper_only
+            self.zstack_images, upper_only=upper_only, blacken=False, mirror=False
         )
 
         if sphere_info is not None:
@@ -1610,19 +1659,24 @@ The synthetic blur will match your camera!"""
             self.zstack_stats.image_width = w
             self.zstack_stats.image_height = h
 
-            self._update_stats_text(
+            stats_text = (
                 f"Images: {len(self.zstack_images)}\n"
                 f"Size: {w} x {h} (processed)\n"
                 f"Z range: {self.zstack_stats.z_min:.2f} to {self.zstack_stats.z_max:.2f} mm"
             )
+            if sphere_info is not None:
+                stats_text += f"\n\nRadius at focus: {r_for_scale} px"
+            if self.scale_calib_px_per_mm is not None:
+                stats_text += f"\nScale: {self.scale_calib_px_per_mm:.2f} px/mm"
+            self._update_stats_text(stats_text)
 
         self._update_preview(int(self.preview_slider.get()))
         self.load_progress_var.set(0)
 
-        self.crop_status_var.set("Processed (mirror + blacken + crop)")
+        self.crop_status_var.set("Processed (mirror + crop)")
         messagebox.showinfo(
             "Process Spheres",
-            f"Processed {len(self.zstack_images)} images\n(mirror + blacken + crop)"
+            f"Processed {len(self.zstack_images)} images\n(mirror + crop)"
         )
 
     def _save_cropped_images(self):
@@ -1767,7 +1821,7 @@ The synthetic blur will match your camera!"""
             for i, img in enumerate(self.zstack_images):
                 z = self.zstack_positions[i] if i < len(self.zstack_positions) else 0
                 print(f"\n[{i+1}/{n}] Measuring image at z = {z:.2f} mm")
-                measurement = measure_blur_auto(img, center, radius, method, verbose=True)
+                measurement = measure_blur_auto(img, center, radius, method, verbose=False)
                 print(f"  => σ = {measurement.sigma:.3f} px, confidence = {measurement.confidence:.3f}")
                 self.sigma_values.append(measurement.sigma)
                 self.blur_measurements.append(measurement)
