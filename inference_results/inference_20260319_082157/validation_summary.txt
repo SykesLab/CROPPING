@@ -1,0 +1,33 @@
+============================================================
+Z-STACK VALIDATION SUMMARY
+(filtered to calibration range: 0.5 <= |z| <= 6.8 mm)
+============================================================
+Samples: 50
+True z range: -6.8 to 4.0 mm
+True |z| range: 0.6 to 6.8 mm
+Pred |z| range: 1.72 to 6.38 mm
+
+--- Accuracy ---
+R² = 0.9907
+Linear fit: pred = 0.7882 × true + 0.9948
+MAE = 0.406 mm
+RMSE = 0.504 mm
+Median AE = 0.353 mm
+Bias = +0.318 mm
+Max error = 1.130 mm
+
+--- Per-Range ---
+  |z| 0–1 mm: n=  4, MAE=1.068, bias=+1.068
+  |z| 1–2 mm: n= 10, MAE=0.700, bias=+0.700
+  |z| 2–3 mm: n= 10, MAE=0.401, bias=+0.401
+  |z| 3–4 mm: n= 10, MAE=0.203, bias=+0.188
+  |z| 4–5 mm: n=  6, MAE=0.166, bias=+0.104
+  |z| 5–6 mm: n=  5, MAE=0.071, bias=-0.049
+  |z| 6–7 mm: n=  5, MAE=0.329, bias=-0.329
+
+--- Symmetry (matched |z|) ---
+Paired points: 18
+Max |diff|: 0.414 mm
+Mean |diff|: 0.148 mm
+
+============================================================
