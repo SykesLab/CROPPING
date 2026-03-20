@@ -166,7 +166,11 @@ def calibrate_approach_a(
     """
     Calibrate using Approach A (Direct Empirical).
 
-    Fits σ = ρ × |z| + σ_0 to the measured data.
+    Fits σ = ρ × |z| + σ_0 to the measured data, with automatic plateau
+    detection. At extreme defocus, blur can saturate (ERF cannot measure
+    blur larger than the crop allows), creating a plateau where measured σ
+    falls below the true linear relationship. These points are iteratively
+    excluded to produce an accurate linear fit.
 
     Args:
         z_positions: Defocus positions in mm
@@ -184,17 +188,66 @@ def calibrate_approach_a(
     z = z[valid]
     sigma = sigma[valid]
 
-    # Optionally exclude points very close to focus (where σ_0 dominates)
+    # Exclude points very close to focus (where σ_0 dominates)
     far_from_focus = np.abs(z) >= exclude_near_focus
     z_fit = z[far_from_focus]
     sigma_fit = sigma[far_from_focus]
 
     if len(z_fit) < 3:
-        # Use all points if not enough
         z_fit = z
         sigma_fit = sigma
 
-    # Fit linear model
+    # Delta-based plateau detection: at extreme defocus, ERF saturates and
+    # consecutive points have nearly identical sigma. Detect this by looking
+    # at consecutive deltas from each end of the z-range.
+    # Sort by z for consecutive delta analysis
+    sort_idx = np.argsort(z_fit)
+    z_sorted = z_fit[sort_idx]
+    s_sorted = sigma_fit[sort_idx]
+
+    deltas = np.abs(np.diff(s_sorted))
+    median_delta = np.median(deltas)
+    threshold = median_delta * 0.3  # plateau deltas are much smaller than linear
+
+    # Scan from negative end (index 0): remove while delta < threshold
+    # Need at least 3 consecutive plateau points to confirm
+    neg_plateau_end = 0
+    consecutive = 0
+    for i in range(len(deltas)):
+        if deltas[i] < threshold:
+            consecutive += 1
+        else:
+            if consecutive >= 3:
+                neg_plateau_end = i  # first linear point index
+            break
+    else:
+        if consecutive >= 3:
+            neg_plateau_end = len(deltas)
+
+    # Scan from positive end (last index): remove while delta < threshold
+    pos_plateau_start = len(z_sorted)
+    consecutive = 0
+    for i in range(len(deltas) - 1, -1, -1):
+        if deltas[i] < threshold:
+            consecutive += 1
+        else:
+            if consecutive >= 3:
+                pos_plateau_start = i + 1  # last linear point index + 1
+            break
+    else:
+        if consecutive >= 3:
+            pos_plateau_start = 0
+
+    # Keep only the linear region
+    keep_mask = np.ones(len(z_sorted), dtype=bool)
+    keep_mask[:neg_plateau_end] = False
+    keep_mask[pos_plateau_start:] = False
+
+    n_plateau = np.sum(~keep_mask)
+    z_fit = z_sorted[keep_mask]
+    sigma_fit = s_sorted[keep_mask]
+
+    # Final fit on cleaned data
     try:
         popt, pcov = curve_fit(
             linear_model, z_fit, sigma_fit,
@@ -203,14 +256,18 @@ def calibrate_approach_a(
         )
         rho, sigma_0 = popt
 
-        # Calculate R-squared using all data
-        sigma_pred = linear_model(z, rho, sigma_0)
-        ss_res = np.sum((sigma - sigma_pred) ** 2)
-        ss_tot = np.sum((sigma - np.mean(sigma)) ** 2)
+        # R-squared on the fitted points only (not including excluded plateau)
+        sigma_pred_fit = linear_model(z_fit, rho, sigma_0)
+        ss_res = np.sum((sigma_fit - sigma_pred_fit) ** 2)
+        ss_tot = np.sum((sigma_fit - np.mean(sigma_fit)) ** 2)
         r_squared = 1 - (ss_res / ss_tot) if ss_tot > 0 else 0
 
+        if n_plateau > 0:
+            print(f"  Plateau detection: excluded {n_plateau} saturated points, "
+                  f"fitting on {len(z_fit)}/{len(z_fit) + n_plateau} points "
+                  f"(threshold={threshold:.3f})")
+
     except (RuntimeError, ValueError):
-        # Fallback: simple linear regression
         abs_z = np.abs(z)
         rho = np.sum(abs_z * sigma) / np.sum(abs_z ** 2) if np.sum(abs_z ** 2) > 0 else 1.0
         sigma_0 = 0.0
@@ -220,7 +277,7 @@ def calibrate_approach_a(
         rho_px_per_mm=rho,
         sigma_0=sigma_0,
         r_squared=r_squared,
-        num_points=len(z),
+        num_points=len(z_fit),
         z_values=list(z),
         sigma_values=list(sigma),
         sigma_fitted=list(linear_model(z, rho, sigma_0))
