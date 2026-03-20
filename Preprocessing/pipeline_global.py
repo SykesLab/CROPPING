@@ -156,10 +156,18 @@ def _generate_droplet_output_global(
 ) -> Tuple[str, Dict[str, float]]:
     """Generate output for single droplet (global mode)."""
     import cv2
+    import sys as _sys
+    import numpy as np
     from config import FOCUS_METRICS_ENABLED
     from cropping import crop_droplet_with_sphere_guard
     from focus_metrics import compute_all_focus_metrics
     from image_utils import load_frame_gray, otsu_mask
+
+    # Import flatten from calibration module
+    _calib_dir = str(Path(__file__).resolve().parents[2] / 'calibration')
+    if _calib_dir not in _sys.path:
+        _sys.path.insert(0, _calib_dir)
+    from sphere_processing import flatten_sphere_crop
 
     folder_name, droplet_id, cam_data, cnn_size, full_output = args
 
@@ -222,6 +230,14 @@ def _generate_droplet_output_global(
             safety=CROP_SAFETY_PIXELS,
         )
         timing["crop"] += time.perf_counter() - t0
+
+        # Flatten crop
+        crop_f = crop.astype(np.float32) / 255.0
+        flat, info = flatten_sphere_crop(crop_f)
+        if info is not None:
+            crop = (flat * 255).clip(0, 255).astype(np.uint8)
+        else:
+            logger.warning(f"flatten failed for {folder_name}/{droplet_id}/{cam}/{path.stem}")
 
         # Compute focus metrics
         if FOCUS_METRICS_ENABLED:

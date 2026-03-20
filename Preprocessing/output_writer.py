@@ -6,11 +6,13 @@ Memory-optimised - frames are reloaded when needed rather than stored.
 
 import csv
 import logging
+import sys
 import time
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 
 import cv2
+import numpy as np
 
 from cine_io import group_cines_by_droplet, safe_load_cine, get_camera_model_from_path
 from config import CROP_SAFETY_PIXELS, OUTPUT_ROOT, FOCUS_METRICS_ENABLED
@@ -19,7 +21,48 @@ from focus_metrics import compute_all_focus_metrics
 from image_utils import load_frame_gray, otsu_mask
 from plotting import save_darkness_plot, save_geometric_overlay
 
+# Import flatten_sphere_crop from calibration module
+_CALIB_DIR = str(Path(__file__).resolve().parents[2] / 'calibration')
+if _CALIB_DIR not in sys.path:
+    sys.path.insert(0, _CALIB_DIR)
+from sphere_processing import flatten_sphere_crop
+
 logger = logging.getLogger(__name__)
+
+# Flattening failure tracking
+_flatten_fail_count = 0
+_flatten_fail_log: List[str] = []
+
+
+def _flatten_and_convert(crop_uint8: np.ndarray, source_id: str = "unknown") -> np.ndarray:
+    """Flatten a uint8 crop. Returns uint8. On detection failure returns original."""
+    global _flatten_fail_count
+    crop_f = crop_uint8.astype(np.float32) / 255.0
+    flat, info = flatten_sphere_crop(crop_f)
+    if info is None:
+        _flatten_fail_count += 1
+        _flatten_fail_log.append(source_id)
+        logger.warning(f"flatten failed for {source_id} (total: {_flatten_fail_count})")
+        return crop_uint8
+    return (flat * 255).clip(0, 255).astype(np.uint8)
+
+
+def get_flatten_stats() -> Tuple[int, List[str]]:
+    """Return (fail_count, fail_log) for external reporting."""
+    return _flatten_fail_count, list(_flatten_fail_log)
+
+
+def write_flatten_failure_log(output_dir: Path) -> None:
+    """Write flatten failure log to file if any failures occurred."""
+    if not _flatten_fail_log:
+        return
+    log_path = output_dir / 'flatten_failures.log'
+    with open(log_path, 'w') as f:
+        f.write(f"Flatten failures: {_flatten_fail_count}\n")
+        f.write("=" * 50 + "\n")
+        for entry in _flatten_fail_log:
+            f.write(f"{entry}\n")
+    logger.info(f"Flatten failure log: {log_path} ({_flatten_fail_count} failures)")
 
 
 # Optional callback for GUI notification
@@ -136,6 +179,9 @@ def generate_droplet_outputs(
             safety=CROP_SAFETY_PIXELS,
         )
         timing["crop"] += time.perf_counter() - t0
+
+        # Flatten crop
+        crop = _flatten_and_convert(crop, source_id=f"{droplet_id}/{cam}/{path.stem}")
 
         # Save crop to camera subfolder (create on first use)
         t0 = time.perf_counter()
@@ -309,6 +355,10 @@ def generate_folder_outputs(
                             safety=CROP_SAFETY_PIXELS,
                         )
                         timing["crop"] += time.perf_counter() - t0
+
+                        # Flatten crop with adaptive margin
+                        scale = _get_scale_for_crop(path.stem, cam)
+                        crop = _flatten_and_convert(crop, scale, source_id=f"{droplet_id}/{cam}/{path.stem}")
 
                         # Compute focus metrics
                         if FOCUS_METRICS_ENABLED:

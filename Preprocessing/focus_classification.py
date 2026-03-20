@@ -1,33 +1,75 @@
 """
 Focus classification for pipeline outputs.
 
-Classifies crops as sharp/medium/blurry using per-folder, per-camera thresholds.
+Classifies crops as sharp/medium/blurry using per-folder, per-camera thresholds
+based on ERF blur sigma measurement. Lower ERF sigma = sharper.
+
 Each camera within each material folder is classified independently to ensure
 balanced training data across different optical setups.
+
+Laplacian variance columns are retained in output CSVs for comparison.
 """
 
 import logging
 import shutil
 from pathlib import Path
-from typing import List
+from typing import List, Optional, Tuple
 
+import cv2
 import matplotlib.pyplot as plt
+import numpy as np
 import pandas as pd
 
 from config import OUTPUT_ROOT
 from crop_blur_measurement import measure_erf_blur
-from focus_metrics import classify_folder_focus
+from focus_metrics import compute_all_focus_metrics
 
 logger = logging.getLogger(__name__)
+
+
+def classify_by_erf_sigma(
+    erf_sigmas: np.ndarray,
+    sharp_percentile: float = 25.0,
+    blur_percentile: float = 75.0,
+) -> Tuple[np.ndarray, float, float]:
+    """
+    Classify focus using ERF sigma values. Lower sigma = sharper.
+
+    Args:
+        erf_sigmas: Array of ERF sigma values (NaN entries are classified as None)
+        sharp_percentile: Percentile below which crops are 'sharp' (default 25th)
+        blur_percentile: Percentile above which crops are 'blurry' (default 75th)
+
+    Returns:
+        (classifications array, sharp_threshold, blur_threshold)
+    """
+    valid = erf_sigmas[~np.isnan(erf_sigmas)]
+    if len(valid) < 4:
+        return np.full(len(erf_sigmas), None, dtype=object), 0.0, 0.0
+
+    sharp_thresh = float(np.percentile(valid, sharp_percentile))
+    blur_thresh = float(np.percentile(valid, blur_percentile))
+
+    classifications = []
+    for sigma in erf_sigmas:
+        if np.isnan(sigma):
+            classifications.append(None)
+        elif sigma <= sharp_thresh:
+            classifications.append("sharp")
+        elif sigma >= blur_thresh:
+            classifications.append("blurry")
+        else:
+            classifications.append("medium")
+
+    return np.array(classifications, dtype=object), sharp_thresh, blur_thresh
 
 
 def run_focus_classification() -> None:
     """
     Run per-folder, per-camera focus classification on all summary CSVs.
 
-    Uses per-folder+camera percentile thresholds (25th/75th) to classify crops
-    as sharp, medium, or blurry based on Laplacian variance. This ensures
-    balanced classification even when folders/cameras have different optical setups.
+    Uses ERF sigma as the primary ranking metric (lower = sharper).
+    Retains laplacian variance columns for comparison.
 
     Outputs saved to OUTPUT/Focus/:
         - focus_classified_all.csv: All crops with classifications
@@ -36,28 +78,25 @@ def run_focus_classification() -> None:
         - focus_classification_summary.png: Visualisation
         - material/camera/: Sharp crops organized by material and camera
     """
-    logger.info("Starting focus classification...")
+    logger.info("Starting ERF-based focus classification...")
 
     all_data: List[pd.DataFrame] = []
     folder_stats: List[dict] = []
     total_sharp_copied = 0
+    erf_fail_count = 0
 
     # Create Focus output directory
     focus_dir = OUTPUT_ROOT / "Focus"
     focus_dir.mkdir(parents=True, exist_ok=True)
 
     # Process each folder's CSV
-    for csv_path in OUTPUT_ROOT.rglob("*_summary.csv"):
+    for csv_path in sorted(OUTPUT_ROOT.rglob("*_summary.csv")):
         # Skip CSVs inside the Focus directory
         if "Focus" in csv_path.parts:
             continue
 
         try:
             df = pd.read_csv(csv_path)
-
-            if 'laplacian_var' not in df.columns or df['laplacian_var'].isna().all():
-                print(f"  Skipping {csv_path.name} (no focus metrics)")
-                continue
 
             if 'camera' not in df.columns:
                 print(f"  Skipping {csv_path.name} (no camera column)")
@@ -68,10 +107,31 @@ def run_focus_classification() -> None:
             # Add folder column
             df['folder'] = folder_name
 
+            # Measure ERF sigma for every crop in this folder
+            print(f"  {folder_name}: measuring ERF sigma on {len(df)} crops...")
+            erf_sigmas = []
+            for _, row in df.iterrows():
+                crop_path = row.get('crop_path', '')
+                sigma = None
+                if crop_path and Path(crop_path).exists():
+                    try:
+                        img = cv2.imread(str(crop_path), cv2.IMREAD_GRAYSCALE)
+                        if img is not None:
+                            sigma = measure_erf_blur(img)
+                    except Exception:
+                        pass
+                if sigma is None:
+                    erf_fail_count += 1
+                erf_sigmas.append(sigma if sigma is not None else float('nan'))
+
+            df['erf_sigma'] = erf_sigmas
+            n_measured = sum(1 for s in erf_sigmas if not np.isnan(s))
+            print(f"    ERF measured: {n_measured}/{len(df)}")
+
             # Initialize focus_class column
             df['focus_class'] = None
 
-            # Classify per-camera within this folder
+            # Classify per-camera within this folder using ERF sigma
             folder_sharp = 0
             folder_medium = 0
             folder_blurry = 0
@@ -79,18 +139,17 @@ def run_focus_classification() -> None:
             for cam in df['camera'].unique():
                 cam_mask = df['camera'] == cam
                 cam_df = df[cam_mask]
-                cam_scores = cam_df['laplacian_var'].dropna().values
+                cam_erf = cam_df['erf_sigma'].values
 
-                if len(cam_scores) < 4:
-                    # Too few samples for this camera, skip classification
+                valid_erf = cam_erf[~np.isnan(cam_erf)]
+                if len(valid_erf) < 4:
                     continue
 
-                # Per-folder+camera classification
-                classifications, sharp_thresh, blur_thresh = classify_folder_focus(cam_scores)
+                # Per-folder+camera classification using ERF sigma
+                classifications, sharp_thresh, blur_thresh = classify_by_erf_sigma(cam_erf)
 
                 # Apply classifications to this camera's rows
-                valid_idx = cam_mask & df['laplacian_var'].notna()
-                df.loc[valid_idx, 'focus_class'] = classifications
+                df.loc[cam_mask, 'focus_class'] = classifications
 
                 # Count for this camera
                 cam_sharp = (df.loc[cam_mask, 'focus_class'] == 'sharp').sum()
@@ -106,12 +165,17 @@ def run_focus_classification() -> None:
                     'folder': folder_name,
                     'camera': cam,
                     'n_total': len(cam_df),
+                    'n_measured': int(np.sum(~np.isnan(cam_erf))),
                     'n_sharp': cam_sharp,
                     'n_medium': cam_medium,
                     'n_blurry': cam_blurry,
-                    'sharp_thresh': sharp_thresh,
-                    'blur_thresh': blur_thresh,
-                    'mean_laplacian': cam_df['laplacian_var'].mean(),
+                    'erf_sharp_thresh': sharp_thresh,
+                    'erf_blur_thresh': blur_thresh,
+                    'erf_sigma_mean': float(np.nanmean(cam_erf)),
+                    'erf_sigma_std': float(np.nanstd(cam_erf)),
+                    # Keep laplacian stats for comparison
+                    'laplacian_mean': float(cam_df['laplacian_var'].mean())
+                        if 'laplacian_var' in cam_df.columns else None,
                 })
 
                 # Copy sharp images to Focus/folder/camera/
@@ -127,15 +191,17 @@ def run_focus_classification() -> None:
                             shutil.copy2(crop_path, dest_path)
                             total_sharp_copied += 1
 
-            # Save updated CSV
+            # Save updated CSV (with erf_sigma and focus_class columns)
             df.to_csv(csv_path, index=False)
 
             all_data.append(df)
 
-            print(f"  {folder_name}: {folder_sharp} sharp / {folder_medium} medium / {folder_blurry} blurry")
+            print(f"    Classified: {folder_sharp} sharp / {folder_medium} medium / {folder_blurry} blurry")
 
         except Exception as e:
             print(f"  Error processing {csv_path.name}: {e}")
+            import traceback
+            traceback.print_exc()
 
     if not all_data:
         print("  No valid CSVs found for focus classification")
@@ -153,27 +219,11 @@ def run_focus_classification() -> None:
     sharp_only_df = combined_df[combined_df['focus_class'] == 'sharp'].copy()
     # Add diameter column
     sharp_only_df["diameter_px"] = sharp_only_df["y_bottom"] - sharp_only_df["y_top"]
-
-    # Measure native blur sigma (Gaussian erf fit) for each sharp crop
-    print(f"\n  Measuring native blur for {len(sharp_only_df)} sharp crops...")
-    native_blur = []
-    n_measured = 0
-    for crop_path in sharp_only_df['crop_path']:
-        sigma = None
-        try:
-            import cv2 as _cv2
-            img = _cv2.imread(str(crop_path), _cv2.IMREAD_GRAYSCALE)
-            if img is not None:
-                sigma = measure_erf_blur(img)
-                if sigma is not None:
-                    n_measured += 1
-        except Exception:
-            pass
-        native_blur.append(sigma)
-    sharp_only_df["native_blur_sigma"] = native_blur
-    print(f"  Measured: {n_measured}/{len(sharp_only_df)} crops "
-          f"(mean={sharp_only_df['native_blur_sigma'].mean():.2f} px, "
-          f"std={sharp_only_df['native_blur_sigma'].std():.2f} px)")
+    # Add filename column from crop_path
+    sharp_only_df["filename"] = sharp_only_df["crop_path"].apply(
+        lambda p: Path(p).name if pd.notna(p) else "")
+    # native_blur_sigma is now just the erf_sigma column (already measured)
+    sharp_only_df["native_blur_sigma"] = sharp_only_df["erf_sigma"]
 
     sharp_path = focus_dir / "sharp_crops.csv"
     sharp_only_df.to_csv(sharp_path, index=False)
@@ -190,13 +240,14 @@ def run_focus_classification() -> None:
     total_medium = combined_df['focus_class'].eq('medium').sum()
     total_blurry = combined_df['focus_class'].eq('blurry').sum()
 
-    print(f"\n  FOCUS CLASSIFICATION SUMMARY (per-folder+camera thresholds)")
-    print(f"  ─────────────────────────────────────────────────────────────")
-    print(f"  Total crops:  {len(combined_df)}")
-    print(f"  Sharp:        {total_sharp} ({100*total_sharp/len(combined_df):.1f}%)")
-    print(f"  Medium:       {total_medium} ({100*total_medium/len(combined_df):.1f}%)")
-    print(f"  Blurry:       {total_blurry} ({100*total_blurry/len(combined_df):.1f}%)")
-    print(f"  Sharp images copied to Focus/: {total_sharp_copied}")
+    print(f"\n  FOCUS CLASSIFICATION SUMMARY (ERF sigma, per-folder+camera thresholds)")
+    print(f"  ─────────────────────────────────────────────────────────────────────────")
+    print(f"  Total crops:     {len(combined_df)}")
+    print(f"  ERF measured:    {len(combined_df) - erf_fail_count}/{len(combined_df)}")
+    print(f"  Sharp:           {total_sharp} ({100*total_sharp/len(combined_df):.1f}%)")
+    print(f"  Medium:          {total_medium} ({100*total_medium/len(combined_df):.1f}%)")
+    print(f"  Blurry:          {total_blurry} ({100*total_blurry/len(combined_df):.1f}%)")
+    print(f"  Sharp copied:    {total_sharp_copied}")
 
     # Per-camera summary
     if 'camera' in combined_df.columns:
@@ -205,8 +256,10 @@ def run_focus_classification() -> None:
             cam_df = combined_df[combined_df['camera'] == cam]
             cam_sharp = (cam_df['focus_class'] == 'sharp').sum()
             cam_total = len(cam_df)
+            cam_erf_mean = cam_df['erf_sigma'].mean()
             if cam_total > 0:
-                print(f"    Camera {cam}: {cam_sharp}/{cam_total} sharp ({100*cam_sharp/cam_total:.1f}%)")
+                print(f"    Camera {cam}: {cam_sharp}/{cam_total} sharp "
+                      f"({100*cam_sharp/cam_total:.1f}%), mean ERF σ={cam_erf_mean:.2f}px")
 
     # Generate summary plot
     _generate_summary_plot(combined_df, stats_df, focus_dir, total_sharp, total_medium, total_blurry)
@@ -230,25 +283,23 @@ def _generate_summary_plot(
         labels = [f'Sharp\n({total_sharp})', f'Medium\n({total_medium})', f'Blurry\n({total_blurry})']
         colors = ['#2ecc71', '#f39c12', '#e74c3c']
         ax1.pie(counts, labels=labels, colors=colors, autopct='%1.0f%%', startangle=90)
-        ax1.set_title('Focus Classification (Per-Folder+Camera Thresholds)')
+        ax1.set_title('Focus Classification (ERF sigma, Per-Folder+Camera)')
 
-        # Right: per-folder+camera sharp count (grouped by material)
+        # Right: per-folder+camera sharp count
         ax2 = axes[1]
 
-        # Camera colors: g=green, v=violet, m=magenta
         cam_colors = {'g': '#22c55e', 'v': '#8b5cf6', 'm': '#ec4899'}
 
-        # Group by folder and organize cameras
         if 'camera' in stats_df.columns and len(stats_df) > 0:
             folders = stats_df['folder'].unique()
-            cam_order = ['m', 'g', 'v']  # Order within each material group
+            cam_order = ['m', 'g', 'v']
 
             y_positions = []
             bar_values = []
             bar_colors = []
             y_labels = []
             folder_label_positions = {}
-            separator_positions = []  # Y positions for black separator lines
+            separator_positions = []
 
             y_pos = 0
             for folder in sorted(folders):
@@ -265,35 +316,25 @@ def _generate_summary_plot(
                         y_pos += 1
 
                 if y_pos > folder_start:
-                    # Position folder label at middle of its camera group
                     folder_label_positions[folder] = (folder_start + y_pos - 1) / 2
-                    # Record separator position (between this material and next)
-                    separator_positions.append(y_pos - 0.5 + 0.25)  # Midpoint of the gap
-                    y_pos += 0.5  # Gap between materials
+                    separator_positions.append(y_pos - 0.5 + 0.25)
+                    y_pos += 0.5
 
-            # Plot bars (height=1.0 so bars touch within each material group)
             ax2.barh(y_positions, bar_values, color=bar_colors, alpha=0.8, height=1.0)
 
-            # Add thin black separator lines between materials
-            # Skip the last separator (after last material)
             for sep_y in separator_positions[:-1]:
                 ax2.axhline(y=sep_y, color='black', linewidth=0.8, linestyle='-')
 
-            # Set camera labels on y-axis
             ax2.set_yticks(y_positions)
             ax2.set_yticklabels(y_labels, fontsize=8)
 
-            # Add folder labels on the left (outside the plot)
             for folder, y_mid in folder_label_positions.items():
                 ax2.text(-0.08, y_mid, folder, transform=ax2.get_yaxis_transform(),
                          ha='right', va='center', fontsize=7, fontweight='bold')
 
             ax2.set_xlim(left=0)
-
-            # Add padding on the left for folder labels
             plt.subplots_adjust(left=0.18)
         else:
-            # Fallback for no camera column
             stats_df_sorted = stats_df.sort_values('n_sharp', ascending=True)
             ax2.barh(range(len(stats_df_sorted)), stats_df_sorted['n_sharp'], color='#22c55e', alpha=0.7)
             ax2.set_yticks(range(len(stats_df_sorted)))
