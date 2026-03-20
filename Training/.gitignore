@@ -1,0 +1,5 @@
+__pycache__/
+training_output/
+test_results/
+*.pyc
+nul
