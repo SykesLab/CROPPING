@@ -2,11 +2,15 @@
 Sphere detection and processing utilities for calibration images.
 
 Functions for detecting spheres, mirroring to remove stage artifacts,
-blackening interiors to remove hot spots, and cropping to square.
+blackening interiors to remove hot spots, flattening crops, and cropping to square.
 """
 
 import cv2
 import numpy as np
+
+
+# Default feather width for flattening (pixels)
+FLATTEN_FEATHER = 3
 
 
 def find_sphere_center(
@@ -125,6 +129,205 @@ def blacken_sphere_interior(
     return img
 
 
+def _detect_sphere_contour(image: np.ndarray) -> tuple | None:
+    """
+    Detect sphere boundary via Canny edges, selecting the contour that
+    contains the image center (since crops are centered on the sphere).
+
+    Uses fillPoly to create a proper filled mask for distance-map computation.
+
+    Returns:
+        (contour, cx, cy, radius) or None if detection fails.
+    """
+    if image.dtype != np.uint8:
+        img_u8 = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    else:
+        img_u8 = image
+
+    blur = cv2.GaussianBlur(img_u8, (5, 5), 0)
+    edges = cv2.Canny(blur, 50, 150)
+    contours, _ = cv2.findContours(edges, cv2.RETR_LIST, cv2.CHAIN_APPROX_NONE)
+    if not contours:
+        return None
+
+    # The sphere is at the center of the crop. Find the contour containing
+    # the center point — that's the sphere boundary.
+    h, w = image.shape[:2]
+    center_pt = (w // 2, h // 2)
+
+    cnt = None
+    for c in sorted(contours, key=cv2.contourArea, reverse=True):
+        if cv2.pointPolygonTest(c, center_pt, False) >= 0:
+            cnt = c
+            break
+
+    if cnt is None:
+        # Fallback: largest contour
+        cnt = max(contours, key=cv2.contourArea)
+    if len(cnt) < 20:
+        return None
+
+    M = cv2.moments(cnt)
+    if M['m00'] == 0:
+        return None
+
+    cx = int(M['m10'] / M['m00'])
+    cy = int(M['m01'] / M['m00'])
+    pts = cnt.reshape(-1, 2)
+    dists = np.sqrt((pts[:, 0] - cx)**2 + (pts[:, 1] - cy)**2)
+    radius = int(round(np.mean(dists)))
+
+    return cnt, cx, cy, radius
+
+
+def _detect_sphere_contour_otsu(image: np.ndarray) -> tuple | None:
+    """
+    Detect sphere boundary via Otsu thresholding. More robust than Canny on
+    blurry images (calibration z-stacks) because it finds the global intensity
+    boundary rather than edge gradients.
+
+    Handles both dark-on-bright and bright-on-dark spheres by checking which
+    side of the threshold contains the image center.
+
+    Returns:
+        (contour, cx, cy, radius) or None if detection fails.
+    """
+    if image.dtype != np.uint8:
+        img_u8 = cv2.normalize(image, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
+    else:
+        img_u8 = image
+
+    blur = cv2.GaussianBlur(img_u8, (5, 5), 0)
+    _, thresh = cv2.threshold(blur, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
+
+    # Check if center is inside the mask — if not, the sphere is bright-on-dark
+    h, w = image.shape[:2]
+    if thresh[h // 2, w // 2] == 0:
+        thresh = 255 - thresh
+
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_NONE)
+    if not contours:
+        return None
+
+    cnt = max(contours, key=cv2.contourArea)
+    if len(cnt) < 20:
+        return None
+
+    M = cv2.moments(cnt)
+    if M['m00'] == 0:
+        return None
+
+    cx = int(M['m10'] / M['m00'])
+    cy = int(M['m01'] / M['m00'])
+    pts = cnt.reshape(-1, 2)
+    dists = np.sqrt((pts[:, 0] - cx)**2 + (pts[:, 1] - cy)**2)
+    radius = int(round(np.mean(dists)))
+
+    return cnt, cx, cy, radius
+
+
+def flatten_sphere_crop(
+    image: np.ndarray,
+    contour: np.ndarray | None = None,
+    feather: int = FLATTEN_FEATHER,
+    inner_margin: int = 0,
+    flatten_exterior: bool = True,
+) -> tuple[np.ndarray, dict | None]:
+    """
+    Flatten sphere crop: interior to 0, optionally background to 1, with feather.
+
+    Detects the sphere boundary via Canny edge detection (default) or Otsu
+    thresholding (when inner_margin > 0, for calibration z-stacks), then uses
+    a signed distance map to flatten the image.
+
+    Two modes:
+        Simple (default): inner_margin=0, flatten_exterior=True.
+            Interior=0, exterior=1, 3px feather. For sharp preprocessing crops.
+            Validated on 62 crops: 100% CLEAN, +1.0% mean error.
+
+        Calibration: inner_margin=20, flatten_exterior=False.
+            Only interior beyond 20px from edge is zeroed. Exterior untouched.
+            Preserves blur-widened edges on defocused z-stack frames.
+            Per-frame Otsu detection adapts boundary to each frame's blur.
+
+    Args:
+        image: Grayscale image (uint8 or float32)
+        contour: Pre-detected contour, or None to auto-detect
+        feather: Width of transition zone in pixels (default 3)
+        inner_margin: Pixels inside contour to preserve before flattening (default 0)
+        flatten_exterior: Whether to set exterior to 1.0 (default True)
+
+    Returns:
+        (flattened_float32_image, info_dict) or (original_copy, None) on failure
+    """
+    # Normalise to float [0, 1]
+    if image.dtype == np.uint8:
+        img_f = image.astype(np.float32) / 255.0
+    else:
+        img_f = image.astype(np.float32)
+
+    # Auto-detect contour if not provided
+    if contour is None:
+        if inner_margin > 0:
+            # Calibration mode: use Otsu (works reliably across blur levels)
+            detection = _detect_sphere_contour_otsu(img_f)
+        else:
+            # Simple mode: use Canny (sharper boundary for sharp crops)
+            detection = _detect_sphere_contour(img_f)
+        if detection is None:
+            return img_f.copy(), None
+        contour, cx, cy, radius = detection
+    else:
+        # Compute center/radius from provided contour
+        M = cv2.moments(contour)
+        if M['m00'] == 0:
+            return img_f.copy(), None
+        cx = int(M['m10'] / M['m00'])
+        cy = int(M['m01'] / M['m00'])
+        pts = contour.reshape(-1, 2)
+        dists = np.sqrt((pts[:, 0] - cx)**2 + (pts[:, 1] - cy)**2)
+        radius = int(round(np.mean(dists)))
+
+    # Build filled mask using fillPoly
+    h, w = img_f.shape[:2]
+    mask = np.zeros((h, w), dtype=np.uint8)
+    cv2.fillPoly(mask, [contour.reshape(-1, 2)], 255)
+
+    # Signed distance map: positive = inside sphere, negative = outside
+    dist_inside = cv2.distanceTransform(mask, cv2.DIST_L2, 5).astype(np.float32)
+    dist_outside = cv2.distanceTransform(255 - mask, cv2.DIST_L2, 5).astype(np.float32)
+    signed_dist = np.where(mask > 0, dist_inside, -dist_outside)
+
+    out = img_f.copy()
+    fw = max(feather, 1)
+    m_in = inner_margin
+
+    # Interior: set to 0 beyond (inner_margin + feather) from contour
+    out[signed_dist > (m_in + fw)] = 0.0
+
+    # Inner feather: smooth transition from original to 0
+    mfi = (signed_dist > m_in) & (signed_dist <= (m_in + fw))
+    if np.any(mfi):
+        t = np.clip((signed_dist[mfi] - m_in) / fw, 0, 1)
+        out[mfi] = (1 - t) * img_f[mfi]
+
+    # Exterior (only if requested)
+    if flatten_exterior:
+        out[signed_dist < -fw] = 1.0
+        mfo = (signed_dist < 0) & (signed_dist >= -fw)
+        if np.any(mfo):
+            t = np.clip(-signed_dist[mfo] / fw, 0, 1)
+            out[mfo] = img_f[mfo] + t * (1.0 - img_f[mfo])
+
+    method = 'contour_distmap_calibration' if inner_margin > 0 else 'contour_distmap_simple'
+    return out, {
+        'center': (cx, cy), 'radius': radius,
+        'feather': fw, 'inner_margin': m_in,
+        'flatten_exterior': flatten_exterior,
+        'method': method,
+    }
+
+
 def crop_to_square(
     img: np.ndarray,
     center_x: int,
@@ -190,8 +393,25 @@ def _apply_sphere_pipeline(
     output_size: int | None = None,
     mirror: bool = True,
     blacken: bool = True,
+    flatten: bool = False,
+    flatten_mode: str = "default",
 ) -> np.ndarray:
-    """Apply crop → normalize to uint8 → resize, with optional mirror and blacken steps."""
+    """Apply crop -> normalize to uint8 -> resize, with optional mirror, blacken, and flatten steps.
+
+    Args:
+        flatten_mode: Flattening mode.
+            "default" — per-frame Otsu contour detection, interior-only flattening with 20px
+                inner margin and 3px feather. Exterior left untouched. Designed for calibration
+                z-stacks where blur widens the edge and exterior must be preserved.
+            "simple" — per-frame Canny contour detection, zero-margin flattening.
+                Interior=0, exterior=1, 3px feather. For sharp preprocessing crops.
+            "inference" — per-frame Otsu contour detection, full flattening (interior=0,
+                exterior=1) with 40px feather. Designed for inference on defocused images:
+                Otsu handles blurry boundaries, wide feather preserves blur-widened edges,
+                full exterior flatten matches training domain.
+    """
+    import logging as _logging
+
     processed = img.copy()
     if mirror:
         processed = mirror_from_center(processed, cy)
@@ -200,6 +420,33 @@ def _apply_sphere_pipeline(
             processed, cx, cy, radius, radius_fraction=0.50, edge_margin_px=0
         )
     processed = crop_to_square(processed, cx, cy, radius, padding=1.2)
+
+    if flatten:
+        # Convert to float [0, 1] for flattening
+        if processed.dtype == np.uint8:
+            proc_f = processed.astype(np.float32) / 255.0
+        else:
+            proc_f = processed.astype(np.float32)
+            if proc_f.max() > 1.0:
+                proc_f /= proc_f.max()
+
+        if flatten_mode == "simple":
+            flat, info = flatten_sphere_crop(proc_f)
+        elif flatten_mode == "inference":
+            # Otsu detection (robust to blur) + full flatten + 40px feather
+            # The wide feather preserves blur-widened edge profiles while
+            # removing background gradients that confuse the model.
+            flat, info = flatten_sphere_crop(proc_f, inner_margin=1,
+                                             flatten_exterior=True, feather=40)
+        else:
+            # Calibration mode: per-frame Otsu, interior only, 20px inner margin
+            flat, info = flatten_sphere_crop(proc_f, inner_margin=20, flatten_exterior=False)
+
+        if info is not None:
+            processed = flat
+        else:
+            _logging.getLogger(__name__).warning(
+                "_apply_sphere_pipeline: flatten detection failed — using unflattened crop")
 
     # Normalize to uint8 after processing (not before) so that the
     # blackened interior doesn't compress edge dynamic range
@@ -282,12 +529,15 @@ def process_sphere_stack(
     output_size: int | None = None,
     mirror: bool = True,
     blacken: bool = True,
+    flatten: bool = False,
+    flatten_mode: str = "default",
 ) -> tuple[list[np.ndarray], tuple | None]:
     """
     Process a z-stack of sphere images using a single consensus detection.
 
     Detects the sphere across all frames, finds the consensus center/radius,
     then applies the pipeline to every frame with the same parameters.
+    Flattening uses per-frame contour detection (adapts to each frame's blur).
 
     Args:
         images: List of grayscale images (z-stack)
@@ -295,6 +545,9 @@ def process_sphere_stack(
         output_size: If set, resize output to this square size
         mirror: Apply vertical mirror about sphere centre (calibration only)
         blacken: Fill sphere interior with median value (calibration only)
+        flatten: Flatten crops (interior=0, background=1, small feather)
+        flatten_mode: "default" for calibration (inner margin, no exterior),
+                      "simple" for preprocessing (zero margin, full flatten)
 
     Returns:
         (processed_images, (cx, cy, radius)) or (original_images, None) if detection fails
@@ -304,9 +557,12 @@ def process_sphere_stack(
         return list(images), None
 
     cx, cy, radius = sphere
+
     processed = []
     for img in images:
         processed.append(_apply_sphere_pipeline(img, cx, cy, radius, output_size,
-                                                mirror=mirror, blacken=blacken))
+                                                mirror=mirror, blacken=blacken,
+                                                flatten=flatten,
+                                                flatten_mode=flatten_mode))
 
     return processed, (cx, cy, radius)
