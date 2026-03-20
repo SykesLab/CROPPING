@@ -1622,29 +1622,20 @@ The synthetic blur will match your camera!"""
         self.root.update_idletasks()
 
         processed_images, sphere_info = process_sphere_stack(
-            self.zstack_images, upper_only=upper_only, blacken=False, mirror=False
+            self.zstack_images, upper_only=upper_only,
+            blacken=False, mirror=False, flatten=True,
+            flatten_mode="default"
         )
 
         if sphere_info is not None:
             cx, cy, r = sphere_info
             print(f"  Consensus sphere: center=({cx},{cy}) radius={r}")
 
-            # Use sharpest frame for scale measurement — blur expands apparent diameter at defocus
-            sharpness = []
-            for img in self.zstack_images:
-                img_u8 = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) if img.dtype != np.uint8 else img
-                lap = cv2.Laplacian(img_u8, cv2.CV_64F)
-                mask = img_u8 > 5
-                sharpness.append(lap[mask].var() if mask.any() else 0.0)
-            best_idx = int(np.argmax(sharpness))
-            _, r_sharp = detect_sphere(self.zstack_images[best_idx])
-            r_for_scale = r_sharp if r_sharp is not None else r
-            print(f"  Sharpest frame #{best_idx}: radius={r_for_scale} px (used for scale)")
-
+            # Compute scale for metadata/display
             try:
                 d_mm = float(self.sphere_diameter_mm_var.get())
                 if d_mm > 0:
-                    self.scale_calib_px_per_mm = (r_for_scale * 2) / d_mm
+                    self.scale_calib_px_per_mm = (r * 2) / d_mm
                     print(f"  Calibration camera scale: {self.scale_calib_px_per_mm:.2f} px/mm")
             except ValueError:
                 pass
@@ -1665,7 +1656,7 @@ The synthetic blur will match your camera!"""
                 f"Z range: {self.zstack_stats.z_min:.2f} to {self.zstack_stats.z_max:.2f} mm"
             )
             if sphere_info is not None:
-                stats_text += f"\n\nRadius at focus: {r_for_scale} px"
+                stats_text += f"\n\nRadius: {r} px"
             if self.scale_calib_px_per_mm is not None:
                 stats_text += f"\nScale: {self.scale_calib_px_per_mm:.2f} px/mm"
             self._update_stats_text(stats_text)
