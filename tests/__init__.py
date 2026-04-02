@@ -1,0 +1,1 @@
+"""CROPPING pipeline tests."""
