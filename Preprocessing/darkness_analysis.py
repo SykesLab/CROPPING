@@ -47,16 +47,25 @@ def get_dark_fraction(cine_obj: Any, idx: int) -> float:
     return float(valid_area) / float(total_pixels)
 
 
-def analyze_cine_darkness(cine_obj: Any) -> Dict[str, Any]:
-    """Compute darkness fraction for every frame in the cine."""
+def analyze_cine_darkness(cine_obj: Any, step: int = 1) -> Dict[str, Any]:
+    """Compute darkness fraction for frames in the cine.
+
+    Args:
+        cine_obj: Loaded cine object.
+        step: Sample every Nth frame (1 = all frames, 2 = every other, etc.).
+              Values > 1 trade temporal resolution for speed.
+    """
     first, last = cine_obj.range
-    curve = [get_dark_fraction(cine_obj, i) for i in range(first, last + 1)]
+    indices = range(first, last + 1, step)
+    curve = [get_dark_fraction(cine_obj, i) for i in indices]
 
     return {
         "first_frame": first,
         "last_frame": last,
         "darkness_curve": np.array(curve, dtype=np.float32),
-        "total_frames": len(curve),
+        "total_frames": last - first + 1,
+        "sampled_frames": len(curve),
+        "step": step,
     }
 
 
