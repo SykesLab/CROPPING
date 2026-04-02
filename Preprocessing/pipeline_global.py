@@ -164,10 +164,13 @@ def _generate_droplet_output_global(
     from image_utils import load_frame_gray, otsu_mask
 
     # Import flatten from calibration module
-    _calib_dir = str(Path(__file__).resolve().parents[2] / 'calibration')
-    if _calib_dir not in _sys.path:
-        _sys.path.insert(0, _calib_dir)
-    from sphere_processing import flatten_sphere_crop
+    try:
+        from Calibration.sphere_processing import flatten_sphere_crop
+    except ImportError:
+        _calib_dir = str(Path(__file__).resolve().parent.parent / 'Calibration')
+        if _calib_dir not in _sys.path:
+            _sys.path.insert(0, _calib_dir)
+        from sphere_processing import flatten_sphere_crop
 
     folder_name, droplet_id, cam_data, cnn_size, full_output = args
 

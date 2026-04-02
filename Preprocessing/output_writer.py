@@ -22,10 +22,13 @@ from image_utils import load_frame_gray, otsu_mask
 from plotting import save_darkness_plot, save_geometric_overlay
 
 # Import flatten_sphere_crop from calibration module
-_CALIB_DIR = str(Path(__file__).resolve().parents[2] / 'calibration')
-if _CALIB_DIR not in sys.path:
-    sys.path.insert(0, _CALIB_DIR)
-from sphere_processing import flatten_sphere_crop
+try:
+    from Calibration.sphere_processing import flatten_sphere_crop
+except ImportError:
+    _CALIB_DIR = str(Path(__file__).resolve().parent.parent / 'Calibration')
+    if _CALIB_DIR not in sys.path:
+        sys.path.insert(0, _CALIB_DIR)
+    from sphere_processing import flatten_sphere_crop
 
 logger = logging.getLogger(__name__)
 

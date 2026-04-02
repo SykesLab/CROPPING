@@ -17,8 +17,10 @@ import numpy as np
 import pandas as pd
 from tqdm import tqdm
 
-# Add parent to path for imports
-sys.path.insert(0, str(Path(__file__).parent))
+# Add parent to path for imports (fallback for non-package usage)
+_parent = str(Path(__file__).parent)
+if _parent not in sys.path:
+    sys.path.insert(0, _parent)
 
 from config import OUTPUT_ROOT
 from focus_metrics import (
