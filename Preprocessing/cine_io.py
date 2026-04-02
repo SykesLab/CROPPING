@@ -9,6 +9,7 @@ Includes silent pyphantom import to suppress SDK banner on worker spawn.
 
 import os
 import re
+import logging
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional, Tuple
@@ -45,6 +46,7 @@ cine: Optional[Any] = None
 utils: Optional[Any] = None
 ph: Optional[Any] = None
 PYPHANTOM_AVAILABLE = False
+PHANTOM_INITIALIZED = False
 
 try:
     with _suppress_output():
@@ -54,11 +56,14 @@ try:
         try:
             from pyphantom import Phantom
             ph = Phantom(init_camera=False)
+            PHANTOM_INITIALIZED = ph is not None
         except Exception:
             try:
                 ph = Phantom()
+                PHANTOM_INITIALIZED = ph is not None
             except Exception:
                 ph = None
+                PHANTOM_INITIALIZED = False
 except ImportError:
     # pyphantom not installed - this is OK, just can't read .cine files
     pass
@@ -69,7 +74,7 @@ except ImportError:
 def safe_load_cine(path: Path) -> Optional[Any]:
     """Load a .cine file, returning None on failure."""
     if not PYPHANTOM_AVAILABLE or cine is None:
-        print(f"[CINE LOAD ERROR] {path.name}: pyphantom not available")
+        logging.error(f"[CINE LOAD ERROR] {path.name}: pyphantom not available")
         return None
 
     try:
