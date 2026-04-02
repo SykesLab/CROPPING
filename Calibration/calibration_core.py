@@ -13,13 +13,7 @@ import numpy as np
 from scipy.optimize import curve_fit, minimize_scalar
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Dict
-import sys
 from pathlib import Path
-
-# Add training folder to path for importing synthetic_blur
-training_path = Path(__file__).parent.parent / "Training"
-if str(training_path) not in sys.path:
-    sys.path.insert(0, str(training_path))
 
 
 @dataclass
