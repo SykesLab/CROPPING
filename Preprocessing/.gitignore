@@ -1,3 +1,6 @@
 __pycache__/
 OUTPUTNEW/
 *.png
+*.csv
+*.json
+*.yaml
