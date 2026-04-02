@@ -1,6 +1,9 @@
-numpy
-opencv-python
-torch
-pyyaml
-pyphantom
-Pillow
+numpy>=1.20.0,<2.0
+opencv-python>=4.5.0
+torch>=1.9.0
+PyYAML>=5.4.0
+Pillow>=8.0.0
+scipy>=1.7.0
+
+# Note: pyphantom (Phantom SDK) must be installed separately
+# It is NOT available on PyPI - obtain from Vision Research

@@ -1,0 +1,26 @@
+# CROPPING Pipeline - All Dependencies
+# Install with: pip install -r requirements.txt
+# Or for editable install: pip install -e ".[all]"
+
+# Core
+numpy>=1.21.0,<2.0
+scipy>=1.7.0
+opencv-python>=4.5.0
+Pillow>=8.0.0
+PyYAML>=5.4.0
+matplotlib>=3.4.0
+pandas>=1.3.0
+tqdm>=4.60.0
+
+# ML (required for Training and Inference modules)
+torch>=1.9.0
+torchvision>=0.10.0
+tensorboard>=2.5.0
+
+# Testing
+pytest>=7.0.0
+pytest-timeout>=2.0.0
+
+# Note: pyphantom (Phantom SDK) must be installed separately
+# Required for .cine file support. Obtain from Vision Research.
+# Not available on PyPI. Requires Python 3.11.x.
