@@ -115,7 +115,7 @@ class ModelTester:
         print(f"\n{'='*60}")
         print(f"Loading checkpoint: {Path(model_path).name}")
         print(f"Full path: {model_path}")
-        checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+        checkpoint = torch.load(model_path, map_location=self.device, weights_only=True)
 
         # Display checkpoint info
         epoch = checkpoint.get('epoch', 'unknown')

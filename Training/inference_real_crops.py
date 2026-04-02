@@ -140,7 +140,7 @@ class RealCropInference:
 
         # Load checkpoint
         print(f"Loading model from: {model_path}")
-        checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
+        checkpoint = torch.load(model_path, map_location=self.device, weights_only=True)
 
         # Get config
         if config_path is not None:

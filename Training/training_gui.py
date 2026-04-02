@@ -1515,7 +1515,7 @@ This gives the model examples with known ground truth to learn from."""
 
         try:
             import torch
-            checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+            checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
 
             # Determine checkpoint type
             has_dme = 'dme_state_dict' in checkpoint or 'model_state_dict' in checkpoint
@@ -1597,7 +1597,7 @@ This gives the model examples with known ground truth to learn from."""
             import torch
 
             # Load checkpoint
-            checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=False)
+            checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
 
             # Extract metrics
             metrics_parts = []
@@ -2910,8 +2910,8 @@ This gives the model examples with known ground truth to learn from."""
         try:
             import torch
 
-            # Load checkpoint (weights_only=False to read metadata)
-            checkpoint = torch.load(str(checkpoint_path), map_location='cpu', weights_only=False)
+            # Load checkpoint (weights_only=True to read metadata)
+            checkpoint = torch.load(str(checkpoint_path), map_location='cpu', weights_only=True)
 
             # Extract info
             epoch = checkpoint.get('epoch', 'unknown')
@@ -3502,8 +3502,8 @@ This gives the model examples with known ground truth to learn from."""
         try:
             import torch
 
-            # Load checkpoint (weights_only=False to read metadata)
-            checkpoint = torch.load(str(checkpoint_path), map_location='cpu', weights_only=False)
+            # Load checkpoint (weights_only=True to read metadata)
+            checkpoint = torch.load(str(checkpoint_path), map_location='cpu', weights_only=True)
 
             # Extract info
             epoch = checkpoint.get('epoch', 'unknown')

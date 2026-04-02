@@ -783,7 +783,7 @@ class Trainer:
         Returns:
             checkpoint dict (contains epoch, optimizer state, etc.)
         """
-        checkpoint = torch.load(path, map_location=self.device, weights_only=False)
+        checkpoint = torch.load(path, map_location=self.device, weights_only=True)
 
         # Handle different checkpoint formats
         if 'model_state_dict' in checkpoint:
@@ -974,7 +974,7 @@ class Trainer:
         if checkpoint_to_use:
             # Load and display checkpoint info
             try:
-                checkpoint = torch.load(checkpoint_to_use, map_location='cpu', weights_only=False)
+                checkpoint = torch.load(checkpoint_to_use, map_location='cpu', weights_only=True)
                 epoch = checkpoint.get('epoch', 'unknown')
                 val_mae = checkpoint.get('val_mae_px', None)
                 print(f"  • Epoch: {epoch}")
@@ -1030,7 +1030,7 @@ class Trainer:
 
     def load_dme_checkpoint(self, checkpoint_path: str) -> None:
         """Load weights from checkpoint (handles various formats)."""
-        checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+        checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=True)
 
         # Handle different checkpoint formats
         if 'model_state_dict' in checkpoint:
