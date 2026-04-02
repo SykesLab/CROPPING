@@ -20,21 +20,24 @@ import torch
 # Path manipulation so we can import from preprocessing and training modules
 # ---------------------------------------------------------------------------
 _THIS_DIR = Path(__file__).resolve().parent
-_PREPROCESSING_DIR = _THIS_DIR.parent.parent / "preprocessing" / "Preprocessing"
-_TRAINING_DIR = _THIS_DIR.parent.parent / "training" / "Training"
+_REPO_ROOT = _THIS_DIR.parent
 
-for _p in (_PREPROCESSING_DIR, _TRAINING_DIR):
-    _ps = str(_p)
-    if _ps not in sys.path:
-        sys.path.insert(0, _ps)
-
-# Preprocessing imports — these use pyphantom internally
-from cine_io import safe_load_cine, PYPHANTOM_AVAILABLE          # noqa: E402
-from darkness_analysis import choose_best_frame_geometry_only     # noqa: E402
-from cropping import crop_droplet_with_sphere_guard               # noqa: E402
-
-# Training imports
-from model import DefocusNet                                      # noqa: E402
+try:
+    # Package-style imports (when installed via pip install -e .)
+    from Preprocessing.cine_io import safe_load_cine, PYPHANTOM_AVAILABLE
+    from Preprocessing.darkness_analysis import choose_best_frame_geometry_only
+    from Preprocessing.cropping import crop_droplet_with_sphere_guard
+    from Training.model import DefocusNet
+except ImportError:
+    # Fallback: add sibling directories to path
+    for _p in (_REPO_ROOT / "Preprocessing", _REPO_ROOT / "Training"):
+        _ps = str(_p)
+        if _ps not in sys.path:
+            sys.path.insert(0, _ps)
+    from cine_io import safe_load_cine, PYPHANTOM_AVAILABLE          # noqa: E402
+    from darkness_analysis import choose_best_frame_geometry_only     # noqa: E402
+    from cropping import crop_droplet_with_sphere_guard               # noqa: E402
+    from model import DefocusNet                                      # noqa: E402
 
 
 # ── Default calibration constants ──────────────────────────────────────────

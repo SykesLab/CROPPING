@@ -80,8 +80,9 @@ def load_settings() -> Dict[str, Any]:
             with open(SETTINGS_FILE, "r") as f:
                 saved = json.load(f)
             settings.update(saved)
-        except Exception:
-            pass
+        except Exception as e:
+            import logging
+            logging.warning(f"Settings load failed ({e}). Using defaults. Calibration constants may be incorrect.")
     return settings
 
 
