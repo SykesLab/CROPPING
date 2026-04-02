@@ -26,12 +26,14 @@ import cv2
 import numpy as np
 import pandas as pd
 
-# Add calibration module to path
-_CALIB_DIR = str(Path(__file__).resolve().parents[2] / 'calibration')
-if _CALIB_DIR not in sys.path:
-    sys.path.insert(0, _CALIB_DIR)
-
-from sphere_processing import flatten_sphere_crop
+# Import from calibration module
+try:
+    from Calibration.sphere_processing import flatten_sphere_crop
+except ImportError:
+    _CALIB_DIR = str(Path(__file__).resolve().parent.parent / 'Calibration')
+    if _CALIB_DIR not in sys.path:
+        sys.path.insert(0, _CALIB_DIR)
+    from sphere_processing import flatten_sphere_crop
 from crop_blur_measurement import measure_erf_blur
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
