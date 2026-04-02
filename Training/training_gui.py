@@ -80,8 +80,10 @@ import yaml
 import numpy as np
 import cv2
 
-# Add parent directory to path for imports
-sys.path.insert(0, str(Path(__file__).parent))
+# Add parent directory to path for imports (fallback for non-package usage)
+_parent = str(Path(__file__).parent)
+if _parent not in sys.path:
+    sys.path.insert(0, _parent)
 
 
 @dataclass 
@@ -1714,11 +1716,14 @@ This gives the model examples with known ground truth to learn from."""
         ttk.Radiobutton(src_type_row, text=".cine Files", variable=self.inf_source_type_var,
                         value="cine", command=self._on_inf_source_type_change).pack(side='left', padx=5)
         try:
-            import sys as _sys
-            _calib_dir = str(Path(__file__).parent.parent.parent / 'calibration')
-            if _calib_dir not in _sys.path:
-                _sys.path.insert(0, _calib_dir)
-            from cine_loader import check_pyphantom as _cpq
+            try:
+                from Calibration.cine_loader import check_pyphantom as _cpq
+            except ImportError:
+                import sys as _sys
+                _calib_dir = str(Path(__file__).resolve().parent.parent / 'Calibration')
+                if _calib_dir not in _sys.path:
+                    _sys.path.insert(0, _calib_dir)
+                from cine_loader import check_pyphantom as _cpq
             _pa, _ = _cpq()
         except Exception:
             _pa = False
@@ -2601,11 +2606,14 @@ This gives the model examples with known ground truth to learn from."""
         if not folder_path:
             return
         try:
-            import sys as _sys
-            _calib_dir = str(Path(__file__).parent.parent.parent / 'calibration')
-            if _calib_dir not in _sys.path:
-                _sys.path.insert(0, _calib_dir)
-            from cine_loader import CineFolderLoader
+            try:
+                from Calibration.cine_loader import CineFolderLoader
+            except ImportError:
+                import sys as _sys
+                _calib_dir = str(Path(__file__).resolve().parent.parent / 'Calibration')
+                if _calib_dir not in _sys.path:
+                    _sys.path.insert(0, _calib_dir)
+                from cine_loader import CineFolderLoader
             loader = CineFolderLoader(folder_path)
             if loader.num_files > 0:
                 info = loader.get_info()
@@ -2671,15 +2679,18 @@ This gives the model examples with known ground truth to learn from."""
 
     def _load_and_preprocess_inf_worker(self, source_type: str, output_dir: str):
         """Worker thread: load images, detect/process sphere, save crops."""
-        import sys as _sys
         import numpy as np
         import cv2
-        _calib_dir = str(Path(__file__).parent.parent.parent / 'calibration')
-        if _calib_dir not in _sys.path:
-            _sys.path.insert(0, _calib_dir)
 
         try:
-            from sphere_processing import process_sphere_stack
+            try:
+                from Calibration.sphere_processing import process_sphere_stack
+            except ImportError:
+                import sys as _sys
+                _calib_dir = str(Path(__file__).resolve().parent.parent / 'Calibration')
+                if _calib_dir not in _sys.path:
+                    _sys.path.insert(0, _calib_dir)
+                from sphere_processing import process_sphere_stack
         except ImportError as e:
             self.root.after(0, lambda: self.inf_preproc_status_var.set(f"Import error: {e}"))
             return
