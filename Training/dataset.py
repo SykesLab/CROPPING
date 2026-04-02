@@ -148,11 +148,48 @@ class DMEDataset(Dataset):
         self.blur_col = _blur_column(self.metadata)
         self.is_direct_mode = 'sigma_px' in self.metadata.columns
 
+        # Optional: cache all images in RAM as a single numpy array for fast training
+        # Built lazily on first access; requires ~50k × 256 × 256 × 1 byte ≈ 3.3 GB
+        self._cache: Optional[np.ndarray] = None
+        self._cache_path = self.data_dir / 'blur_cache.npy'
+
         print(f"Loaded {len(self.samples)} samples from {data_dir}"
               f" ({'direct' if self.is_direct_mode else 'optical'} mode)")
 
     def __len__(self) -> int:
         return len(self.samples)
+
+    def build_cache(self) -> None:
+        """Load all images into a single numpy array for fast training.
+
+        Saves to blur_cache.npy on first build; loads from disk on subsequent runs.
+        Requires ~3.3 GB RAM for 50k × 256 × 256 uint8 images.
+        """
+        if self._cache is not None:
+            return
+
+        if self._cache_path.exists():
+            print(f"Loading image cache from {self._cache_path.name}...")
+            self._cache = np.load(str(self._cache_path), mmap_mode='r')
+            print(f"Cache loaded: {self._cache.shape}")
+            return
+
+        print(f"Building image cache ({len(self.samples)} images)...")
+        first = cv2.imread(str(self.samples[0]), cv2.IMREAD_GRAYSCALE)
+        h, w = first.shape
+        cache = np.empty((len(self.samples), h, w), dtype=np.uint8)
+        cache[0] = first
+
+        for i in range(1, len(self.samples)):
+            img = cv2.imread(str(self.samples[i]), cv2.IMREAD_GRAYSCALE)
+            if img is not None:
+                cache[i] = img
+            else:
+                cache[i] = 0
+
+        np.save(str(self._cache_path), cache)
+        self._cache = np.load(str(self._cache_path), mmap_mode='r')
+        print(f"Cache saved to {self._cache_path.name}: {cache.shape}")
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -165,12 +202,14 @@ class DMEDataset(Dataset):
         blur_path = self.samples[idx]
         stem = blur_path.stem
 
-        # Load only the blurred image
-        blur = cv2.imread(str(blur_path), cv2.IMREAD_GRAYSCALE)
-        if blur is None:
-            raise ValueError(f"Failed to load {blur_path}")
-
-        blur = blur.astype(np.float32) / 255.0
+        # Load from RAM cache if available, otherwise read PNG from disk
+        if self._cache is not None:
+            blur = self._cache[idx].astype(np.float32) / 255.0
+        else:
+            blur = cv2.imread(str(blur_path), cv2.IMREAD_GRAYSCALE)
+            if blur is None:
+                raise ValueError(f"Failed to load {blur_path}")
+            blur = blur.astype(np.float32) / 255.0
 
         # Read sigma_px from metadata (already in memory, no disk I/O)
         blur_value = self.metadata.loc[stem, self.blur_col]
