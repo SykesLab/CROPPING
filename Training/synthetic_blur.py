@@ -191,7 +191,10 @@ class BlurCalculator:
         """
         # CoC formula from Wang et al. Eq. (2)
         term1 = 1.0 / self.F - 1.0 / self.u0
-        term2 = 1.0 / (d + self.d0)
+        denominator = d + self.d0
+        if abs(denominator) < 1e-10:
+            return 0.0
+        term2 = 1.0 / denominator
         coc = self.D_lens * self.u0 * abs(term1 - term2)
         return coc
     
@@ -369,7 +372,7 @@ def apply_gaussian_blur(
     Returns:
         Blurred image
     """
-    if sigma <= 0.5:
+    if sigma <= 0.05:
         return image.copy()
     
     kernel = create_gaussian_kernel(sigma, radius_factor)
@@ -415,13 +418,17 @@ def validate_sample_erf(
 
     # Lazy import from calibration module
     try:
-        import sys
-        _calib_dir = str(Path(__file__).parent.parent.parent / 'calibration')
-        if _calib_dir not in sys.path:
-            sys.path.insert(0, _calib_dir)
-        from blur_measurement import detect_sphere
+        from Calibration.blur_measurement import detect_sphere
     except ImportError:
-        return nan_result
+        try:
+            # Fallback for non-package usage
+            import sys
+            _calib_dir = str(Path(__file__).resolve().parent.parent / 'Calibration')
+            if _calib_dir not in sys.path:
+                sys.path.insert(0, _calib_dir)
+            from blur_measurement import detect_sphere
+        except ImportError:
+            return nan_result
 
     # ERF edge model (inlined to avoid importing the full module each call)
     def _erf_edge(r, I_bg, I_sphere, r_edge, sigma):
@@ -1090,8 +1097,8 @@ class SyntheticBlurGenerator:
 
             blurred = apply_gaussian_blur(sharp_image, sigma_kernel, self.radius_factor)
 
-            # Normalized blur map
-            normalized_blur = sigma_model / self.max_sigma if self.max_sigma > 0 else 0.0
+            # Normalized blur map (clamp to [0, 1] in case native blur exceeds max_sigma)
+            normalized_blur = min(sigma_model / self.max_sigma, 1.0) if self.max_sigma > 0 else 0.0
             sigma_map = np.full_like(sharp_image, normalized_blur)
 
             return {

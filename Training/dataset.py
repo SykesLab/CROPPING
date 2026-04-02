@@ -279,6 +279,7 @@ def create_dme_dataloaders(
     max_blur: float = 20.0,
     seed: int = 42,
     persistent_workers: bool = False,
+    pin_memory: bool = True,
     stratified: bool = False
 ) -> Tuple[DataLoader, DataLoader]:
     """Create dataloaders for DME scalar training.
@@ -312,7 +313,7 @@ def create_dme_dataloaders(
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=pin_memory,
         persistent_workers=persistent_workers
     )
 
@@ -321,7 +322,7 @@ def create_dme_dataloaders(
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
-        pin_memory=True,
+        pin_memory=pin_memory,
         persistent_workers=persistent_workers
     )
 
