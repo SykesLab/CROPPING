@@ -1428,7 +1428,8 @@ class SyntheticBlurGenerator:
         # Generate samples
         metadata = []
         sample_idx = 0  # Track actual saved samples
-        
+        _sharp_cache = {}  # Cache decoded sharp images to avoid redundant disk reads
+
         log(f"Starting generation of {num_samples} samples...")
         pbar = tqdm(total=num_samples, desc="Generating synthetic data")
         attempt = 0
@@ -1451,7 +1452,13 @@ class SyntheticBlurGenerator:
                 if diameter_bins[bin_idx] and (use_real_only or random.random() < 0.7):
                     # Pick random image from this bin
                     sharp_path, actual_diameter = random.choice(diameter_bins[bin_idx])
-                    sharp = cv2.imread(str(sharp_path), cv2.IMREAD_GRAYSCALE)
+                    _sp_key = str(sharp_path)
+                    if _sp_key in _sharp_cache:
+                        sharp = _sharp_cache[_sp_key].copy()
+                    else:
+                        sharp = cv2.imread(_sp_key, cv2.IMREAD_GRAYSCALE)
+                        if sharp is not None:
+                            _sharp_cache[_sp_key] = sharp.copy()
 
                     if sharp is None:
                         # Failed to load - fall back to synthetic at model scale
@@ -1474,7 +1481,13 @@ class SyntheticBlurGenerator:
                 if real_sharps and (use_real or random.random() < 0.7):
                     # Load random real sharp image
                     sharp_path = random.choice(real_sharps)
-                    sharp = cv2.imread(str(sharp_path), cv2.IMREAD_GRAYSCALE)
+                    _sp_key = str(sharp_path)
+                    if _sp_key in _sharp_cache:
+                        sharp = _sharp_cache[_sp_key].copy()
+                    else:
+                        sharp = cv2.imread(_sp_key, cv2.IMREAD_GRAYSCALE)
+                        if sharp is not None:
+                            _sharp_cache[_sp_key] = sharp.copy()
 
                     if sharp is None:
                         # Failed to load - fall back to synthetic
