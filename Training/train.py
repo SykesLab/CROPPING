@@ -8,6 +8,7 @@ Usage:
     python train.py --config training_config.yaml --data-dir data/synthetic
 """
 
+import platform
 import torch
 import torch.nn as nn
 import torch.optim as optim
@@ -15,6 +16,9 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 import numpy as np
+
+# Windows + tkinter GUI causes multiprocessing issues; use workers on Linux/Mac only
+_NUM_WORKERS = 0 if platform.system() == "Windows" else 4
 import matplotlib
 matplotlib.use('Agg')  # Non-interactive backend for saving PNGs
 import matplotlib.pyplot as plt
@@ -830,15 +834,16 @@ class Trainer:
         self._validate_data()
 
         print(f"\nDME batch size: {self.batch_size}")
-        print(f"Data loader workers: 0 (single process)")
+        print(f"Data loader workers: {_NUM_WORKERS}")
         dme_train, dme_val = create_dme_dataloaders(
             self.data_dir,
             batch_size=self.batch_size,
             train_split=self.train_split,
             max_blur=self.max_blur,
-            num_workers=0,
+            num_workers=_NUM_WORKERS,
             seed=self.seed,
-            persistent_workers=False,
+            persistent_workers=_NUM_WORKERS > 0,
+            pin_memory=torch.cuda.is_available(),
             stratified=self.stratified
         )
 
@@ -869,15 +874,16 @@ class Trainer:
         self._validate_data()
 
         print(f"\nDME batch size: {self.batch_size}")
-        print(f"Data loader workers: 0 (single process)")
+        print(f"Data loader workers: {_NUM_WORKERS}")
         dme_train, dme_val = create_dme_dataloaders(
             self.data_dir,
             batch_size=self.batch_size,
             train_split=self.train_split,
-            num_workers=0,
+            num_workers=_NUM_WORKERS,
             max_blur=self.max_blur,
             seed=self.seed,
-            persistent_workers=False
+            persistent_workers=_NUM_WORKERS > 0,
+            pin_memory=torch.cuda.is_available()
         )
 
         print("\n" + "=" * 60)
@@ -940,7 +946,7 @@ class Trainer:
                 def get_epoch_num(path):
                     try:
                         return int(path.stem.split('_')[-1])
-                    except:
+                    except (ValueError, IndexError):
                         return 0
                 checkpoint_to_use = max(epoch_checkpoints, key=get_epoch_num)
                 print(f"ℹ Resuming from latest epoch checkpoint: {checkpoint_to_use.name}")
