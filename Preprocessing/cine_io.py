@@ -11,6 +11,8 @@ import os
 import re
 import logging
 from contextlib import contextmanager
+
+logger = logging.getLogger(__name__)
 from pathlib import Path
 from typing import Any, Dict, Generator, List, Optional, Tuple
 
@@ -74,7 +76,7 @@ except ImportError:
 def safe_load_cine(path: Path) -> Optional[Any]:
     """Load a .cine file, returning None on failure."""
     if not PYPHANTOM_AVAILABLE or cine is None:
-        logging.error(f"[CINE LOAD ERROR] {path.name}: pyphantom not available")
+        logger.error(f"[CINE LOAD ERROR] {path.name}: pyphantom not available")
         return None
 
     try:
@@ -84,7 +86,7 @@ def safe_load_cine(path: Path) -> Optional[Any]:
         _ = cine_obj.range  # Force handle init
         return cine_obj
     except Exception as e:
-        print(f"[CINE LOAD ERROR] {path.name}: {e}")
+        logger.error(f"[CINE LOAD ERROR] {path.name}: {e}")
         return None
 
 

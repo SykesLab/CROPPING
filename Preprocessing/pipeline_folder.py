@@ -36,14 +36,14 @@ logger = logging.getLogger(__name__)
 
 def _print_pipeline_summary(output_root: Path) -> None:
     """Print summary of pipeline results including any issues detected."""
-    print("\n" + "=" * 60)
-    print("PIPELINE SUMMARY")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("PIPELINE SUMMARY")
+    logger.info("=" * 60)
 
     # Find all summary CSVs
     summary_csvs = list(output_root.glob("*/*_summary.csv"))
     if not summary_csvs:
-        print("  No summary CSVs found!")
+        logger.warning("  No summary CSVs found!")
         return
 
     total_cines = 0
@@ -87,22 +87,23 @@ def _print_pipeline_summary(output_root: Path) -> None:
             issues_by_folder[folder_name] = folder_issues
 
     # Print overall stats
-    print(f"\n  Total cines processed: {total_cines}")
-    print(f"  With valid geometry:   {total_with_geometry} ({total_with_geometry/total_cines*100:.1f}%)" if total_cines > 0 else "")
-    print(f"  Missing geometry:      {total_missing_geometry} ({total_missing_geometry/total_cines*100:.1f}%)" if total_cines > 0 else "")
+    logger.info(f"\n  Total cines processed: {total_cines}")
+    if total_cines > 0:
+        logger.info(f"  With valid geometry:   {total_with_geometry} ({total_with_geometry/total_cines*100:.1f}%)")
+        logger.info(f"  Missing geometry:      {total_missing_geometry} ({total_missing_geometry/total_cines*100:.1f}%)")
 
     if total_missing_crops > 0:
-        print(f"  Missing crop files:    {total_missing_crops}")
+        logger.warning(f"  Missing crop files:    {total_missing_crops}")
 
     # Print issues by folder
     if issues_by_folder:
-        print("\n  Issues by folder:")
+        logger.warning("\n  Issues by folder:")
         for folder, issues in sorted(issues_by_folder.items()):
-            print(f"    {folder}: {', '.join(issues)}")
+            logger.warning(f"    {folder}: {', '.join(issues)}")
     else:
-        print("\n  No issues detected!")
+        logger.info("\n  No issues detected!")
 
-    print("=" * 60)
+    logger.info("=" * 60)
 
 
 def process_per_folder(
@@ -135,7 +136,6 @@ def process_per_folder(
             "="*60 + "\n"
         )
         logger.error(error_msg)
-        print(error_msg)
         return
 
     if quick_test:
@@ -150,7 +150,6 @@ def process_per_folder(
 
     if total_folders == 0:
         logger.warning("No folders with .cine files found!")
-        print("[PER-FOLDER] No folders with .cine files found!")
         return
 
     total_droplets = _count_total_droplets(subfolders)
@@ -171,8 +170,7 @@ def process_per_folder(
     step = config.CINE_STEP
 
     logger.info(f"Per-folder mode: {mode_str}, {output_str}, step={step}")
-    print(f"\n[PER-FOLDER MODE] {mode_str}, {output_str}, step={step}")
-    print(f"Found {total_folders} subfolders.\n")
+    logger.info(f"Found {total_folders} subfolders.")
 
     # Use darkness analysis if enabled (slower but provides darkness weighting)
     # Otherwise use geometry-only frame selection (faster)
@@ -198,7 +196,7 @@ def process_per_folder(
 
         global_done += n_outputs
         pct = (global_done / total_droplets) * 100 if total_droplets > 0 else 100.0
-        print(f"[GLOBAL] {global_done}/{total_droplets} — {pct:.1f}% (elapsed {global_timer.elapsed})")
+        logger.info(f"[GLOBAL] {global_done}/{total_droplets} — {pct:.1f}% (elapsed {global_timer.elapsed})")
 
         if profile:
             folder_profiles.append({
@@ -213,14 +211,12 @@ def process_per_folder(
 
     # Focus classification (always runs)
     logger.info("Running focus classification...")
-    print("\n[PER-FOLDER] Running focus classification...")
     run_focus_classification()
 
     # Print pipeline summary with any issues
     _print_pipeline_summary(OUTPUT_ROOT)
 
     logger.info(f"Per-folder pipeline complete in {format_time(total_sec)}")
-    print(f"\n=== PER-FOLDER COMPLETE — {format_time(total_sec)} ===")
 
     if profile:
         save_profile_json(OUTPUT_ROOT, "profiling_perfolder.json", {
@@ -245,9 +241,9 @@ def _process_single_folder(
     safe_mode: bool, gui_mode: bool, profile: bool, full_output: bool = True,
 ) -> Optional[Tuple[float, float, float, float, Dict[str, float], Dict[str, float], int]]:
     """Process a single folder through all pipeline phases."""
-    print("\n" + "=" * 30)
-    print(f"[FOLDER {f_idx}/{total_folders}] {sub.name}")
-    print("=" * 30)
+    logger.info("=" * 30)
+    logger.info(f"[FOLDER {f_idx}/{total_folders}] {sub.name}")
+    logger.info("=" * 30)
 
     folder_start = time.time()
     groups = group_cines_by_droplet(sub)
@@ -255,7 +251,6 @@ def _process_single_folder(
 
     if n_groups == 0:
         logger.info(f"No droplets in folder: {sub.name}")
-        print("  [INFO] No droplets in this folder.")
         return None
 
     selected_indices = list(range(0, n_groups, config.CINE_STEP))
@@ -263,13 +258,12 @@ def _process_single_folder(
 
     # Phase 1: Analysis
     logger.debug(f"[{sub.name}] Starting Phase 1: Analysis")
-    print(f"[{sub.name}] Phase 1: Analyse droplets...")
     p1_timer = Timer()
 
     results = run_parallel(worker_func, droplets_to_process, desc=f"{sub.name}: analyse",
                            safe_mode=safe_mode, gui_mode=gui_mode)
     p1_sec = p1_timer.seconds
-    print(f"[{sub.name}] Phase 1 done — {p1_timer.elapsed}")
+    logger.debug(f"[{sub.name}] Phase 1 done — {p1_timer.elapsed}")
 
     folder_analyses: Dict[str, Dict] = {}
     all_diams: List[float] = []
@@ -289,17 +283,14 @@ def _process_single_folder(
     if not all_gaps:
         cnn_size = 128
         logger.warning(f"[{sub.name}] No valid geometry, using fallback 128x128")
-        print(f"[CAL:{sub.name}] No valid geometry → fallback 128×128")
     else:
         cnn_size = compute_crop_size(all_diams, all_gaps, safety_pixels=CROP_SAFETY_PIXELS)
         logger.info(f"[{sub.name}] Calibrated crop size: {cnn_size}x{cnn_size}")
-        print(f"[CAL:{sub.name}] crop size = {cnn_size}×{cnn_size}")
     p2_sec = time.time() - p2_start
 
     # Phase 3: Outputs
     p3_timer = Timer()
     logger.debug(f"[{sub.name}] Starting Phase 3: Outputs")
-    print(f"[{sub.name}] Phase 3: Outputs...")
 
     out_sub = OUTPUT_ROOT / sub.name
     out_sub.mkdir(parents=True, exist_ok=True)
@@ -314,12 +305,11 @@ def _process_single_folder(
     phase3_timings = [timing for msg, timing in results_out]
     p3_timing_totals = aggregate_timings(phase3_timings, "Phase 3 - Outputs")
 
-    print(f"[{sub.name}] Phase 3 done — {p3_timer.elapsed}")
+    logger.debug(f"[{sub.name}] Phase 3 done — {p3_timer.elapsed}")
 
     csv_path = out_sub / f"{sub.name}_summary.csv"
     write_folder_csv(csv_path, folder_analyses, out_sub, cnn_size)
     logger.info(f"[{sub.name}] Summary CSV saved: {csv_path}")
-    print(f"[{sub.name}] CSV saved.")
 
     folder_total_sec = time.time() - folder_start
 
@@ -334,7 +324,6 @@ def _quick_test_per_folder(safe_mode: bool = False, profile: bool = False,
 
     if total_folders == 0:
         logger.warning("No folders with .cine files found!")
-        print("[QUICK TEST] No folders with .cine files found!")
         return
 
     global_timer = Timer()
@@ -345,9 +334,8 @@ def _quick_test_per_folder(safe_mode: bool = False, profile: bool = False,
     folder_profiles: List[Dict[str, Any]] = []
 
     output_str = "full output" if full_output else "crops only"
-    logger.info(f"Quick test: {total_folders} folders, {output_str}")
-    print(f"\n[QUICK TEST - PER-FOLDER] {'SAFE' if safe_mode else 'FAST'} mode, {output_str}")
-    print(f"Processing first droplet from each of {total_folders} folders.\n")
+    logger.info(f"Quick test: {total_folders} folders, {output_str}, {'SAFE' if safe_mode else 'FAST'} mode")
+    logger.info(f"Processing first droplet from each of {total_folders} folders.")
 
     for f_idx, sub in enumerate(subfolders, start=1):
         folder_timing = _quick_test_single_folder(sub=sub, f_idx=f_idx,
@@ -378,7 +366,7 @@ def _quick_test_per_folder(safe_mode: bool = False, profile: bool = False,
 def _quick_test_single_folder(sub: Path, f_idx: int, total_folders: int,
                               full_output: bool) -> Optional[Dict[str, float]]:
     """Process first droplet from a single folder for quick testing."""
-    print(f"\n[{f_idx}/{total_folders}] {sub.name}")
+    logger.info(f"[{f_idx}/{total_folders}] {sub.name}")
 
     folder_timing: Dict[str, float] = {
         "load_cine": 0.0, "darkness_curve": 0.0, "best_frame": 0.0,
@@ -388,7 +376,6 @@ def _quick_test_single_folder(sub: Path, f_idx: int, total_folders: int,
     groups = group_cines_by_droplet(sub)
     if not groups:
         logger.info(f"No droplets found in {sub.name}")
-        print("  No droplets found.")
         return None
 
     droplet_id, cams = groups[0]
@@ -449,22 +436,21 @@ def _quick_test_single_folder(sub: Path, f_idx: int, total_folders: int,
             folder_timing["geometry_scan"] += time.perf_counter() - t0
 
     analysis_time = folder_timing["darkness_curve"] + folder_timing["best_frame"] + folder_timing["geometry_scan"]
-    print(f"  load: {format_time(folder_timing['load_cine'])} | "
-          f"analysis: {format_time(analysis_time)} | frames: {int(folder_timing['n_frames'])}")
+    logger.info(f"  load: {format_time(folder_timing['load_cine'])} | "
+                f"analysis: {format_time(analysis_time)} | frames: {int(folder_timing['n_frames'])}")
 
     return folder_timing
 
 
 def _print_quick_test_summary(global_timing: Dict[str, float], total_sec: float) -> None:
     """Print summary of quick test results."""
-    print("\n" + "=" * 50)
-    print("QUICK TEST SUMMARY")
-    print("=" * 50)
+    logger.info("=" * 50)
+    logger.info("QUICK TEST SUMMARY")
+    logger.info("=" * 50)
     for k, v in sorted(global_timing.items()):
         if k == "n_frames":
-            print(f"  {k}: {int(v)}")
+            logger.info(f"  {k}: {int(v)}")
         elif v > 0:
-            print(f"  {k}: {format_time(v)}")
+            logger.info(f"  {k}: {format_time(v)}")
 
     logger.info(f"Quick test complete in {format_time(total_sec)}")
-    print(f"\n=== QUICK TEST COMPLETE — {format_time(total_sec)} ===")

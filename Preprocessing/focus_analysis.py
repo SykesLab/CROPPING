@@ -6,10 +6,13 @@ Supports global or per-folder classification thresholds.
 """
 
 import argparse
+import logging
 import shutil
 import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
+
+logger = logging.getLogger(__name__)
 
 import cv2
 import matplotlib.pyplot as plt
@@ -46,8 +49,8 @@ def compute_metrics_from_crops(
             f"No crop images matching '{pattern}' found in {root}"
         )
     
-    print(f"Found {len(crop_files)} crop images")
-    print("Computing focus metrics...")
+    logger.info(f"Found {len(crop_files)} crop images")
+    logger.info("Computing focus metrics...")
     
     records = []
     for crop_path in tqdm(crop_files, desc="Analysing crops"):
@@ -55,7 +58,7 @@ def compute_metrics_from_crops(
             # Load image
             img = cv2.imread(str(crop_path), cv2.IMREAD_GRAYSCALE)
             if img is None:
-                print(f"  Warning: Could not load {crop_path}")
+                logger.warning(f"Could not load {crop_path}")
                 continue
             
             # Compute metrics
@@ -71,10 +74,10 @@ def compute_metrics_from_crops(
             records.append(record)
             
         except Exception as e:
-            print(f"  Warning: Error processing {crop_path}: {e}")
+            logger.warning(f"Error processing {crop_path}: {e}")
     
     df = pd.DataFrame(records)
-    print(f"Successfully processed {len(df)} crops")
+    logger.info(f"Successfully processed {len(df)} crops")
     
     return df
 
@@ -89,7 +92,7 @@ def load_all_csvs(root: Path) -> pd.DataFrame:
     if not csv_files:
         raise FileNotFoundError(f"No summary CSVs found in {root}")
     
-    print(f"Found {len(csv_files)} CSV files")
+    logger.info(f"Found {len(csv_files)} CSV files")
     
     dfs = []
     for csv_path in csv_files:
@@ -98,10 +101,10 @@ def load_all_csvs(root: Path) -> pd.DataFrame:
             df["folder"] = csv_path.parent.name
             dfs.append(df)
         except Exception as e:
-            print(f"  Warning: Could not load {csv_path.name}: {e}")
+            logger.warning(f"Could not load {csv_path.name}: {e}")
     
     combined = pd.concat(dfs, ignore_index=True)
-    print(f"Loaded {len(combined)} total crops")
+    logger.info(f"Loaded {len(combined)} total crops")
     
     return combined
 
@@ -115,7 +118,7 @@ def analyse_focus_distribution(
     values = df[metric].dropna().values
     
     if len(values) == 0:
-        print(f"Warning: No valid values for {metric}")
+        logger.warning(f"No valid values for {metric}")
         return {}
     
     stats = compute_dataset_statistics(values)
@@ -133,7 +136,7 @@ def plot_focus_distribution(
     values = df[metric].dropna().values
     
     if len(values) == 0:
-        print(f"No data for {metric}")
+        logger.info(f"No data for {metric}")
         return
     
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
@@ -173,7 +176,7 @@ def plot_focus_distribution(
     
     if save_path:
         plt.savefig(save_path, dpi=150)
-        print(f"Saved: {save_path}")
+        logger.info(f"Saved: {save_path}")
         plt.close()
     else:
         plt.show()
@@ -197,7 +200,7 @@ def plot_metric_comparison(
     metrics = [m for m in metrics if m in df.columns]
     
     if len(metrics) < 2:
-        print("Need at least 2 metrics for comparison")
+        logger.info("Need at least 2 metrics for comparison")
         return
     
     n = len(metrics)
@@ -237,7 +240,7 @@ def plot_metric_comparison(
     
     if save_path:
         plt.savefig(save_path, dpi=150)
-        print(f"Saved: {save_path}")
+        logger.info(f"Saved: {save_path}")
         plt.close()
     else:
         plt.show()
@@ -273,16 +276,16 @@ def classify_global(
     
     counts = df["focus_class"].value_counts().to_dict()
     
-    print("\n" + "=" * 50)
-    print("FOCUS QUALITY REPORT (Global Thresholds)")
-    print("=" * 50)
-    print(f"\nMetric used: {metric}")
-    print(f"Sharp threshold (p{sharp_percentile:.0f}): {sharp_thresh:.1f}")
-    print(f"Blur threshold (p{blur_percentile:.0f}): {blur_thresh:.1f}")
-    print(f"\nClassification breakdown:")
+    logger.info("\n" + "=" * 50)
+    logger.info("FOCUS QUALITY REPORT (Global Thresholds)")
+    logger.info("=" * 50)
+    logger.info(f"\nMetric used: {metric}")
+    logger.info(f"Sharp threshold (p{sharp_percentile:.0f}): {sharp_thresh:.1f}")
+    logger.info(f"Blur threshold (p{blur_percentile:.0f}): {blur_thresh:.1f}")
+    logger.info(f"\nClassification breakdown:")
     for cls, count in sorted(counts.items()):
         pct = 100 * count / len(df)
-        print(f"  {cls}: {count} ({pct:.1f}%)")
+        logger.info(f"  {cls}: {count} ({pct:.1f}%)")
     
     return df, counts
 
@@ -302,9 +305,9 @@ def classify_per_folder(
     
     folder_stats = []
     
-    print("\n" + "=" * 60)
-    print("PER-FOLDER FOCUS CLASSIFICATION")
-    print("=" * 60)
+    logger.info("\n" + "=" * 60)
+    logger.info("PER-FOLDER FOCUS CLASSIFICATION")
+    logger.info("=" * 60)
     
     for folder in sorted(df["folder"].unique()):
         folder_mask = df["folder"] == folder
@@ -313,7 +316,7 @@ def classify_per_folder(
         scores = folder_df[metric].dropna().values
         
         if len(scores) < 4:
-            print(f"  {folder}: Skipped (too few samples: {len(scores)})")
+            logger.info(f"  {folder}: Skipped (too few samples: {len(scores)})")
             continue
         
         # Per-folder classification
@@ -341,19 +344,19 @@ def classify_per_folder(
             "mean_laplacian": folder_df[metric].mean(),
         })
         
-        print(f"  {folder}: {n_sharp} sharp / {n_medium} medium / {n_blurry} blurry "
-              f"(thresh: {blur_thresh:.0f}-{sharp_thresh:.0f})")
+        logger.info(f"  {folder}: {n_sharp} sharp / {n_medium} medium / {n_blurry} blurry "
+                    f"(thresh: {blur_thresh:.0f}-{sharp_thresh:.0f})")
     
     stats_df = pd.DataFrame(folder_stats)
     counts = df["focus_class"].value_counts().to_dict()
     
-    print(f"\n" + "-" * 60)
-    print("TOTALS")
-    print("-" * 60)
+    logger.info("\n" + "-" * 60)
+    logger.info("TOTALS")
+    logger.info("-" * 60)
     for cls, count in sorted(counts.items()):
         if cls is not None:
             pct = 100 * count / len(df[df["focus_class"].notna()])
-            print(f"  {cls}: {count} ({pct:.1f}%)")
+            logger.info(f"  {cls}: {count} ({pct:.1f}%)")
     
     return df, stats_df, counts
 
@@ -369,11 +372,11 @@ def copy_sharp_images(
     sharp_df = df[df["focus_class"] == "sharp"]
     
     if len(sharp_df) == 0:
-        print("No sharp images to copy")
+        logger.info("No sharp images to copy")
         return 0
     
     copied = 0
-    print(f"\nCopying {len(sharp_df)} sharp images to Focus/...")
+    logger.info(f"\nCopying {len(sharp_df)} sharp images to Focus/...")
     
     for _, row in tqdm(sharp_df.iterrows(), total=len(sharp_df), desc="Copying"):
         crop_path = Path(row["crop_path"])
@@ -389,7 +392,7 @@ def copy_sharp_images(
         shutil.copy2(crop_path, dest_path)
         copied += 1
     
-    print(f"Copied {copied} images to Focus/")
+    logger.info(f"Copied {copied} images to Focus/")
     return copied
 
 
@@ -405,26 +408,26 @@ def show_extreme_crops(
         valid = valid[valid["crop_path"].notna()]
     
     if len(valid) == 0:
-        print("No valid crops with metrics")
+        logger.info("No valid crops with metrics")
         return
     
     sorted_df = valid.sort_values(metric, ascending=False)
     
-    print(f"\n{'='*50}")
-    print(f"TOP {n} SHARPEST CROPS ({metric})")
-    print("=" * 50)
+    logger.info(f"\n{'='*50}")
+    logger.info(f"TOP {n} SHARPEST CROPS ({metric})")
+    logger.info("=" * 50)
     for i, (_, row) in enumerate(sorted_df.head(n).iterrows()):
         path_str = row.get('crop_path', row.get('filename', 'N/A'))
         folder = row.get('folder', '')
-        print(f"{i+1}. {row[metric]:.1f} — {folder}/{Path(path_str).name}")
-    
-    print(f"\n{'='*50}")
-    print(f"TOP {n} BLURRIEST CROPS ({metric})")
-    print("=" * 50)
+        logger.info(f"{i+1}. {row[metric]:.1f} — {folder}/{Path(path_str).name}")
+
+    logger.info(f"\n{'='*50}")
+    logger.info(f"TOP {n} BLURRIEST CROPS ({metric})")
+    logger.info("=" * 50)
     for i, (_, row) in enumerate(sorted_df.tail(n).iterrows()):
         path_str = row.get('crop_path', row.get('filename', 'N/A'))
         folder = row.get('folder', '')
-        print(f"{i+1}. {row[metric]:.1f} — {folder}/{Path(path_str).name}")
+        logger.info(f"{i+1}. {row[metric]:.1f} — {folder}/{Path(path_str).name}")
 
 
 def generate_summary_plot(
@@ -472,7 +475,7 @@ def generate_summary_plot(
     plt.tight_layout()
     plt.savefig(save_path, dpi=150)
     plt.close()
-    print(f"Saved: {save_path}")
+    logger.info(f"Saved: {save_path}")
 
 
 def main():
@@ -568,10 +571,10 @@ def main():
     if csv_path:
         # Mode 1: Read from existing CSV (no recomputation!)
         if not csv_path.exists():
-            print(f"Error: CSV not found: {csv_path}")
+            logger.error(f"CSV not found: {csv_path}")
             sys.exit(1)
-        
-        print(f"Loading metrics from CSV: {csv_path}")
+
+        logger.info(f"Loading metrics from CSV: {csv_path}")
         df = pd.read_csv(csv_path)
         
         # Determine output directory
@@ -580,7 +583,7 @@ def main():
         else:
             output_dir = csv_path.parent
         
-        print(f"Loaded {len(df)} crops from CSV (no recomputation needed)")
+        logger.info(f"Loaded {len(df)} crops from CSV (no recomputation needed)")
         
     else:
         # Mode 2: Compute metrics from crop images
@@ -590,7 +593,7 @@ def main():
             input_path = Path(args.path)
         
         if not input_path.is_dir():
-            print(f"Error: {input_path} is not a directory")
+            logger.error(f"{input_path} is not a directory")
             sys.exit(1)
         
         output_dir = args.output_dir if args.output_dir else input_path
@@ -605,12 +608,12 @@ def main():
             save_path = output_dir / "focus_metrics_computed.csv"
         
         df.to_csv(save_path, index=False)
-        print(f"Saved computed metrics: {save_path}")
+        logger.info(f"Saved computed metrics: {save_path}")
     
     # Check for focus metrics
     if args.metric not in df.columns:
-        print(f"Error: Column '{args.metric}' not found in data")
-        print(f"Available columns: {list(df.columns)}")
+        logger.error(f"Column '{args.metric}' not found in data")
+        logger.error(f"Available columns: {list(df.columns)}")
         sys.exit(1)
     
     # Ensure folder column exists
@@ -618,13 +621,13 @@ def main():
         df["folder"] = df["crop_path"].apply(lambda p: Path(p).parent.name)
     
     # Analyse distribution
-    print("\n" + "=" * 50)
-    print("FOCUS METRIC STATISTICS")
-    print("=" * 50)
-    
+    logger.info("\n" + "=" * 50)
+    logger.info("FOCUS METRIC STATISTICS")
+    logger.info("=" * 50)
+
     stats = analyse_focus_distribution(df, args.metric)
     for k, v in stats.items():
-        print(f"  {k}: {v:.2f}")
+        logger.info(f"  {k}: {v:.2f}")
     
     # Handle flag overrides
     use_per_folder = args.per_folder and not args.global_thresh
@@ -645,16 +648,16 @@ def main():
         
         # Save outputs to Focus/
         df_classified.to_csv(focus_dir / "focus_classified_all.csv", index=False)
-        print(f"\nSaved: Focus/focus_classified_all.csv ({len(df_classified)} crops)")
+        logger.info(f"\nSaved: Focus/focus_classified_all.csv ({len(df_classified)} crops)")
         
         sharp_df = df_classified[df_classified["focus_class"] == "sharp"].copy()
         # Add diameter column
         sharp_df["diameter_px"] = sharp_df["y_bottom"] - sharp_df["y_top"]
         sharp_df.to_csv(focus_dir / "sharp_crops.csv", index=False)
-        print(f"Saved: Focus/sharp_crops.csv ({len(sharp_df)} crops)")
+        logger.info(f"Saved: Focus/sharp_crops.csv ({len(sharp_df)} crops)")
         
         folder_stats.to_csv(focus_dir / "focus_folder_stats.csv", index=False)
-        print(f"Saved: Focus/focus_folder_stats.csv")
+        logger.info(f"Saved: Focus/focus_folder_stats.csv")
         
         # Generate summary plot
         generate_summary_plot(
@@ -678,7 +681,7 @@ def main():
         # Save classified CSV
         output_csv = output_dir / "focus_classified.csv"
         df_classified.to_csv(output_csv, index=False)
-        print(f"\nSaved classified data: {output_csv}")
+        logger.info(f"\nSaved classified data: {output_csv}")
     
     # Show examples
     show_extreme_crops(df_classified, args.metric, n=5)
@@ -712,7 +715,7 @@ def main():
             )
             plot_metric_comparison(df)
     
-    print("\n✓ Analysis complete!")
+    logger.info("\nAnalysis complete!")
 
 
 if __name__ == "__main__":

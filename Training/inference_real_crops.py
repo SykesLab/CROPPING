@@ -24,6 +24,7 @@ Output structure:
         blur_distribution_by_material.png
 """
 
+import logging
 import torch
 import torch.nn as nn
 import cv2
@@ -38,6 +39,8 @@ import re
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
+
+logger = logging.getLogger(__name__)
 
 from model import DefocusNet
 from synthetic_blur import BlurParams, BlurCalculator
@@ -136,10 +139,10 @@ class RealCropInference:
         else:
             self.device = torch.device(device)
 
-        print(f"Using device: {self.device}")
+        logger.info(f"Using device: {self.device}")
 
         # Load checkpoint
-        print(f"Loading model from: {model_path}")
+        logger.info(f"Loading model from: {model_path}")
         checkpoint = torch.load(model_path, map_location=self.device, weights_only=True)
 
         # Get config
@@ -154,7 +157,7 @@ class RealCropInference:
         # Detect training mode from checkpoint
         self.training_mode = checkpoint.get('training_mode', 'optical')
         self.blur_term = "σ" if self.training_mode == "direct" else "CoC"
-        print(f"Training mode: {self.training_mode}")
+        logger.info(f"Training mode: {self.training_mode}")
 
         # Load direct mode calibration if needed
         self.direct_slope = None
@@ -169,7 +172,7 @@ class RealCropInference:
                     raise ValueError(f"Calibration file missing 'direct' section: {calibration_file}")
                 self.direct_slope = float(cal_data['direct']['rho_px_per_mm'])
                 self.direct_offset = float(cal_data['direct'].get('sigma_0', 0.0))
-                print(f"  Direct calibration (from file): rho={self.direct_slope} px/mm, "
+                logger.info(f"  Direct calibration (from file): rho={self.direct_slope} px/mm, "
                       f"sigma_0={self.direct_offset} px  |z| = (sigma - sigma_0) / rho")
             else:
                 # Fall back to checkpoint config (rho_direct and sigma_0 saved during training)
@@ -183,7 +186,7 @@ class RealCropInference:
                     )
                 self.direct_slope = float(rho)
                 self.direct_offset = float(sigma_0) if sigma_0 is not None else 0.0
-                print(f"  Direct calibration (from checkpoint): rho={self.direct_slope} px/mm, "
+                logger.info(f"  Direct calibration (from checkpoint): rho={self.direct_slope} px/mm, "
                       f"sigma_0={self.direct_offset} px  |z| = (sigma - sigma_0) / rho")
 
         # Apply cross-camera scale correction to rho (direct mode only)
@@ -195,12 +198,12 @@ class RealCropInference:
             if self.inference_camera_scale_px_per_mm is not None and scale_calib is not None and float(scale_calib) > 0:
                 scale_factor = self.inference_camera_scale_px_per_mm / float(scale_calib)
                 self.direct_slope = self.direct_slope * scale_factor
-                print(f"  Cross-camera scale correction applied: "
+                logger.info(f"  Cross-camera scale correction applied: "
                       f"scale_inf={self.inference_camera_scale_px_per_mm:.1f} px/mm, "
                       f"scale_calib={scale_calib:.1f} px/mm, "
                       f"factor={scale_factor:.3f} → rho_eff={self.direct_slope:.6f} px/mm")
             elif self.inference_camera_scale_px_per_mm is not None and scale_calib is None:
-                print("  ⚠ inference_camera_scale_px_per_mm provided but scale_calib_px_per_mm "
+                logger.warning("inference_camera_scale_px_per_mm provided but scale_calib_px_per_mm "
                       "not found in config — cross-camera correction skipped")
 
         # Create and load model
@@ -208,7 +211,7 @@ class RealCropInference:
 
         if 'model_state_dict' in checkpoint:
             self.model.load_state_dict(checkpoint['model_state_dict'])
-            print("✓ Loaded model weights")
+            logger.info("Loaded model weights")
         elif 'dme_state_dict' in checkpoint:
             state = checkpoint['dme_state_dict']
             # Handle checkpoints saved from DMESubnet directly (no dme_subnet. prefix)
@@ -216,7 +219,7 @@ class RealCropInference:
             if not sample_key.startswith('dme_subnet.'):
                 state = {f'dme_subnet.{k}': v for k, v in state.items()}
             self.model.load_state_dict(state)
-            print("✓ Loaded DME weights")
+            logger.info("Loaded DME weights")
 
         self.model.eval()
 
@@ -247,7 +250,7 @@ class RealCropInference:
                 pixel_size_mm=optics_cfg.get('pixel_size_mm', 0.02),
                 rho=rho
             )
-            print(f"✓ Using custom inference camera settings")
+            logger.info(f"Using custom inference camera settings")
         else:
             self.optical_params = BlurParams.from_config(self.config)
         self.blur_calc = BlurCalculator(self.optical_params)
@@ -297,20 +300,20 @@ class RealCropInference:
         # Diameter measurement (using Otsu's method by default)
         self.diameter_measurer = DiameterMeasurer()
 
-        print(f"Max {self.blur_term}: {self.max_blur} px (denormalization ceiling)")
-        print(f"Model size: {self.model_size}×{self.model_size} px")
+        logger.info(f"Max {self.blur_term}: {self.max_blur} px (denormalization ceiling)")
+        logger.info(f"Model size: {self.model_size}×{self.model_size} px")
 
         # Print inversion chain summary for direct mode
         if self.training_mode == 'direct' and self.direct_slope is not None:
-            print(f"\n--- Direct Mode Inversion Chain ---")
-            print(f"  rho_eff = {self.direct_slope:.6f} px/mm")
-            print(f"  model_size = {self.model_size} px")
-            print(f"  Formula: |z| = sigma_model × native_size / (rho_eff × model_size)")
-            print(f"           |z| = sigma_model × native_size / ({self.direct_slope:.4f} × {self.model_size})")
-            print(f"  native_size = actual input image dimension (detected per crop)")
-            print(f"-----------------------------------")
+            logger.debug(f"--- Direct Mode Inversion Chain ---")
+            logger.debug(f"  rho_eff = {self.direct_slope:.6f} px/mm")
+            logger.debug(f"  model_size = {self.model_size} px")
+            logger.debug(f"  Formula: |z| = sigma_model × native_size / (rho_eff × model_size)")
+            logger.debug(f"           |z| = sigma_model × native_size / ({self.direct_slope:.4f} × {self.model_size})")
+            logger.debug(f"  native_size = actual input image dimension (detected per crop)")
+            logger.debug(f"-----------------------------------")
 
-        print(f"\nModel ready for inference!")
+        logger.info(f"Model ready for inference!")
         self._first_crop_logged = False  # Log full chain for first crop only
 
     def preprocess_image(self, img_path: Path) -> Tuple[torch.Tensor, np.ndarray, Tuple[int, int]]:
@@ -473,15 +476,15 @@ class RealCropInference:
             # Log full inversion chain for the first crop
             if not self._first_crop_logged:
                 self._first_crop_logged = True
-                print(f"\n--- First crop inversion trace ({img_path.name}) ---")
-                print(f"  Input size: {original_size[1]}×{original_size[0]} → native_size = {native_size}")
-                print(f"  Model output (normalized): {pred_norm.squeeze().item():.4f}")
-                print(f"  sigma_model (denormalized): {blur_px_model:.4f} px")
-                print(f"  sigma_native = {blur_px_model:.4f} × {native_size}/{self.model_size} = {sigma_native:.4f} px")
-                print(f"  sigma_0_native = {sigma_0_calib:.4f} × scale_correction = {sigma_0_native:.4f} px")
-                print(f"  |z| = ({sigma_native:.4f} - {sigma_0_native:.4f}) / {self.direct_slope:.4f}"
+                logger.debug(f"--- First crop inversion trace ({img_path.name}) ---")
+                logger.debug(f"  Input size: {original_size[1]}×{original_size[0]} → native_size = {native_size}")
+                logger.debug(f"  Model output (normalized): {pred_norm.squeeze().item():.4f}")
+                logger.debug(f"  sigma_model (denormalized): {blur_px_model:.4f} px")
+                logger.debug(f"  sigma_native = {blur_px_model:.4f} × {native_size}/{self.model_size} = {sigma_native:.4f} px")
+                logger.debug(f"  sigma_0_native = {sigma_0_calib:.4f} × scale_correction = {sigma_0_native:.4f} px")
+                logger.debug(f"  |z| = ({sigma_native:.4f} - {sigma_0_native:.4f}) / {self.direct_slope:.4f}"
                        f" = {defocus_mm:.4f} mm")
-                print(f"-----------------------------------------------")
+                logger.debug(f"-----------------------------------------------")
         else:
             raise ValueError(f"Unknown training_mode: {self.training_mode}")
 
@@ -593,9 +596,9 @@ class RealCropInference:
             DataFrame with results
         """
         material_name = material_dir.name
-        print(f"\n{'='*60}")
-        print(f"Processing: {material_name}")
-        print(f"{'='*60}")
+        logger.info(f"{'='*60}")
+        logger.info(f"Processing: {material_name}")
+        logger.info(f"{'='*60}")
 
         # Find all crop files - first try *_crop.png, then fall back to all *.png
         crop_files = sorted(list(material_dir.glob('*_crop.png')))
@@ -604,13 +607,13 @@ class RealCropInference:
             # Fall back to all PNG files if no *_crop.png found
             crop_files = sorted(list(material_dir.glob('*.png')))
             if len(crop_files) > 0:
-                print(f"No *_crop.png files found, using all {len(crop_files)} PNG files")
+                logger.info(f"No *_crop.png files found, using all {len(crop_files)} PNG files")
 
         if len(crop_files) == 0:
-            print(f"⚠ No image files found in {material_dir}")
+            logger.warning(f"No image files found in {material_dir}")
             return pd.DataFrame()
 
-        print(f"Found {len(crop_files)} image files")
+        logger.info(f"Found {len(crop_files)} image files")
 
         # Create output directory for this material
         output_dir = output_base / material_name
@@ -634,7 +637,7 @@ class RealCropInference:
                 results.append(result)
 
             except Exception as e:
-                print(f"⚠ Error processing {crop_path.name}: {e}")
+                logger.error(f"Error processing {crop_path.name}: {e}")
                 continue
 
         # Create DataFrame
@@ -647,14 +650,14 @@ class RealCropInference:
 
             # Print statistics — use correct column name for mode
             blur_col = 'sigma_px' if self.training_mode == 'direct' else 'coc_px'
-            print(f"\n{material_name} Statistics:")
-            print(f"  Processed: {len(df)} crops")
-            print(f"  {self.blur_term} Mean:  {df[blur_col].mean():.2f} px")
-            print(f"  {self.blur_term} Std:   {df[blur_col].std():.2f} px")
-            print(f"  {self.blur_term} Range: {df[blur_col].min():.2f} - {df[blur_col].max():.2f} px")
-            print(f"  Defocus Mean: {df['defocus_mm'].mean():.2f} mm")
-            print(f"  Diameter (original): {df['diameter_original_px'].mean():.2f} ± {df['diameter_original_px'].std():.2f} px")
-            print(f"✓ Saved results to: {csv_path}")
+            logger.info(f"{material_name} Statistics:")
+            logger.info(f"  Processed: {len(df)} crops")
+            logger.info(f"  {self.blur_term} Mean:  {df[blur_col].mean():.2f} px")
+            logger.info(f"  {self.blur_term} Std:   {df[blur_col].std():.2f} px")
+            logger.info(f"  {self.blur_term} Range: {df[blur_col].min():.2f} - {df[blur_col].max():.2f} px")
+            logger.info(f"  Defocus Mean: {df['defocus_mm'].mean():.2f} mm")
+            logger.info(f"  Diameter (original): {df['diameter_original_px'].mean():.2f} ± {df['diameter_original_px'].std():.2f} px")
+            logger.info(f"Saved results to: {csv_path}")
 
         return df
 
@@ -678,11 +681,11 @@ class RealCropInference:
         output_base = Path(output_base)
         output_base.mkdir(exist_ok=True, parents=True)
 
-        print(f"\n{'='*60}")
-        print(f"REAL DROPLET CROP INFERENCE")
-        print(f"{'='*60}")
-        print(f"Input:  {input_base}")
-        print(f"Output: {output_base}")
+        logger.info(f"{'='*60}")
+        logger.info(f"REAL DROPLET CROP INFERENCE")
+        logger.info(f"{'='*60}")
+        logger.info(f"Input:  {input_base}")
+        logger.info(f"Output: {output_base}")
 
         # Find all material subdirectories OR process flat folder
         material_dirs = [d for d in input_base.iterdir() if d.is_dir()]
@@ -690,12 +693,12 @@ class RealCropInference:
 
         if len(material_dirs) > 0:
             # Standard mode: process subfolders as materials
-            print(f"\nFound {len(material_dirs)} material folders:")
+            logger.info(f"Found {len(material_dirs)} material folders:")
             for d in material_dirs:
                 crop_files = list(d.glob('*_crop.png'))
                 if len(crop_files) == 0:
                     crop_files = list(d.glob('*.png'))
-                print(f"  - {d.name}: {len(crop_files)} images")
+                logger.info(f"  - {d.name}: {len(crop_files)} images")
 
             # Process each material
             for material_dir in material_dirs:
@@ -715,10 +718,10 @@ class RealCropInference:
                 direct_crops = list(input_base.glob('*.png'))
 
             if len(direct_crops) == 0:
-                print(f"⚠ No images found in {input_base}")
+                logger.warning(f"No images found in {input_base}")
                 return
 
-            print(f"\nNo subfolders found - processing {len(direct_crops)} images directly")
+            logger.info(f"No subfolders found - processing {len(direct_crops)} images directly")
 
             df = self.process_material_folder(
                 input_base,
@@ -737,33 +740,33 @@ class RealCropInference:
             # Save combined results
             summary_path = output_base / 'summary_all_materials.csv'
             combined_df.to_csv(summary_path, index=False)
-            print(f"\n✓ Saved combined summary to: {summary_path}")
+            logger.info(f"Saved combined summary to: {summary_path}")
 
             # Create summary visualizations
             self._create_summary_plots(combined_df, output_base)
 
             # Print overall statistics
-            print(f"\n{'='*60}")
-            print(f"OVERALL STATISTICS")
-            print(f"{'='*60}")
-            print(f"Total crops processed: {len(combined_df)}")
-            print(f"Materials: {combined_df['material'].nunique()}")
+            logger.info(f"{'='*60}")
+            logger.info(f"OVERALL STATISTICS")
+            logger.info(f"{'='*60}")
+            logger.info(f"Total crops processed: {len(combined_df)}")
+            logger.info(f"Materials: {combined_df['material'].nunique()}")
             blur_col = 'sigma_px' if self.training_mode == 'direct' else 'coc_px'
-            print(f"\n{self.blur_term} Statistics (all materials):")
-            print(f"  Mean:   {combined_df[blur_col].mean():.2f} px")
-            print(f"  Median: {combined_df[blur_col].median():.2f} px")
-            print(f"  Std:    {combined_df[blur_col].std():.2f} px")
-            print(f"  Range:  {combined_df[blur_col].min():.2f} - {combined_df[blur_col].max():.2f} px")
+            logger.info(f"{self.blur_term} Statistics (all materials):")
+            logger.info(f"  Mean:   {combined_df[blur_col].mean():.2f} px")
+            logger.info(f"  Median: {combined_df[blur_col].median():.2f} px")
+            logger.info(f"  Std:    {combined_df[blur_col].std():.2f} px")
+            logger.info(f"  Range:  {combined_df[blur_col].min():.2f} - {combined_df[blur_col].max():.2f} px")
 
 
-            print(f"\nDefocus Statistics (all materials):")
-            print(f"  Mean:   {combined_df['defocus_mm'].mean():.2f} mm")
-            print(f"  Median: {combined_df['defocus_mm'].median():.2f} mm")
-            print(f"  Range:  {combined_df['defocus_mm'].min():.2f} - {combined_df['defocus_mm'].max():.2f} mm")
+            logger.info(f"Defocus Statistics (all materials):")
+            logger.info(f"  Mean:   {combined_df['defocus_mm'].mean():.2f} mm")
+            logger.info(f"  Median: {combined_df['defocus_mm'].median():.2f} mm")
+            logger.info(f"  Range:  {combined_df['defocus_mm'].min():.2f} - {combined_df['defocus_mm'].max():.2f} mm")
 
-            print(f"\n{'='*60}")
-            print(f"✓ INFERENCE COMPLETE!")
-            print(f"{'='*60}")
+            logger.info(f"{'='*60}")
+            logger.info(f"INFERENCE COMPLETE!")
+            logger.info(f"{'='*60}")
 
     @staticmethod
     def _parse_true_z(filename: str) -> Optional[float]:
@@ -812,7 +815,7 @@ class RealCropInference:
         df = df[(df['true_defocus'] >= 0.5) & (df['true_defocus'] <= 6.8)].reset_index(drop=True)
         n_excluded = n_before - len(df)
         if n_excluded > 0:
-            print(f"  Excluded {n_excluded} frames outside calibration range "
+            logger.info(f"  Excluded {n_excluded} frames outside calibration range "
                   f"(|z| < 0.5 mm or |z| > 6.8 mm), {len(df)} remaining")
 
         # --- Figure 1: Main 4-panel analysis ---
@@ -917,7 +920,7 @@ class RealCropInference:
         plot_path = output_dir / 'summary_analysis.png'
         plt.savefig(plot_path, dpi=200, bbox_inches='tight')
         plt.close()
-        print(f"✓ Saved z-stack validation plots to: {plot_path}")
+        logger.info(f"Saved z-stack validation plots to: {plot_path}")
 
         # --- Figure 2: Sample crop strip (use full df including excluded frames) ---
         self._create_sample_strip(df_all, output_dir)
@@ -981,7 +984,7 @@ class RealCropInference:
         strip_path = output_dir / 'sample_strip.png'
         plt.savefig(strip_path, dpi=200, bbox_inches='tight')
         plt.close()
-        print(f"✓ Saved sample strip to: {strip_path}")
+        logger.info(f"Saved sample strip to: {strip_path}")
 
     def _print_validation_summary(self, df: pd.DataFrame, slope: float,
                                    intercept: float, r_value: float, output_dir: Path):
@@ -1039,12 +1042,12 @@ class RealCropInference:
         lines.append('=' * 60)
 
         summary_text = '\n'.join(lines)
-        print(summary_text)
+        logger.info(summary_text)
 
         txt_path = output_dir / 'validation_summary.txt'
         with open(txt_path, 'w', encoding='utf-8') as f:
             f.write(summary_text)
-        print(f"✓ Saved validation summary to: {txt_path}")
+        logger.info(f"Saved validation summary to: {txt_path}")
 
     def _create_basic_summary_plots(self, df: pd.DataFrame, blur_col: str, output_dir: Path):
         """Fallback summary when no ground truth z is available in filenames."""
@@ -1083,7 +1086,7 @@ class RealCropInference:
         plot_path = output_dir / 'summary_analysis.png'
         plt.savefig(plot_path, dpi=150, bbox_inches='tight')
         plt.close()
-        print(f"✓ Saved summary plots to: {plot_path}")
+        logger.info(f"Saved summary plots to: {plot_path}")
 
 
 def main():

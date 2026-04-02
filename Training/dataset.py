@@ -16,6 +16,9 @@ from pathlib import Path
 from typing import Tuple, Optional, Dict, Any, List, Union
 import pandas as pd
 import random
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 def _blur_column(df: pd.DataFrame) -> str:
@@ -44,14 +47,14 @@ def compute_max_blur_from_metadata(data_dir: Union[str, Path], margin_percent: f
     metadata_path = data_dir / 'metadata.csv'
 
     if not metadata_path.exists():
-        print(f"Warning: metadata.csv not found at {metadata_path}, using default max_blur=20.0")
+        logger.warning(f"metadata.csv not found at {metadata_path}, using default max_blur=20.0")
         return 20.0
 
     try:
         df = pd.read_csv(metadata_path)
         col = _blur_column(df)
         if col not in df.columns:
-            print(f"Warning: blur column not found in metadata.csv, using default max_blur=20.0")
+            logger.warning(f"blur column not found in metadata.csv, using default max_blur=20.0")
             return 20.0
 
         actual_max = df[col].abs().max()
@@ -60,15 +63,15 @@ def compute_max_blur_from_metadata(data_dir: Union[str, Path], margin_percent: f
 
         if is_direct:
             max_blur = actual_max
-            print(f"Computed max {blur_term} from metadata: {actual_max:.2f} px (no margin - direct mode)")
+            logger.info(f"Computed max {blur_term} from metadata: {actual_max:.2f} px (no margin - direct mode)")
         else:
             max_blur = actual_max * (1.0 + margin_percent / 100.0)
-            print(f"Computed max {blur_term} from metadata: {actual_max:.2f} px")
-            print(f"  With {margin_percent}% margin: {max_blur:.2f} px")
+            logger.info(f"Computed max {blur_term} from metadata: {actual_max:.2f} px")
+            logger.info(f"  With {margin_percent}% margin: {max_blur:.2f} px")
 
         return float(max_blur)
     except Exception as e:
-        print(f"Warning: Error reading metadata.csv: {e}, using default max_blur=20.0")
+        logger.warning(f"Error reading metadata.csv: {e}, using default max_blur=20.0")
         return 20.0
 
 
@@ -86,23 +89,23 @@ def compute_min_blur_from_metadata(data_dir: Union[str, Path]) -> float:
     metadata_path = data_dir / 'metadata.csv'
 
     if not metadata_path.exists():
-        print(f"Warning: metadata.csv not found at {metadata_path}, using default min_blur=0.0")
+        logger.warning(f"metadata.csv not found at {metadata_path}, using default min_blur=0.0")
         return 0.0
 
     try:
         df = pd.read_csv(metadata_path)
         col = _blur_column(df)
         if col not in df.columns:
-            print(f"Warning: blur column not found in metadata.csv, using default min_blur=0.0")
+            logger.warning(f"blur column not found in metadata.csv, using default min_blur=0.0")
             return 0.0
 
         actual_min = df[col].abs().min()
         blur_term = "sigma" if 'sigma_px' in df.columns else "CoC"
-        print(f"Computed min {blur_term} from metadata: {actual_min:.2f} px")
+        logger.info(f"Computed min {blur_term} from metadata: {actual_min:.2f} px")
 
         return float(actual_min)
     except Exception as e:
-        print(f"Warning: Error reading metadata.csv: {e}, using default min_blur=0.0")
+        logger.warning(f"Error reading metadata.csv: {e}, using default min_blur=0.0")
         return 0.0
 
 
@@ -153,8 +156,8 @@ class DMEDataset(Dataset):
         self._cache: Optional[np.ndarray] = None
         self._cache_path = self.data_dir / 'blur_cache.npy'
 
-        print(f"Loaded {len(self.samples)} samples from {data_dir}"
-              f" ({'direct' if self.is_direct_mode else 'optical'} mode)")
+        logger.info(f"Loaded {len(self.samples)} samples from {data_dir}"
+                    f" ({'direct' if self.is_direct_mode else 'optical'} mode)")
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -169,12 +172,12 @@ class DMEDataset(Dataset):
             return
 
         if self._cache_path.exists():
-            print(f"Loading image cache from {self._cache_path.name}...")
+            logger.info(f"Loading image cache from {self._cache_path.name}...")
             self._cache = np.load(str(self._cache_path), mmap_mode='r')
-            print(f"Cache loaded: {self._cache.shape}")
+            logger.info(f"Cache loaded: {self._cache.shape}")
             return
 
-        print(f"Building image cache ({len(self.samples)} images)...")
+        logger.info(f"Building image cache ({len(self.samples)} images)...")
         first = cv2.imread(str(self.samples[0]), cv2.IMREAD_GRAYSCALE)
         h, w = first.shape
         cache = np.empty((len(self.samples), h, w), dtype=np.uint8)
@@ -189,7 +192,7 @@ class DMEDataset(Dataset):
 
         np.save(str(self._cache_path), cache)
         self._cache = np.load(str(self._cache_path), mmap_mode='r')
-        print(f"Cache saved to {self._cache_path.name}: {cache.shape}")
+        logger.info(f"Cache saved to {self._cache_path.name}: {cache.shape}")
 
     def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """
@@ -262,14 +265,13 @@ def _create_stratified_split(data_dir: Path, max_blur: float, train_split: float
                 config = yaml.safe_load(f)
                 data_section = config.get('data', {})
                 min_blur_intended = data_section.get('min_blur_px', data_section.get('min_coc_px', 0.0))
-            print(f"Loaded min_blur_px from config: {min_blur_intended}")
+            logger.debug(f"Loaded min_blur_px from config: {min_blur_intended}")
         else:
-            print(f"Config not found at {config_path}, using default min_blur_px=0.0")
+            logger.debug(f"Config not found at {config_path}, using default min_blur_px=0.0")
     except Exception as e:
-        print(f"Error loading config: {e}")
-        print(f"   Using default min_blur_px=0.0 (backward compatibility mode)")
-        import traceback
-        traceback.print_exc()
+        logger.warning(f"Error loading config: {e}")
+        logger.warning(f"   Using default min_blur_px=0.0 (backward compatibility mode)")
+        logger.debug("Config load traceback:", exc_info=True)
 
     min_blur_actual = blur_values.min()
     max_blur_actual = max_blur
@@ -279,14 +281,14 @@ def _create_stratified_split(data_dir: Path, max_blur: float, train_split: float
         bin_size = (max_blur_actual - min_blur_actual) / 4.0
         bins = [(min_blur_actual + i * bin_size, min_blur_actual + (i + 1) * bin_size)
                 for i in range(4)]
-        print(f"{blur_term} bins (stratified split):")
+        logger.debug(f"{blur_term} bins (stratified split):")
         for i, (low, high) in enumerate(bins):
-            print(f"  Bin {i+1}: [{low:.2f}, {high:.2f}] px")
+            logger.debug(f"  Bin {i+1}: [{low:.2f}, {high:.2f}] px")
     else:
         max_blur_ceil = int(np.ceil(max_blur))
         bin_size = max_blur_ceil / 4.0
         bins = [(i * bin_size, (i + 1) * bin_size) for i in range(4)]
-        print(f"{blur_term} bins (stratified split): {bins}")
+        logger.debug(f"{blur_term} bins (stratified split): {bins}")
 
     # Assign each sample to a bin
     bin_assignments = np.zeros(len(blur_values), dtype=int)

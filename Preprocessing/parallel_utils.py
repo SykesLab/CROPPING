@@ -18,19 +18,20 @@ def _worker_init() -> None:
     """
     import sys
     devnull = open(os.devnull, "w")
-    sys.stdout = devnull
-    sys.stderr = devnull
-
-    # Import pyphantom while suppressed to trigger its banner silently
     try:
-        import pyphantom  # noqa: F401
-    except ImportError:
-        pass
+        sys.stdout = devnull
+        sys.stderr = devnull
 
-    # Restore stdout/stderr for actual work
-    sys.stdout = sys.__stdout__
-    sys.stderr = sys.__stderr__
-    devnull.close()
+        # Import pyphantom while suppressed to trigger its banner silently
+        try:
+            import pyphantom  # noqa: F401
+        except ImportError:
+            pass
+    finally:
+        # Restore stdout/stderr for actual work
+        sys.stdout = sys.__stdout__
+        sys.stderr = sys.__stderr__
+        devnull.close()
 
 
 def run_parallel(

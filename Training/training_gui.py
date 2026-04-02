@@ -5407,7 +5407,7 @@ This gives the model examples with known ground truth to learn from."""
 
         try:
             coc_values = [float(x) for x in coc_values_str.split()]
-        except:
+        except ValueError:
             messagebox.showerror("Error", "Invalid CoC values. Use space-separated numbers.")
             return
 
