@@ -28,16 +28,20 @@ try:
     from Preprocessing.darkness_analysis import choose_best_frame_geometry_only
     from Preprocessing.cropping import crop_droplet_with_sphere_guard
     from Training.model import DefocusNet
+    from physics import ScalingParams, invert_prediction, defocus_uncertainty
 except ImportError:
     # Fallback: add sibling directories to path
     for _p in (_REPO_ROOT / "Preprocessing", _REPO_ROOT / "Training"):
         _ps = str(_p)
         if _ps not in sys.path:
             sys.path.insert(0, _ps)
+    if str(_REPO_ROOT) not in sys.path:
+        sys.path.insert(0, str(_REPO_ROOT))
     from cine_io import safe_load_cine, PYPHANTOM_AVAILABLE          # noqa: E402
     from darkness_analysis import choose_best_frame_geometry_only     # noqa: E402
     from cropping import crop_droplet_with_sphere_guard               # noqa: E402
     from model import DefocusNet                                      # noqa: E402
+    from physics import ScalingParams, invert_prediction, defocus_uncertainty  # noqa: E402
 
 
 # ── Default calibration constants ──────────────────────────────────────────
@@ -198,10 +202,19 @@ class InferenceEngine:
         training_cfg = self.config.get("training", {})
         self.scale_calib = training_cfg.get("scale_calib_px_per_mm")
 
+        # Crop size mismatch warning
+        user_crop = int(self.settings.get("crop_size", DEFAULT_CROP_SIZE))
+        mismatch_msg = ""
+        if user_crop != self.model_size:
+            mismatch_msg = (
+                f"  |  WARNING: crop_size={user_crop} != "
+                f"model training size={self.model_size}"
+            )
+
         return (
             f"Model loaded  |  mode={self.training_mode}  |  "
             f"max_blur={self.max_blur:.2f} px  |  "
-            f"model_size={self.model_size}"
+            f"model_size={self.model_size}{mismatch_msg}"
         )
 
     # ── Frame selection ────────────────────────────────────────────────
@@ -328,36 +341,49 @@ class InferenceEngine:
 
         pred_val = pred_norm.squeeze().item()
 
-        # 1. Denormalise: sigma_model = pred * max_blur
-        sigma_model = pred_val * self.max_blur
-
-        # 2. Scale to native: sigma_native = sigma_model * (w_input / model_size)
-        sigma_native = sigma_model * (native_crop_size / self.model_size)
-
-        # 3. Defocus recovery
+        # Build physics params from GUI settings
         rho = float(self.settings.get("rho", DEFAULT_RHO))
         sigma_0 = float(self.settings.get("sigma_0", DEFAULT_SIGMA_0))
         s_calib = float(self.settings.get("s_calib", DEFAULT_S_CALIB))
         s_c = float(self.settings.get("s_c", DEFAULT_S_C))
+        feather_px = int(self.settings.get("feather_px", DEFAULT_FEATHER_PX))
+        crop_size = int(self.settings.get("crop_size", DEFAULT_CROP_SIZE))
 
-        # Cross-camera scale ratio
-        scale_ratio = s_c / s_calib if s_calib > 0 else 1.0
+        params = ScalingParams(
+            rho=rho, sigma_0=sigma_0,
+            s_calib=s_calib, s_inference=s_c,
+            max_blur=self.max_blur, model_size=self.model_size,
+        )
 
-        # Apply cross-camera correction to rho and sigma_0
-        rho_eff = rho * scale_ratio
-        sigma_0_native = sigma_0 * scale_ratio
+        # Run canonical inverse chain from physics module
+        result = invert_prediction(pred_val, params, native_crop_size)
 
-        # z = (sigma_native - sigma_0_native) / rho_eff
-        defocus_mm = (sigma_native - sigma_0_native) / rho_eff if rho_eff > 0 else 0.0
-
-        # 4. Clamp z >= 0
-        defocus_mm = max(0.0, defocus_mm)
+        # Compute calibration uncertainty if LOO-CV stds available
+        rho_std = float(self.settings.get("rho_std", 0.0))
+        sigma_0_std = float(self.settings.get("sigma_0_std", 0.0))
+        unc_mm = 0.0
+        if rho_std > 0 and params.rho_eff > 0:
+            unc_mm = defocus_uncertainty(
+                result.sigma_native, params.rho_eff, params.sigma_0_eff,
+                rho_std * params.scale_ratio, sigma_0_std * params.scale_ratio,
+            )
 
         return {
-            "pred_norm": pred_val,
-            "sigma_model": sigma_model,
-            "sigma_native": sigma_native,
-            "defocus_mm": defocus_mm,
+            "pred_norm": result.pred_norm,
+            "sigma_model": result.sigma_model,
+            "sigma_native": result.sigma_native,
+            "defocus_mm": result.defocus_mm,
+            "defocus_uncertainty_mm": unc_mm,
+            "saturated": result.saturated,
+            "clamped": result.clamped,
+            "training_mode": self.training_mode,
+            "model_path": str(self.settings.get("model_path", "")),
+            "rho": rho,
+            "sigma_0": sigma_0,
+            "s_calib": s_calib,
+            "s_c": s_c,
+            "feather_px": feather_px,
+            "crop_size": crop_size,
         }
 
     # ── Full pipeline convenience method ───────────────────────────────
@@ -402,6 +428,50 @@ class InferenceEngine:
         results["geometry"] = geo
 
         return results
+
+    # ── Batch processing ─────────────────────────────────────────────
+
+    def process_folder(
+        self, folder: Path, progress_cb=None,
+    ) -> list:
+        """
+        Run the pipeline on every .cine file in *folder*.
+
+        Parameters
+        ----------
+        folder : directory containing .cine files
+        progress_cb : optional callable(status_str, file_index, total_files)
+
+        Returns list of result dicts (one per file). Failed files are
+        included with an 'error' key instead of numerical results.
+        """
+        cine_files = sorted(folder.glob("*.cine"), key=lambda p: p.name)
+        if not cine_files:
+            raise FileNotFoundError(f"No .cine files found in {folder}")
+
+        all_results = []
+        total = len(cine_files)
+
+        for i, cine_path in enumerate(cine_files):
+            if progress_cb is not None:
+                progress_cb(f"Processing {i + 1}/{total}: {cine_path.name}", i, total)
+
+            try:
+                result = self.process_cine(cine_path)
+                # Drop large arrays — not needed for batch CSV output
+                for key in ("frame_gray", "crop", "norm_img", "geometry"):
+                    result.pop(key, None)
+                all_results.append(result)
+            except Exception as e:
+                all_results.append({
+                    "cine_name": cine_path.name,
+                    "error": str(e),
+                })
+
+        if progress_cb is not None:
+            progress_cb("Batch complete", total, total)
+
+        return all_results
 
     # ── Watch-folder helper ────────────────────────────────────────────
 
