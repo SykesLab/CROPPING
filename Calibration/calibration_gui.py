@@ -75,30 +75,31 @@ check_dependencies()
 # =============================================================================
 # Imports (after dependency check)
 # =============================================================================
-import tkinter as tk
-from tkinter import ttk, filedialog, messagebox, scrolledtext
-import threading
 import queue
+import threading
+import tkinter as tk
 import webbrowser
-from pathlib import Path
 from dataclasses import dataclass
+from pathlib import Path
+from tkinter import filedialog, messagebox, scrolledtext, ttk
 from typing import Dict, List, Optional, Tuple
-import numpy as np
+
 import cv2
+import numpy as np
 import yaml
 from PIL import Image, ImageTk
 
 # Local imports
 from blur_measurement import (
-    measure_blur_auto, measure_blur_batch, detect_sphere, get_sphere_mask, BlurMeasurement
+    BlurMeasurement, detect_sphere, get_sphere_mask, measure_blur_auto, measure_blur_batch,
 )
 from calibration_core import (
-    OpticalParams, CalibrationResultA, CalibrationResultB, CalibrationResultHybrid,
+    CalibrationResultA, CalibrationResultB, CalibrationResultHybrid, OpticalParams,
     calibrate_approach_a, calibrate_approach_b, calibrate_hybrid,
-    find_focal_plane, validate_calibration, export_calibration_yaml,
-    export_calibration_yaml_direct, loo_cv, generate_quality_report,
+    export_calibration_yaml, export_calibration_yaml_direct,
+    find_focal_plane, generate_quality_report, loo_cv, validate_calibration,
 )
-from cine_loader import CineFolderLoader, check_pyphantom, PYPHANTOM_AVAILABLE
+from cine_loader import PYPHANTOM_AVAILABLE, CineFolderLoader, check_pyphantom
 from sphere_processing import process_sphere_stack
 
 # Try to import matplotlib for plotting

@@ -12,7 +12,6 @@ Usage:
 """
 
 import argparse
-import csv
 import json
 import logging
 import shutil
@@ -35,6 +34,7 @@ except ImportError:
         sys.path.insert(0, _CALIB_DIR)
     from sphere_processing import flatten_sphere_crop
 from crop_blur_measurement import measure_erf_blur
+from focus_classification import classify_by_erf_sigma
 
 logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
@@ -74,9 +74,6 @@ def flatten_and_measure_crop(
     sigma = measure_erf_blur(out_img)
 
     return True, sigma, None
-
-
-from focus_classification import classify_by_erf_sigma
 
 
 def main():

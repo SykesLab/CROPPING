@@ -13,8 +13,8 @@ from typing import Any, Dict, List, Optional, Tuple
 import numpy as np
 import pandas as pd
 
-from cine_io import group_cines_by_droplet, get_cine_folders, safe_load_cine
 import config
+from cine_io import get_cine_folders, group_cines_by_droplet, safe_load_cine
 from config import CINE_ROOT, CROP_SAFETY_PIXELS, OUTPUT_ROOT
 from crop_calibration import compute_crop_size
 from darkness_analysis import (
@@ -27,8 +27,7 @@ from image_utils import otsu_mask
 from output_writer import generate_droplet_outputs, set_full_output_mode, write_folder_csv
 from parallel_utils import run_parallel
 from plotting import save_darkness_plot, save_geometric_overlay
-from profiling import aggregate_timings, print_global_summary, save_profile_json
-from profiling import Timer, format_time
+from profiling import Timer, aggregate_timings, format_time, print_global_summary, save_profile_json
 from workers import analyze_droplet_crops_only, analyze_droplet_full
 
 logger = logging.getLogger(__name__)

@@ -18,12 +18,12 @@ from typing import Optional, Tuple
 import cv2
 import numpy as np
 from scipy.optimize import curve_fit
+from scipy.special import erf
 
 # ERF fitting constants
 SIGMA_INIT_GUESSES = [0.1, 0.3, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0]
 MIN_CONTRAST = 0.05
 MIN_EDGE_MARGIN_PX = 20
-from scipy.special import erf
 
 
 # ---------------------------------------------------------------------------

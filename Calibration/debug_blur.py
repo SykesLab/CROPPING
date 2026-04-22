@@ -4,12 +4,14 @@ Debug script to visualize what's happening during erf blur measurement.
 This helps diagnose why sharp images near focus are returning wrong σ values.
 """
 
-import numpy as np
+from pathlib import Path
+
 import cv2
 import matplotlib.pyplot as plt
-from pathlib import Path
+import numpy as np
 from scipy.optimize import curve_fit
-from blur_measurement import erf_edge, detect_sphere, get_sphere_mask
+
+from blur_measurement import detect_sphere, erf_edge, get_sphere_mask
 
 
 def debug_blur_measurement(image_path: str, save_dir: str = None):

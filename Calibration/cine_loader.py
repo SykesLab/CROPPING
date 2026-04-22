@@ -23,8 +23,8 @@ import sys
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
-import numpy as np
 import cv2
+import numpy as np
 
 # Import shared phantom utilities from Preprocessing
 _preproc_dir = str(Path(__file__).resolve().parent.parent / "Preprocessing")

@@ -12,8 +12,6 @@ import sys
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
-logger = logging.getLogger(__name__)
-
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
@@ -32,6 +30,8 @@ from focus_metrics import (
     compute_dataset_statistics,
     suggest_thresholds,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def compute_metrics_from_crops(

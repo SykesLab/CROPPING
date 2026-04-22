@@ -10,13 +10,14 @@ Methods:
 3. Laplacian variance - simple sharpness metric (inverse relationship to blur)
 """
 
-import numpy as np
-import cv2
-from scipy.optimize import curve_fit
-from scipy.ndimage import sobel, gaussian_filter
-from scipy.special import erf
-from typing import Tuple, Optional, Dict, List
 from dataclasses import dataclass
+from typing import Dict, List, Optional, Tuple
+
+import cv2
+import numpy as np
+from scipy.ndimage import sobel
+from scipy.optimize import curve_fit
+from scipy.special import erf
 
 
 @dataclass

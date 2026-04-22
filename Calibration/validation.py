@@ -5,16 +5,17 @@ This module validates calibration results against historical data (e.g., 2021 da
 It helps determine which aperture setting produces physically plausible depths.
 """
 
-import numpy as np
-from pathlib import Path
-from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass
-import cv2
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
-from blur_measurement import measure_blur_auto, BlurMeasurement
+import cv2
+import numpy as np
+
+from blur_measurement import BlurMeasurement, measure_blur_auto
 from calibration_core import (
     CalibrationResultA, CalibrationResultB, CalibrationResultHybrid,
-    sigma_to_depth_approach_a, sigma_to_depth_approach_b, OpticalParams
+    OpticalParams, sigma_to_depth_approach_a, sigma_to_depth_approach_b,
 )
 
 

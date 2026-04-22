@@ -1,16 +1,16 @@
 """GUI interface for the droplet cropping pipeline."""
 
 import builtins
+import json
+import platform
 import queue
 import subprocess
 import threading
 import time
-import platform
-from pathlib import Path
-from typing import Any, Dict, List, Optional
-
 import tkinter as tk
-from tkinter import ttk, filedialog, messagebox
+from pathlib import Path
+from tkinter import filedialog, messagebox, ttk
+from typing import Any, Dict, List, Optional
 
 try:
     from PIL import Image, ImageTk
@@ -18,11 +18,8 @@ except ImportError:
     print("GUI requires: pip install pillow")
     raise
 
-import json
-
-import config
-# Import cine_io module but don't check SDK status yet - will be configured in GUI
 import cine_io
+import config
 from profiling import format_time
 
 # Settings file for persisting GUI state

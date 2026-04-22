@@ -14,10 +14,10 @@ Usage:
 """
 
 import csv
-import re
 import logging
+import re
 from pathlib import Path
-from typing import Optional, List, Tuple
+from typing import List, Optional, Tuple
 
 logger = logging.getLogger(__name__)
 

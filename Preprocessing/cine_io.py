@@ -7,8 +7,8 @@ by droplet ID based on filename patterns (e.g. sphere0843g.cine).
 Includes silent pyphantom import to suppress SDK banner on worker spawn.
 """
 
-import re
 import logging
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
