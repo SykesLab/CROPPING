@@ -98,6 +98,15 @@ class Trainer:
         self.save_every = train_cfg.get('save_every_epochs', 1)
         self.save_only_best = train_cfg.get('save_only_best', False)
         self.log_eps = train_cfg.get('log_eps', 0.01)
+
+        # Optimizer config
+        self.optimizer_type = train_cfg.get('optimizer', 'adam').lower()
+        self.adam_beta1 = float(train_cfg.get('adam_beta1', 0.9))
+        self.adam_beta2 = float(train_cfg.get('adam_beta2', 0.999))
+        self.weight_decay = float(train_cfg.get('weight_decay', 0.0))
+        self.grad_clip_norm = float(train_cfg.get('grad_clip_norm', 0.0))
+        self.lr_schedule = train_cfg.get('lr_schedule', 'step').lower()
+        self.lr_min = float(train_cfg.get('lr_min', 1e-6))
         # num_workers hardcoded to 0 - multiprocessing doesn't work when launched from GUI on Windows
 
         # Data config
@@ -261,11 +270,21 @@ class Trainer:
         self.current_session['lr_end'] = new_lr
 
     def _get_lr(self, epoch: int, base_lr: float) -> float:
+        if self.lr_schedule == 'none':
+            return base_lr
         if epoch < self.lr_decay_start:
             return base_lr
-        else:
-            decay_epochs = epoch - self.lr_decay_start
-            return base_lr * (1.0 - self.lr_decay_rate) ** decay_epochs
+        decay_epochs = epoch - self.lr_decay_start
+        if self.lr_schedule == 'cosine':
+            import math
+            total = max(self.epochs_dme - self.lr_decay_start, 1)
+            progress = min(decay_epochs / total, 1.0)
+            lr = self.lr_min + 0.5 * (base_lr - self.lr_min) * (1 + math.cos(math.pi * progress))
+        elif self.lr_schedule == 'exponential':
+            lr = base_lr * (1.0 - self.lr_decay_rate) ** decay_epochs
+        else:  # 'step'
+            lr = base_lr * (1.0 - self.lr_decay_rate) ** decay_epochs
+        return max(lr, self.lr_min)
 
     def _should_stop(self) -> bool:
         return self.stop_flag()
@@ -364,11 +383,19 @@ class Trainer:
         logger.info("  • dme_best_current_session.pth - Best in this training run")
         logger.info("  • dme_epoch_X.pth - Recovery checkpoints (every epoch)")
 
-        optimizer = optim.Adam(
-            self.model.dme_subnet.parameters(),
-            lr=self.lr,
-            betas=(0.9, 0.999)
-        )
+        params = self.model.dme_subnet.parameters()
+        if self.optimizer_type == 'adamw':
+            optimizer = optim.AdamW(params, lr=self.lr,
+                                    betas=(self.adam_beta1, self.adam_beta2),
+                                    weight_decay=self.weight_decay)
+        elif self.optimizer_type == 'sgd':
+            optimizer = optim.SGD(params, lr=self.lr, momentum=self.adam_beta1,
+                                  weight_decay=self.weight_decay)
+        else:
+            optimizer = optim.Adam(params, lr=self.lr,
+                                   betas=(self.adam_beta1, self.adam_beta2),
+                                   weight_decay=self.weight_decay)
+        logger.info(f"Optimizer: {self.optimizer_type} | weight_decay={self.weight_decay}")
 
         # Resume from checkpoint if provided
         start_epoch = 1
@@ -446,6 +473,9 @@ class Trainer:
 
                     # Backward
                     loss.backward()
+                    if self.grad_clip_norm > 0:
+                        torch.nn.utils.clip_grad_norm_(
+                            self.model.dme_subnet.parameters(), self.grad_clip_norm)
                     optimizer.step()
 
                     train_loss += loss.item()
