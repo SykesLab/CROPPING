@@ -136,6 +136,7 @@ if __name__ == "__main__":
 
     scalar_pred = model(dummy_input)
     print(f"Scalar prediction shape: {scalar_pred.shape}")
-    print(f"Scalar prediction range: [{scalar_pred.min().item():.4f}, {scalar_pred.max().item():.4f}]")
+    print(
+        f"Scalar prediction range: [{scalar_pred.min().item():.4f}, {scalar_pred.max().item():.4f}]")
 
     print("\nAll tests passed!")

@@ -148,7 +148,8 @@ class Trainer:
         self.global_step = 0
         self.best_val_loss = float('inf')
         self.best_dme_mae_px = float('inf')  # best scalar blur MAE (px) for DME stage
-        self.best_current_run_mae = float('inf')  # best MAE for current training session (resets on resume)
+        # best MAE for current training session (resets on resume)
+        self.best_current_run_mae = float('inf')
         self.train_split = train_cfg.get('train_split', 0.8)
         self.seed = train_cfg.get('seed', 42)
 
@@ -215,8 +216,10 @@ class Trainer:
         self.current_session['epochs_trained'] = epoch - self.current_session['start_epoch'] + 1
 
         # Track if this epoch improved the best model
-        if val_loss is not None and (self.training_history['training_summary']['best_metrics']['val_loss'] is None or
-                                     val_loss < self.training_history['training_summary']['best_metrics']['val_loss']):
+        if val_loss is not None and(
+            self.training_history['training_summary'] ['best_metrics'] ['val_loss'] is
+            None or val_loss <self.training_history['training_summary'] ['best_metrics']
+            ['val_loss']):
             self.current_session['best_found'] = True
             self.current_session['best_epoch'] = epoch
             self.current_session['best_val_loss'] = val_loss
@@ -302,7 +305,8 @@ class Trainer:
         logger.info(f"Train: {len(train_loader.dataset):,} samples")
         logger.info(f"Val:   {len(val_loader.dataset):,} samples")
         logger.info(f"Seed:  {self.seed}")
-        logger.info(f"Method: {'Stratified (balanced by ' + self.blur_term + ' bins)' if self.stratified else 'Random (seed-based)'}")
+        logger.info(
+            f"Method: {'Stratified (balanced by ' + self.blur_term + ' bins)' if self.stratified else 'Random (seed-based)'}")
 
         bins = self._get_bins()
         bin_labels = [f"{low:.1f}-{high:.1f}" for low, high in bins]
@@ -407,10 +411,12 @@ class Trainer:
             if self.override_checkpoint_lr:
                 for param_group in optimizer.param_groups:
                     param_group['lr'] = self.lr
-                logger.info(f"Resuming from epoch {start_epoch}, training for {epochs} more epochs with LR={self.lr:.2e} (overriding checkpoint LR={checkpoint_lr:.2e})")
+                logger.info(
+                    f"Resuming from epoch {start_epoch}, training for {epochs} more epochs with LR={self.lr:.2e} (overriding checkpoint LR={checkpoint_lr:.2e})")
             else:
                 self.lr = checkpoint_lr  # Use checkpoint LR
-                logger.info(f"Resuming from epoch {start_epoch}, training for {epochs} more epochs with LR={checkpoint_lr:.2e} (from checkpoint)")
+                logger.info(
+                    f"Resuming from epoch {start_epoch}, training for {epochs} more epochs with LR={checkpoint_lr:.2e} (from checkpoint)")
         elif resume_from:
             logger.warning(f"WARNING:Checkpoint not found: {resume_from}, starting from scratch")
 
@@ -478,9 +484,11 @@ class Trainer:
                 except RuntimeError as e:
                     if 'out of memory' in str(e).lower() or 'CUDA' in str(e):
                         sample_range = f"{batch_idx * self.batch_size} - {(batch_idx + 1) * self.batch_size}"
-                        logger.error(f"\nWARNING:CUDA Error at batch {batch_idx} (samples {sample_range})")
+                        logger.error(
+                            f"\nWARNING:CUDA Error at batch {batch_idx} (samples {sample_range})")
                         logger.error(f"Error: {e}")
-                        logger.error("Try: 1) Reduce batch size, 2) Use CPU, 3) Check images around this index")
+                        logger.error(
+                            "Try: 1) Reduce batch size, 2) Use CPU, 3) Check images around this index")
                         raise
                     else:
                         raise
@@ -511,7 +519,8 @@ class Trainer:
 
             # Log binned MAEs for both train and val
             for i, ((low, high), train_mae, val_mae) in enumerate(zip(bins, train_bin_maes, val_bin_maes)):
-                self.writer.add_scalar(f'DME/train_mae_bin_{low:.1f}-{high:.1f}px', train_mae, epoch)
+                self.writer.add_scalar(
+                    f'DME/train_mae_bin_{low:.1f}-{high:.1f}px', train_mae, epoch)
                 self.writer.add_scalar(f'DME/val_mae_bin_{low:.1f}-{high:.1f}px', val_mae, epoch)
 
             # Record curve history
@@ -525,9 +534,12 @@ class Trainer:
             self.curve_history['val_bin_maes'].append(list(val_bin_maes))
 
             logger.info(f"Epoch {epoch}: train_loss={train_loss:.4f}, val_loss={val_loss:.4f}")
-            logger.info(f"  Train Weighted MAE: {train_weighted_mae:.2f} px | Val Weighted MAE: {val_weighted_mae:.2f} px")
-            logger.info(f"  Train Binned: [{bin_labels[0]}: {train_bin_maes[0]:.2f}, {bin_labels[1]}: {train_bin_maes[1]:.2f}, {bin_labels[2]}: {train_bin_maes[2]:.2f}, {bin_labels[3]}: {train_bin_maes[3]:.2f}] px")
-            logger.info(f"  Val Binned:   [{bin_labels[0]}: {val_bin_maes[0]:.2f}, {bin_labels[1]}: {val_bin_maes[1]:.2f}, {bin_labels[2]}: {val_bin_maes[2]:.2f}, {bin_labels[3]}: {val_bin_maes[3]:.2f}] px")
+            logger.info(
+                f"  Train Weighted MAE: {train_weighted_mae:.2f} px | Val Weighted MAE: {val_weighted_mae:.2f} px")
+            logger.info(
+                f"  Train Binned: [{bin_labels[0]}: {train_bin_maes[0]:.2f}, {bin_labels[1]}: {train_bin_maes[1]:.2f}, {bin_labels[2]}: {train_bin_maes[2]:.2f}, {bin_labels[3]}: {train_bin_maes[3]:.2f}] px")
+            logger.info(
+                f"  Val Binned:   [{bin_labels[0]}: {val_bin_maes[0]:.2f}, {bin_labels[1]}: {val_bin_maes[1]:.2f}, {bin_labels[2]}: {val_bin_maes[2]:.2f}, {bin_labels[3]}: {val_bin_maes[3]:.2f}] px")
 
             # Clear cache between epochs
             if torch.cuda.is_available():
@@ -545,7 +557,8 @@ class Trainer:
                 self.best_dme_mae_px = val_weighted_mae
                 # keep best val_loss for reference
                 self.best_val_loss = val_loss
-                self._save_checkpoint('dme_best.pth', epoch, optimizer=optimizer, val_loss=val_loss, val_mae_px=val_weighted_mae)
+                self._save_checkpoint('dme_best.pth', epoch, optimizer=optimizer,
+                                      val_loss=val_loss, val_mae_px=val_weighted_mae)
                 logger.info(f"  → New global best (weighted MAE): {val_weighted_mae:.4f} px")
 
                 # Export training curves as PNG on best epochs (after warmup)
@@ -556,7 +569,9 @@ class Trainer:
             if val_weighted_mae < self.best_current_run_mae:
                 self.best_current_run_mae = val_weighted_mae
                 session_checkpoint_name = f'dme_best_session_{self.session_timestamp}.pth'
-                self._save_checkpoint(session_checkpoint_name, epoch, optimizer=optimizer, val_loss=val_loss, val_mae_px=val_weighted_mae)
+                self._save_checkpoint(
+                    session_checkpoint_name, epoch, optimizer=optimizer, val_loss=val_loss,
+                    val_mae_px=val_weighted_mae)
                 logger.info(f"  → New session best (weighted MAE): {val_weighted_mae:.4f} px")
 
             # Save history after each epoch
@@ -737,7 +752,9 @@ class Trainer:
         if 'model_state_dict' in checkpoint:
             # Old full-model checkpoint — try to extract DME weights
             state = checkpoint['model_state_dict']
-            dme_state = {k.replace('dme_subnet.', ''): v for k, v in state.items() if k.startswith('dme_subnet.')}
+            dme_state = {
+                k.replace('dme_subnet.', ''): v for k, v in state.items()
+                if k.startswith('dme_subnet.')}
             if dme_state:
                 self.model.dme_subnet.load_state_dict(dme_state)
                 logger.info(f"Loaded DME-subnet from full model checkpoint: {path}")
@@ -850,10 +867,12 @@ class Trainer:
             else:
                 logger.warning(f"WARNING:Specified checkpoint not found: {explicit_checkpoint}")
                 logger.info("Falling back to auto-detection")
-                resume_checkpoint = self._find_latest_checkpoint('dme', preference=checkpoint_preference)
+                resume_checkpoint = self._find_latest_checkpoint(
+                    'dme', preference=checkpoint_preference)
         else:
             # Auto-detect based on preference
-            resume_checkpoint = self._find_latest_checkpoint('dme', preference=checkpoint_preference)
+            resume_checkpoint = self._find_latest_checkpoint(
+                'dme', preference=checkpoint_preference)
 
         self.train_dme(dme_train, dme_val, self.epochs_dme, resume_from=resume_checkpoint)
 
@@ -900,7 +919,8 @@ class Trainer:
                 logger.info(f"Resuming from latest epoch checkpoint: {checkpoint_to_use.name}")
             elif best_checkpoint.exists():
                 checkpoint_to_use = best_checkpoint
-                logger.info(f"No epoch checkpoints found, using best checkpoint: {checkpoint_to_use.name}")
+                logger.info(
+                    f"No epoch checkpoints found, using best checkpoint: {checkpoint_to_use.name}")
             else:
                 logger.info(f"No checkpoints found, starting fresh")
                 return None
@@ -984,7 +1004,9 @@ class Trainer:
         if 'model_state_dict' in checkpoint:
             # Old full-model checkpoint — extract DME weights
             state = checkpoint['model_state_dict']
-            dme_state = {k.replace('dme_subnet.', ''): v for k, v in state.items() if k.startswith('dme_subnet.')}
+            dme_state = {
+                k.replace('dme_subnet.', ''): v for k, v in state.items()
+                if k.startswith('dme_subnet.')}
             if dme_state:
                 self.model.dme_subnet.load_state_dict(dme_state)
                 logger.info("Loaded DME-subnet from full model checkpoint (old format)")

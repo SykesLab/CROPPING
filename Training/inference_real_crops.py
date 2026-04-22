@@ -174,7 +174,8 @@ class RealCropInference:
                 with open(calibration_file, 'r') as f:
                     cal_data = _yaml.safe_load(f)
                 if 'direct' not in cal_data:
-                    raise ValueError(f"Calibration file missing 'direct' section: {calibration_file}")
+                    raise ValueError(
+                        f"Calibration file missing 'direct' section: {calibration_file}")
                 self.direct_slope = float(cal_data['direct']['rho_px_per_mm'])
                 self.direct_offset = float(cal_data['direct'].get('sigma_0', 0.0))
                 loo = cal_data['direct'].get('loo_cv', {})
@@ -199,8 +200,9 @@ class RealCropInference:
                 self.direct_offset = float(sigma_0) if sigma_0 is not None else 0.0
                 self.rho_std = float(training_cfg.get('rho_std', 0.0))
                 self.sigma_0_std = float(training_cfg.get('sigma_0_std', 0.0))
-                logger.info(f"  Direct calibration (from checkpoint): rho={self.direct_slope} px/mm, "
-                            f"sigma_0={self.direct_offset} px  |z| = (sigma - sigma_0) / rho")
+                logger.info(
+                    f"  Direct calibration (from checkpoint): rho={self.direct_slope} px/mm, "
+                    f"sigma_0={self.direct_offset} px  |z| = (sigma - sigma_0) / rho")
 
         # Apply cross-camera scale correction to rho (direct mode only)
         # rho was measured on the calibration camera; if inference is on a different camera
@@ -216,8 +218,9 @@ class RealCropInference:
                             f"scale_calib={scale_calib:.1f} px/mm, "
                             f"factor={scale_factor:.3f} → rho_eff={self.direct_slope:.6f} px/mm")
             elif self.inference_camera_scale_px_per_mm is not None and scale_calib is None:
-                logger.warning("inference_camera_scale_px_per_mm provided but scale_calib_px_per_mm "
-                               "not found in config — cross-camera correction skipped")
+                logger.warning(
+                    "inference_camera_scale_px_per_mm provided but scale_calib_px_per_mm "
+                    "not found in config — cross-camera correction skipped")
 
         # Create and load model
         self.model = DefocusNet.from_config(self.config).to(self.device)
@@ -241,7 +244,8 @@ class RealCropInference:
         if self.training_mode == 'optical':
             if self.inference_optical_params:
                 optics_cfg = self.config.get('optics', {}).copy()
-                for key in ['pixel_size_mm', 'focal_length_mm', 'aperture_diameter_mm', 'focus_distance_mm']:
+                for key in ['pixel_size_mm', 'focal_length_mm', 'aperture_diameter_mm',
+                            'focus_distance_mm']:
                     if key in self.inference_optical_params:
                         optics_cfg[key] = self.inference_optical_params[key]
 
@@ -250,8 +254,9 @@ class RealCropInference:
 
                 focal_length = optics_cfg.get('focal_length_mm', 70.0)
                 focus_distance = optics_cfg.get('focus_distance_mm', 200.0)
-                imaging_distance = optics_cfg.get('imaging_distance_mm',
-                                                  1.0 / (1.0 / focal_length - 1.0 / focus_distance) if focus_distance != focal_length else 200.0)
+                imaging_distance = optics_cfg.get(
+                    'imaging_distance_mm', 1.0 / (1.0 / focal_length -1.0 / focus_distance)
+                    if focus_distance !=focal_length else 200.0)
 
                 self.optical_params = BlurParams(
                     focal_length_mm=focal_length,
@@ -320,7 +325,8 @@ class RealCropInference:
             logger.debug(f"  rho_eff = {self.direct_slope:.6f} px/mm")
             logger.debug(f"  model_size = {self.model_size} px")
             logger.debug(f"  Formula: |z| = sigma_model × native_size / (rho_eff × model_size)")
-            logger.debug(f"           |z| = sigma_model × native_size / ({self.direct_slope:.4f} × {self.model_size})")
+            logger.debug(
+                f"           |z| = sigma_model × native_size / ({self.direct_slope:.4f} × {self.model_size})")
             logger.debug(f"  native_size = actual input image dimension (detected per crop)")
             logger.debug(f"-----------------------------------")
 
@@ -352,7 +358,9 @@ class RealCropInference:
         else:
             interpolation = cv2.INTER_CUBIC  # Better for upscaling
 
-        img_resized = cv2.resize(img, (self.model_size, self.model_size), interpolation=interpolation)
+        img_resized = cv2.resize(
+            img, (self.model_size, self.model_size),
+            interpolation=interpolation)
 
         # Normalize to [-1, 1]
         img_norm = (img_resized.astype(np.float32) / 255.0) * 2.0 - 1.0
@@ -391,7 +399,9 @@ class RealCropInference:
             interpolation = cv2.INTER_AREA
         else:
             interpolation = cv2.INTER_CUBIC
-        gray_resized = cv2.resize(gray, (self.model_size, self.model_size), interpolation=interpolation)
+        gray_resized = cv2.resize(
+            gray, (self.model_size, self.model_size),
+            interpolation=interpolation)
 
         # Normalize to [-1, 1]
         gray_norm = (gray_resized.astype(np.float32) / 255.0) * 2.0 - 1.0
@@ -494,10 +504,14 @@ class RealCropInference:
             if not self._first_crop_logged:
                 self._first_crop_logged = True
                 logger.debug(f"--- First crop inversion trace ({img_path.name}) ---")
-                logger.debug(f"  Input size: {original_size[1]}x{original_size[0]} -> native_size = {native_size}")
-                logger.debug(f"  pred_norm={inv.pred_norm:.4f}, sigma_model={inv.sigma_model:.4f} px")
-                logger.debug(f"  sigma_native={inv.sigma_native:.4f} px, defocus={inv.defocus_mm:.4f} mm")
-                logger.debug(f"  rho_eff={params.rho_eff:.4f}, sigma_0_eff={params.sigma_0_eff:.4f}")
+                logger.debug(
+                    f"  Input size: {original_size[1]}x{original_size[0]} -> native_size = {native_size}")
+                logger.debug(
+                    f"  pred_norm={inv.pred_norm:.4f}, sigma_model={inv.sigma_model:.4f} px")
+                logger.debug(
+                    f"  sigma_native={inv.sigma_native:.4f} px, defocus={inv.defocus_mm:.4f} mm")
+                logger.debug(
+                    f"  rho_eff={params.rho_eff:.4f}, sigma_0_eff={params.sigma_0_eff:.4f}")
                 logger.debug(f"  clamped={inv.clamped}, saturated={inv.saturated}")
                 logger.debug(f"-----------------------------------------------")
         else:
@@ -562,8 +576,9 @@ class RealCropInference:
 
         unc_str = f" \u00b1 {defocus_uncertainty_mm:.2f}" if defocus_uncertainty_mm > 0 else ""
         ax.imshow(original, cmap='gray', vmin=0, vmax=255)
-        ax.set_title(f'{name}\n{self.blur_term}: {blur_px:.2f} px | Defocus: {defocus_mm:.2f}{unc_str} mm',
-                     fontsize=12, fontweight='bold')
+        ax.set_title(
+            f'{name}\n{self.blur_term}: {blur_px:.2f} px | Defocus: {defocus_mm:.2f}{unc_str} mm',
+            fontsize=12, fontweight='bold')
         ax.axis('off')
         self._add_diameter_arrow(ax, original / 255.0)
 
@@ -684,9 +699,11 @@ class RealCropInference:
             logger.info(f"  Processed: {len(df)} crops")
             logger.info(f"  {self.blur_term} Mean:  {df[blur_col].mean():.2f} px")
             logger.info(f"  {self.blur_term} Std:   {df[blur_col].std():.2f} px")
-            logger.info(f"  {self.blur_term} Range: {df[blur_col].min():.2f} - {df[blur_col].max():.2f} px")
+            logger.info(
+                f"  {self.blur_term} Range: {df[blur_col].min():.2f} - {df[blur_col].max():.2f} px")
             logger.info(f"  Defocus Mean: {df['defocus_mm'].mean():.2f} mm")
-            logger.info(f"  Diameter (original): {df['diameter_original_px'].mean():.2f} ± {df['diameter_original_px'].std():.2f} px")
+            logger.info(
+                f"  Diameter (original): {df['diameter_original_px'].mean():.2f} ± {df['diameter_original_px'].std():.2f} px")
             logger.info(f"Saved results to: {csv_path}")
 
         return df
@@ -786,12 +803,14 @@ class RealCropInference:
             logger.info(f"  Mean:   {combined_df[blur_col].mean():.2f} px")
             logger.info(f"  Median: {combined_df[blur_col].median():.2f} px")
             logger.info(f"  Std:    {combined_df[blur_col].std():.2f} px")
-            logger.info(f"  Range:  {combined_df[blur_col].min():.2f} - {combined_df[blur_col].max():.2f} px")
+            logger.info(
+                f"  Range:  {combined_df[blur_col].min():.2f} - {combined_df[blur_col].max():.2f} px")
 
             logger.info(f"Defocus Statistics (all materials):")
             logger.info(f"  Mean:   {combined_df['defocus_mm'].mean():.2f} mm")
             logger.info(f"  Median: {combined_df['defocus_mm'].median():.2f} mm")
-            logger.info(f"  Range:  {combined_df['defocus_mm'].min():.2f} - {combined_df['defocus_mm'].max():.2f} mm")
+            logger.info(
+                f"  Range:  {combined_df['defocus_mm'].min():.2f} - {combined_df['defocus_mm'].max():.2f} mm")
 
             logger.info(f"{'='*60}")
             logger.info(f"INFERENCE COMPLETE!")
@@ -868,7 +887,9 @@ class RealCropInference:
                 label=f'Fit: y = {slope:.3f}x + {intercept:.2f}')
         ax.set_xlabel('True |z| (mm)', fontsize=11)
         ax.set_ylabel('Predicted |z| (mm)', fontsize=11)
-        ax.set_title(f'Predicted vs True Defocus (R² = {r_value**2:.3f}, n={len(df)})', fontsize=12, fontweight='bold')
+        ax.set_title(
+            f'Predicted vs True Defocus (R² = {r_value**2:.3f}, n={len(df)})', fontsize=12,
+            fontweight='bold')
         ax.legend(fontsize=9, loc='upper left')
         ax.grid(True, alpha=0.3)
         ax.set_xlim(0, lim_max)
@@ -902,7 +923,8 @@ class RealCropInference:
         if len(sym) > 0:
             ax.scatter(sym['pred_neg'], sym['pred_pos'], s=50, alpha=0.8, color='#4A9E4A', zorder=3)
             sym_lim = max(sym['pred_neg'].max(), sym['pred_pos'].max()) * 1.05
-            ax.plot([0, sym_lim], [0, sym_lim], 'k--', alpha=0.4, linewidth=1, label='Perfect symmetry')
+            ax.plot([0, sym_lim], [0, sym_lim], 'k--', alpha=0.4,
+                    linewidth=1, label='Perfect symmetry')
             ax.set_xlim(0, sym_lim)
             ax.set_ylim(0, sym_lim)
             ax.set_aspect('equal')
@@ -919,7 +941,8 @@ class RealCropInference:
 
         # Panel 4: Per-range MAE bar chart (1mm bins)
         ax = axes[1, 1]
-        df['z_bin'] = pd.cut(df['true_defocus'], bins=np.arange(0, df['true_defocus'].max() + 1.5, 1.0))
+        df['z_bin'] = pd.cut(df['true_defocus'], bins=np.arange(
+            0, df['true_defocus'].max() + 1.5, 1.0))
         bin_stats = df.groupby('z_bin', observed=True).agg(
             mae=('residual', lambda x: x.abs().mean()),
             n=('residual', 'count'),
@@ -1052,7 +1075,8 @@ class RealCropInference:
             if n > 0:
                 mae = residual[mask].abs().mean()
                 bias = residual[mask].mean()
-                lines.append(f'  |z| {lo:.0f}–{hi:.0f} mm: n={n:>3d}, MAE={mae:.3f}, bias={bias:+.3f}')
+                lines.append(
+                    f'  |z| {lo:.0f}–{hi:.0f} mm: n={n:>3d}, MAE={mae:.3f}, bias={bias:+.3f}')
 
         # Symmetry
         neg = df[df['true_z'] < 0][['true_defocus', 'pred_defocus']].rename(

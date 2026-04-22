@@ -31,7 +31,9 @@ def _blur_column(df: pd.DataFrame) -> str:
     return 'coc_px'
 
 
-def compute_max_blur_from_metadata(data_dir: Union[str, Path], margin_percent: float = 5.0) -> float:
+def compute_max_blur_from_metadata(
+        data_dir: Union[str, Path],
+        margin_percent: float=5.0) ->float:
     """
     Read metadata.csv and compute max blur (CoC or sigma) with safety margin.
 
@@ -66,7 +68,8 @@ def compute_max_blur_from_metadata(data_dir: Union[str, Path], margin_percent: f
 
         if is_direct:
             max_blur = actual_max
-            logger.info(f"Computed max {blur_term} from metadata: {actual_max:.2f} px (no margin - direct mode)")
+            logger.info(
+                f"Computed max {blur_term} from metadata: {actual_max:.2f} px (no margin - direct mode)")
         else:
             max_blur = actual_max * (1.0 + margin_percent / 100.0)
             logger.info(f"Computed max {blur_term} from metadata: {actual_max:.2f} px")
@@ -267,7 +270,8 @@ def _create_stratified_split(data_dir: Path, max_blur: float, train_split: float
             with open(config_path, 'r') as f:
                 config = yaml.safe_load(f)
                 data_section = config.get('data', {})
-                min_blur_intended = data_section.get('min_blur_px', data_section.get('min_coc_px', 0.0))
+                min_blur_intended = data_section.get(
+                    'min_blur_px', data_section.get('min_coc_px', 0.0))
             logger.debug(f"Loaded min_blur_px from config: {min_blur_intended}")
         else:
             logger.debug(f"Config not found at {config_path}, using default min_blur_px=0.0")

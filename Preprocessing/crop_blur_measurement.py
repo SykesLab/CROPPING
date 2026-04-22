@@ -187,8 +187,10 @@ def measure_erf_blur(
         cos_a, sin_a = np.cos(angle), np.sin(angle)
 
         # Image-boundary-limited max radius for this ray
-        max_r_x = (w - 2 - cx) / cos_a if cos_a > 0.01 else ((1 - cx) / cos_a if cos_a < -0.01 else np.inf)
-        max_r_y = (h - 2 - cy) / sin_a if sin_a > 0.01 else ((1 - cy) / sin_a if sin_a < -0.01 else np.inf)
+        max_r_x = (w -2 -cx) /cos_a if cos_a >0.01 else((1 -cx) /cos_a
+            if cos_a <-0.01 else np.inf)
+        max_r_y = (h -2 -cy) /sin_a if sin_a >0.01 else((1 -cy) /sin_a
+            if sin_a <-0.01 else np.inf)
         max_r = min(max_r_x, max_r_y)
 
         start_r = max(0, radius - edge_margin)

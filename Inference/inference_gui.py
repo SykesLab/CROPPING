@@ -94,7 +94,8 @@ def load_settings() -> Dict[str, Any]:
             settings.update(saved)
         except Exception as e:
             import logging
-            logging.warning(f"Settings load failed ({e}). Using defaults. Calibration constants may be incorrect.")
+            logging.warning(
+                f"Settings load failed ({e}). Using defaults. Calibration constants may be incorrect.")
     return settings
 
 
