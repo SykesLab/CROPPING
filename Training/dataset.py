@@ -20,6 +20,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+MIN_BLUR_FOR_STRATIFIED_SPLIT = 0.5  # px — below this, uniform split is used
+
 
 def _blur_column(df: pd.DataFrame) -> str:
     """Return the blur value column name: 'sigma_px' for direct mode, 'coc_px' for optical."""
@@ -277,7 +279,7 @@ def _create_stratified_split(data_dir: Path, max_blur: float, train_split: float
     max_blur_actual = max_blur
 
     blur_term = "sigma" if 'sigma_px' in df.columns else "CoC"
-    if min_blur_intended > 0.5:
+    if min_blur_intended > MIN_BLUR_FOR_STRATIFIED_SPLIT:
         bin_size = (max_blur_actual - min_blur_actual) / 4.0
         bins = [(min_blur_actual + i * bin_size, min_blur_actual + (i + 1) * bin_size)
                 for i in range(4)]
