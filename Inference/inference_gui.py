@@ -9,13 +9,14 @@ Usage:
     python inference_gui.py
 """
 
+import csv
 import json
 import sys
 import threading
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 import cv2
 import numpy as np
@@ -53,6 +54,13 @@ from inference_engine import (  # noqa: E402
     boundary_normalise,
 )
 
+try:
+    from physics import validate_inference_config  # noqa: E402
+except ImportError:
+    import sys as _sys
+    _sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+    from physics import validate_inference_config  # noqa: E402
+
 # ---------------------------------------------------------------------------
 # Settings persistence
 # ---------------------------------------------------------------------------
@@ -70,6 +78,8 @@ DEFAULT_SETTINGS: Dict[str, Any] = {
     "feather_px": DEFAULT_FEATHER_PX,
     "crop_size": DEFAULT_CROP_SIZE,
     "device": "cpu",
+    "rho_std": 0.0,
+    "sigma_0_std": 0.0,
 }
 
 
@@ -259,6 +269,16 @@ class InferenceApp(tk.Tk):
         self._apply_settings_to_ui()
         self.protocol("WM_DELETE_WINDOW", self._on_close)
 
+        # First-launch warning if no saved settings exist
+        if not SETTINGS_FILE.is_file():
+            self.after(500, lambda: messagebox.showinfo(
+                "Calibration Required",
+                "Default calibration values are loaded. These are examples "
+                "from a specific lab setup.\n\n"
+                "Run calibration for your camera before trusting results.\n\n"
+                "Update values in Settings > Calibration.",
+            ))
+
     # ── UI construction ────────────────────────────────────────────────
 
     def _build_ui(self):
@@ -289,6 +309,9 @@ class InferenceApp(tk.Tk):
         ttk.Button(cine_btn_frame, text="Browse...", command=self._browse_cine).pack(side="left")
         self.btn_open_cine = ttk.Button(cine_btn_frame, text="Open", command=self._open_cine)
         self.btn_open_cine.pack(side="left", padx=(4, 0))
+        ttk.Button(cine_btn_frame, text="Batch Folder...", command=self._batch_folder).pack(
+            side="left", padx=(4, 0)
+        )
 
         # Watch folder
         ttk.Label(file_frame, text="Watch folder:").grid(row=2, column=0, sticky="w", pady=(4, 0))
@@ -694,6 +717,25 @@ class InferenceApp(tk.Tk):
             messagebox.showwarning("Not ready", "Open a .cine file first.")
             return
 
+        # Pre-flight sanity check
+        issues = validate_inference_config(
+            rho=float(self.settings.get("rho", DEFAULT_RHO)),
+            sigma_0=float(self.settings.get("sigma_0", DEFAULT_SIGMA_0)),
+            s_calib=float(self.settings.get("s_calib", DEFAULT_S_CALIB)),
+            s_c=float(self.settings.get("s_c", DEFAULT_S_C)),
+            max_blur=self.engine.max_blur if hasattr(self.engine, "max_blur") else 20.0,
+            model_size=self.engine.model_size if hasattr(self.engine, "model_size") else 256,
+            crop_size=int(self.settings.get("crop_size", DEFAULT_CROP_SIZE)),
+        )
+        if issues:
+            proceed = messagebox.askyesno(
+                "Sanity Check",
+                "Issues detected:\n\n" + "\n".join(f"- {i}" for i in issues)
+                + "\n\nProceed anyway?",
+            )
+            if not proceed:
+                return
+
         self.btn_process.config(state="disabled")
         self.var_defocus.set("...")
         self.var_sigma_model.set("")
@@ -743,7 +785,15 @@ class InferenceApp(tk.Tk):
 
         # Update results display
         defocus = results.get("defocus_mm", 0.0)
-        self.var_defocus.set(f"{defocus:.3f} mm")
+        flags = []
+        if results.get("saturated"):
+            flags.append("SATURATED")
+        if results.get("clamped"):
+            flags.append("CLAMPED")
+        flag_str = f"  [{', '.join(flags)}]" if flags else ""
+        unc = results.get("defocus_uncertainty_mm", 0.0)
+        unc_str = f" \u00b1 {unc:.3f}" if unc > 0 else ""
+        self.var_defocus.set(f"{defocus:.3f}{unc_str} mm{flag_str}")
         self.var_pred_norm.set(f"pred_norm={results.get('pred_norm', 0):.4f}")
         self.var_sigma_model.set(f"\u03c3_model={results.get('sigma_model', 0):.3f} px")
         self.var_sigma_native.set(f"\u03c3_native={results.get('sigma_native', 0):.3f} px")
@@ -751,7 +801,7 @@ class InferenceApp(tk.Tk):
         cine_name = results.get("cine_name", "")
         self.var_status.set(
             f"Done  |  {cine_name}  |  frame {self._best_frame_idx}  |  "
-            f"defocus = {defocus:.3f} mm"
+            f"defocus = {defocus:.3f} mm{flag_str}"
         )
 
         self._update_button_states()
@@ -816,6 +866,110 @@ class InferenceApp(tk.Tk):
         self._update_button_states()
         self.var_status.set("Settings saved. Reload model to apply changes.")
 
+    # ── Batch folder processing ───────────────────────────────────────
+
+    def _batch_folder(self):
+        if not self._model_loaded:
+            messagebox.showwarning("Not ready", "Load a model first.")
+            return
+
+        folder = filedialog.askdirectory(title="Select folder containing .cine files")
+        if not folder:
+            return
+        folder_path = Path(folder)
+
+        cine_files = sorted(folder_path.glob("*.cine"), key=lambda p: p.name)
+        if not cine_files:
+            messagebox.showinfo("No files", "No .cine files found in the selected folder.")
+            return
+
+        # Pre-flight sanity check
+        issues = validate_inference_config(
+            rho=float(self.settings.get("rho", DEFAULT_RHO)),
+            sigma_0=float(self.settings.get("sigma_0", DEFAULT_SIGMA_0)),
+            s_calib=float(self.settings.get("s_calib", DEFAULT_S_CALIB)),
+            s_c=float(self.settings.get("s_c", DEFAULT_S_C)),
+            max_blur=self.engine.max_blur if hasattr(self.engine, "max_blur") else 20.0,
+            model_size=self.engine.model_size if hasattr(self.engine, "model_size") else 256,
+            crop_size=int(self.settings.get("crop_size", DEFAULT_CROP_SIZE)),
+        )
+
+        confirm_msg = f"Found {len(cine_files)} .cine file(s) in:\n{folder_path}"
+        if issues:
+            confirm_msg += "\n\nWarnings:\n" + "\n".join(f"- {i}" for i in issues)
+        confirm_msg += "\n\nProcess all?"
+
+        if not messagebox.askyesno("Batch Processing", confirm_msg):
+            return
+
+        self.btn_process.config(state="disabled")
+        self.progress["value"] = 0
+        self.var_defocus.set("Batch...")
+
+        thread = threading.Thread(
+            target=self._run_batch, args=(folder_path,), daemon=True
+        )
+        thread.start()
+
+    def _run_batch(self, folder_path: Path):
+        try:
+            def progress_cb(msg, idx, total):
+                frac = idx / total if total > 0 else 0
+                self.after(0, self._update_progress, msg, frac)
+
+            results = self.engine.process_folder(folder_path, progress_cb=progress_cb)
+            self.after(0, self._on_batch_done, results)
+        except Exception as e:
+            self.after(0, self._pipeline_error, str(e))
+
+    def _on_batch_done(self, results: List[Dict[str, Any]]):
+        self.progress["value"] = 100
+
+        successes = [r for r in results if "error" not in r]
+        failures = [r for r in results if "error" in r]
+
+        if not successes:
+            messagebox.showerror("Batch Failed", "All files failed to process.")
+            self.var_defocus.set("---")
+            self.var_status.set("Batch failed.")
+            self.btn_process.config(state="normal")
+            return
+
+        # Prompt user for CSV save location
+        csv_path = filedialog.asksaveasfilename(
+            title="Save batch results",
+            defaultextension=".csv",
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+        )
+        if csv_path:
+            fieldnames = ["cine_name", "frame_idx", "pred_norm",
+                          "sigma_model", "sigma_native", "defocus_mm",
+                          "defocus_uncertainty_mm",
+                          "saturated", "clamped",
+                          "training_mode", "model_path", "rho", "sigma_0",
+                          "s_calib", "s_c", "feather_px", "crop_size"]
+            with open(csv_path, "w", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=fieldnames, extrasaction="ignore")
+                writer.writeheader()
+                writer.writerows(successes)
+
+        mean_defocus = sum(r["defocus_mm"] for r in successes) / len(successes)
+        summary = (
+            f"Batch complete: {len(successes)} processed"
+            f"{f', {len(failures)} failed' if failures else ''}"
+            f"  |  mean defocus = {mean_defocus:.3f} mm"
+        )
+        self.var_defocus.set(f"{mean_defocus:.3f} mm (mean)")
+        self.var_status.set(summary)
+        self.btn_process.config(state="normal")
+
+        if failures:
+            fail_names = "\n".join(r["cine_name"] for r in failures)
+            messagebox.showwarning(
+                "Batch Warnings",
+                f"{len(failures)} file(s) failed:\n\n{fail_names}",
+            )
+
     # ── Cleanup ────────────────────────────────────────────────────────
 
     def _on_close(self):
@@ -849,17 +1003,28 @@ class SettingsDialog(tk.Toplevel):
         # Calibration
         f_cal = ttk.LabelFrame(self, text="Calibration", padding=6)
         f_cal.pack(fill="x", padx=10, pady=(10, 4))
-        self._add_float_row(f_cal, "rho", "\u03c1 (px/mm):", 0)
-        self._add_float_row(f_cal, "sigma_0", "\u03c3\u2080 (px):", 1)
-        self._add_float_row(f_cal, "s_calib", "s_calib (px/mm):", 2)
-        self._add_float_row(f_cal, "s_c", "s_c (px/mm):", 3)
+        ttk.Label(f_cal, text="(These must match your camera \u2014 run Calibration GUI first)",
+                  font=("TkDefaultFont", 8), foreground="gray").grid(
+            row=0, column=0, columnspan=2, sticky="w", padx=(0, 0), pady=(0, 4))
+        self._add_float_row(f_cal, "rho", "\u03c1 (px/mm):", 1)
+        self._add_float_row(f_cal, "sigma_0", "\u03c3\u2080 (px):", 2)
+        self._add_float_row(f_cal, "s_calib", "s_calib (px/mm):", 3)
+        self._add_float_row(f_cal, "s_c", "s_c (px/mm):", 4)
+        ttk.Label(f_cal, text="Uncertainty (from LOO-CV, optional \u2014 0 = disabled):",
+                  font=("TkDefaultFont", 8), foreground="gray").grid(
+            row=5, column=0, columnspan=2, sticky="w", pady=(4, 0))
+        self._add_float_row(f_cal, "rho_std", "\u03c1 std (px/mm):", 6)
+        self._add_float_row(f_cal, "sigma_0_std", "\u03c3\u2080 std (px):", 7)
 
         # Pipeline
         f_pipe = ttk.LabelFrame(self, text="Pipeline", padding=6)
         f_pipe.pack(fill="x", padx=10, pady=4)
         self._add_int_row(f_pipe, "feather_px", "Feather width (px):", 0)
-        self._add_int_row(f_pipe, "crop_size", "Crop size (px):", 1)
-        self._add_combo_row(f_pipe, "device", "Device:", 2, ["cpu", "cuda"])
+        ttk.Label(f_pipe, text="(Gaussian boundary fade width, typical 20\u201360)",
+                  font=("TkDefaultFont", 8), foreground="gray").grid(
+            row=1, column=0, columnspan=2, sticky="w", padx=(20, 0))
+        self._add_int_row(f_pipe, "crop_size", "Crop size (px):", 2)
+        self._add_combo_row(f_pipe, "device", "Device:", 3, ["cpu", "cuda"])
 
         # Buttons
         btn_frame = ttk.Frame(self)
@@ -888,7 +1053,7 @@ class SettingsDialog(tk.Toplevel):
 
     def _save(self):
         new = {}
-        float_keys = {"rho", "sigma_0", "s_calib", "s_c"}
+        float_keys = {"rho", "sigma_0", "s_calib", "s_c", "rho_std", "sigma_0_std"}
         int_keys = {"feather_px", "crop_size"}
 
         for key, var in self._entries.items():
@@ -908,12 +1073,31 @@ class SettingsDialog(tk.Toplevel):
             else:
                 new[key] = raw
 
+        # Bounds validation
+        checks = [
+            ("rho", new.get("rho", 1), lambda v: v > 0, "rho must be positive."),
+            ("sigma_0", new.get("sigma_0", 0), lambda v: v >= 0, "sigma_0 cannot be negative."),
+            ("s_calib", new.get("s_calib", 1), lambda v: v > 0, "s_calib must be positive."),
+            ("s_c", new.get("s_c", 1), lambda v: v > 0, "s_c must be positive."),
+            ("feather_px", new.get("feather_px", 0), lambda v: v >= 0, "Feather width cannot be negative."),
+            ("crop_size", new.get("crop_size", 256), lambda v: v >= 32, "Crop size must be at least 32 px."),
+        ]
+        for key, val, check, msg in checks:
+            if key in new and not check(val):
+                messagebox.showerror("Invalid", msg)
+                return
+        if new.get("feather_px", 0) > new.get("crop_size", 256):
+            messagebox.showerror("Invalid", "Feather width cannot exceed crop size.")
+            return
+
         self.settings.update(new)
         if self.on_save:
             self.on_save(self.settings)
         self.destroy()
 
     def _reset_defaults(self):
+        if not messagebox.askyesno("Reset", "Reset all settings to defaults?"):
+            return
         for key, val in DEFAULT_SETTINGS.items():
             if key in self._entries:
                 self._entries[key].set(str(val))
