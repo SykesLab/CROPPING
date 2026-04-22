@@ -70,7 +70,6 @@ def boundary_normalise(
 
     Returns a float32 image in [0, 1].
     """
-    # Ensure uint8
     if crop.dtype != np.uint8:
         if crop.max() <= 1.0:
             img_u8 = (crop * 255).astype(np.uint8)
@@ -94,7 +93,6 @@ def boundary_normalise(
     dist_outside = cv2.distanceTransform(1 - dark_mask, cv2.DIST_L2, 5).astype(np.float32)
     signed_dist = np.where(dark_mask > 0, dist_inside, -dist_outside)
 
-    # Float image for blending
     img_f = img_u8.astype(np.float32) / 255.0
     out = img_f.copy()
     fw = max(feather_px, 1)
@@ -158,7 +156,6 @@ class InferenceEngine:
 
         checkpoint = torch.load(str(model_path), map_location=self.device, weights_only=True)
 
-        # Config from checkpoint
         if "config" in checkpoint:
             self.config = checkpoint["config"]
         else:
@@ -166,7 +163,6 @@ class InferenceEngine:
 
         self.training_mode = checkpoint.get("training_mode", "direct")
 
-        # Build model
         self.model = DefocusNet.from_config(self.config).to(self.device)
 
         if "model_state_dict" in checkpoint:
@@ -182,7 +178,6 @@ class InferenceEngine:
 
         self.model.eval()
 
-        # Max blur for denormalisation
         ckpt_max = checkpoint.get("max_blur", checkpoint.get("max_coc"))
         if ckpt_max is not None:
             self.max_blur = float(ckpt_max)
@@ -193,15 +188,12 @@ class InferenceEngine:
             else:
                 self.max_blur = 20.0
 
-        # Model training size
         data_cfg = self.config.get("data", {})
         self.model_size = int(data_cfg.get("image_size_px", MODEL_INPUT_SIZE))
 
-        # Calibration camera scale stored in checkpoint
         training_cfg = self.config.get("training", {})
         self.scale_calib = training_cfg.get("scale_calib_px_per_mm")
 
-        # Crop size mismatch warning
         user_crop = int(self.settings.get("crop_size", DEFAULT_CROP_SIZE))
         mismatch_msg = ""
         if user_crop != self.model_size:
@@ -292,7 +284,6 @@ class InferenceEngine:
         feather_px = int(self.settings.get("feather_px", DEFAULT_FEATHER_PX))
         norm_img = boundary_normalise(crop, feather_px=feather_px)
 
-        # Resize to model input size
         h, w = norm_img.shape[:2]
         if h > self.model_size or w > self.model_size:
             interp = cv2.INTER_AREA
@@ -300,7 +291,6 @@ class InferenceEngine:
             interp = cv2.INTER_CUBIC
         resized = cv2.resize(norm_img, (self.model_size, self.model_size), interpolation=interp)
 
-        # Intensity normalise to [-1, 1]
         tensor_input = resized.astype(np.float32) * 2.0 - 1.0
         tensor_input = torch.from_numpy(tensor_input).unsqueeze(0).unsqueeze(0)
 
@@ -334,7 +324,6 @@ class InferenceEngine:
 
         pred_val = pred_norm.squeeze().item()
 
-        # Build physics params from GUI settings
         rho = float(self.settings.get("rho", DEFAULT_RHO))
         sigma_0 = float(self.settings.get("sigma_0", DEFAULT_SIGMA_0))
         s_calib = float(self.settings.get("s_calib", DEFAULT_S_CALIB))
@@ -348,10 +337,8 @@ class InferenceEngine:
             max_blur=self.max_blur, model_size=self.model_size,
         )
 
-        # Run canonical inverse chain from physics module
         result = invert_prediction(pred_val, params, native_crop_size)
 
-        # Compute calibration uncertainty if LOO-CV stds available
         rho_std = float(self.settings.get("rho_std", 0.0))
         sigma_0_std = float(self.settings.get("sigma_0_std", 0.0))
         unc_mm = 0.0

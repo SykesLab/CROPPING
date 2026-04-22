@@ -141,14 +141,12 @@ class DMEDataset(Dataset):
         self.augment = augment
         self.max_blur = max_blur
 
-        # Find blur images
         self.blur_dir = self.data_dir / 'blur'
         self.samples = sorted(list(self.blur_dir.glob('*.png')))
 
         if len(self.samples) == 0:
             raise ValueError(f"No samples found in {self.blur_dir}")
 
-        # Load metadata (sigma_px / coc_px values)
         metadata_path = self.data_dir / 'metadata.csv'
         if not metadata_path.exists():
             raise ValueError(f"metadata.csv not found at {metadata_path}")
@@ -194,6 +192,7 @@ class DMEDataset(Dataset):
             if img is not None:
                 cache[i] = img
             else:
+                logger.warning(f"Failed to load {self.samples[i].name}, using zeros")
                 cache[i] = 0
 
         np.save(str(self._cache_path), cache)
@@ -223,24 +222,18 @@ class DMEDataset(Dataset):
         # Read sigma_px from metadata (already in memory, no disk I/O)
         blur_value = self.metadata.loc[stem, self.blur_col]
 
-        # Apply augmentation
         if self.augment:
             blur = self._augment(blur)
 
-        # Normalise image to [-1, 1]
         blur = blur * 2.0 - 1.0
-
-        # Convert to tensor
         blur = torch.from_numpy(blur).unsqueeze(0)  # (1, H, W)
 
-        # Normalise blur value to [0, 1]
         blur_norm = torch.tensor([blur_value / self.max_blur], dtype=torch.float32)
         blur_px = torch.tensor([blur_value], dtype=torch.float32)
 
         return blur, blur_norm, blur_px
 
     def _augment(self, img: np.ndarray) -> np.ndarray:
-        """Apply random augmentations."""
         if random.random() > 0.5:
             img = np.fliplr(img).copy()
         if random.random() > 0.5:

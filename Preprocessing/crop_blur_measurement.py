@@ -142,7 +142,6 @@ def measure_erf_blur(
     if img.ndim == 3:
         img = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # Normalise to [0, 1]  (same as calibration code)
     img_f = img.astype(np.float32)
     if img_f.max() > 1:
         img_f = img_f / 255.0
@@ -150,7 +149,6 @@ def measure_erf_blur(
     img_u8 = (img_f * 255).astype(np.uint8)
     h, w = img_f.shape[:2]
 
-    # Detect or use provided centre / radius
     if center_xy is not None and radius_px is not None:
         cx, cy = int(round(center_xy[0])), int(round(center_xy[1]))
         radius = int(round(radius_px))
@@ -160,7 +158,6 @@ def measure_erf_blur(
             return None
         cx, cy, radius = result
 
-    # Global contrast estimate (same as calibration)
     y_grid, x_grid = np.ogrid[:h, :w]
     dist = np.sqrt((x_grid - cx) ** 2 + (y_grid - cy) ** 2)
     inner_mask = dist < radius * 0.7

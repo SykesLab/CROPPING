@@ -98,8 +98,7 @@ def _fit_erf_multi_start(
                 maxfev=2000
             )
 
-            # Calculate fit quality
-            fitted = erf_edge(r_valid, *popt)
+                fitted = erf_edge(r_valid, *popt)
             residual = np.sum((intensities - fitted) ** 2)
             ss_tot = np.sum((intensities - np.mean(intensities)) ** 2)
             r_squared = 1 - (residual / ss_tot) if ss_tot > 0 else 0
@@ -141,11 +140,9 @@ def measure_blur_erf(
     Returns:
         BlurMeasurement with sigma and details
     """
-    # Normalize image to 0-1
     if image.max() > 1:
         image = image.astype(np.float32) / 255.0
 
-    # Auto-detect center and radius if not provided
     if center is None or radius is None:
         center, radius = detect_sphere(image)
         if center is None:
@@ -275,10 +272,8 @@ def measure_blur_erf(
 
         I_bg, I_sphere, r_edge, sigma = popt
 
-        # Check if fit makes physical sense
         fit_contrast = abs(I_bg - I_sphere)
 
-        # Calculate acceptance metrics
         contrast_ratio = fit_contrast / contrast if contrast else 1.0
         edge_offset = abs(r_edge - radius)
 
@@ -355,11 +350,9 @@ def measure_blur_gradient(
     Returns:
         BlurMeasurement with sigma and details
     """
-    # Normalize image
     if image.max() > 1:
         image = image.astype(np.float32) / 255.0
 
-    # Auto-detect if needed
     if center is None or radius is None:
         center, radius = detect_sphere(image)
         if center is None:
@@ -371,12 +364,10 @@ def measure_blur_gradient(
     cx, cy = center
     h, w = image.shape[:2]
 
-    # Compute gradient magnitude
     gx = sobel(image, axis=1)
     gy = sobel(image, axis=0)
     gradient_mag = np.sqrt(gx**2 + gy**2)
 
-    # Create annular mask around sphere edge
     y_coords, x_coords = np.ogrid[:h, :w]
     dist_from_center = np.sqrt((x_coords - cx)**2 + (y_coords - cy)**2)
 
@@ -389,7 +380,6 @@ def measure_blur_gradient(
             details={'error': 'Edge mask is empty'}
         )
 
-    # Average gradient in edge region
     mean_gradient = np.mean(gradient_mag[edge_mask])
     max_gradient = np.max(gradient_mag[edge_mask])
 
@@ -398,7 +388,6 @@ def measure_blur_gradient(
     # G_max ≈ (I_high - I_low) / (sigma * sqrt(2*pi))
     # So sigma ≈ contrast / (G_max * sqrt(2*pi))
 
-    # Estimate contrast from image
     inner_mask = dist_from_center < radius * 0.7
     outer_mask = (dist_from_center > radius * 1.3) & (dist_from_center < radius * 2)
 
@@ -443,13 +432,11 @@ def measure_blur_laplacian(image: np.ndarray) -> BlurMeasurement:
     Returns:
         BlurMeasurement with equivalent sigma
     """
-    # Normalize image
     if image.max() > 1:
         image = (image * 255).astype(np.uint8)
     elif image.dtype != np.uint8:
         image = image.astype(np.uint8)
 
-    # Compute Laplacian
     laplacian = cv2.Laplacian(image, cv2.CV_64F)
     variance = laplacian.var()
 
@@ -496,7 +483,6 @@ def detect_sphere(image: np.ndarray) -> Tuple[Optional[Tuple[int, int]], Optiona
     if mask is None:
         return None, None
 
-    # Find all sphere pixels
     white_pixels = np.where(mask == 255)
     if len(white_pixels[0]) == 0:
         return None, None
@@ -504,23 +490,19 @@ def detect_sphere(image: np.ndarray) -> Tuple[Optional[Tuple[int, int]], Optiona
     y_coords = white_pixels[0]
     x_coords = white_pixels[1]
 
-    # Minimum area threshold
     h, w = image.shape[:2]
     min_area = (min(h, w) * 0.05) ** 2 * np.pi
     if len(y_coords) < min_area:
         return None, None
 
-    # Find extreme points
     top_y = np.min(y_coords)
     bottom_y = np.max(y_coords)
     left_x = np.min(x_coords)
     right_x = np.max(x_coords)
 
-    # Center is midpoint of extremes
     cx = int((left_x + right_x) / 2)
     cy = int((top_y + bottom_y) / 2)
 
-    # Radius: average of horizontal and vertical half-spans
     radius_x = (right_x - left_x) / 2
     radius_y = (bottom_y - top_y) / 2
     radius = int((radius_x + radius_y) / 2)
@@ -614,9 +596,7 @@ def measure_blur_batch(
     measurements = []
     valid_positions = []
 
-    # Auto-detect from sharpest image if not provided
     if center is None or radius is None:
-        # Find sharpest image (likely at focus)
         sharpness = [cv2.Laplacian(img, cv2.CV_64F).var() for img in images]
         best_idx = np.argmax(sharpness)
         center, radius = detect_sphere(images[best_idx])

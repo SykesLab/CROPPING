@@ -19,7 +19,7 @@ import numpy as np
 
 
 def laplacian_variance(gray: np.ndarray) -> float:
-    """Variance of Laplacian - higher means sharper."""
+    """Laplacian variance focus metric."""
     laplacian = cv2.Laplacian(gray, cv2.CV_64F)
     return float(np.var(laplacian))
 

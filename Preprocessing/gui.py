@@ -2,6 +2,7 @@
 
 import builtins
 import json
+import logging
 import platform
 import queue
 import subprocess
@@ -32,8 +33,8 @@ def _load_settings() -> dict:
         if SETTINGS_FILE.exists():
             with open(SETTINGS_FILE, "r") as f:
                 return json.load(f)
-    except Exception:
-        pass
+    except Exception as e:
+        logging.debug(f"Settings load failed: {e}")
     return {}
 
 
@@ -42,8 +43,8 @@ def _save_settings(settings: dict) -> None:
     try:
         with open(SETTINGS_FILE, "w") as f:
             json.dump(settings, f, indent=2)
-    except Exception:
-        pass
+    except Exception as e:
+        logging.debug(f"Settings save failed: {e}")
 
 
 # Queue for worker -> GUI communication (logs, progress, done signals)

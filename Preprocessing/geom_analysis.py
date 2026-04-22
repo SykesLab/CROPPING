@@ -21,7 +21,7 @@ def analyze_frame_geometric(
     min_area: Optional[int] = None,
 ) -> Dict[str, Any]:
     """
-    Detect sphere and droplet positions in a single frame.
+    Detect sphere and droplet in a single frame.
 
     The sphere is identified as a large, wide component near the image centre.
     The droplet is the highest component above the sphere that doesn't touch
@@ -40,7 +40,6 @@ def analyze_frame_geometric(
         dark_mask.astype(np.uint8), connectivity=8
     )
 
-    # Collect components (skip background label 0)
     components: List[Dict[str, Any]] = []
     for label_id in range(1, num_labels):
         x, y, w, h, area = stats[label_id]

@@ -69,7 +69,6 @@ class Trainer:
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Validate config before proceeding
         training_mode = config.get('training', {}).get('training_mode', 'optical')
         config_warnings = validate_training_config(config, training_mode)
         for w in config_warnings:
@@ -202,12 +201,10 @@ class Trainer:
         }
 
     def _save_training_history(self):
-        """Save training history to file."""
         with open(self.history_file, 'w') as f:
             yaml.dump(self.training_history, f, default_flow_style=False, sort_keys=False)
 
     def _update_session_info(self, stage: str, epoch: int, val_loss: float = None):
-        """Update current session info during training."""
         if self.current_session['start_epoch'] is None:
             self.current_session['start_epoch'] = epoch
             self.current_session['stage'] = stage
@@ -241,7 +238,6 @@ class Trainer:
             )
 
     def _finalize_session(self, notes: str = None):
-        """Finalize current session and add to history."""
         if notes:
             self.current_session['notes'].append(notes)
 
@@ -251,11 +247,9 @@ class Trainer:
         # Accumulate total epochs trained (cumulative across all sessions)
         self.training_history['training_summary']['total_epochs_trained'] += self.current_session['epochs_trained']
 
-        # Save to file
         self._save_training_history()
 
     def _track_lr_change(self, epoch: int, old_lr: float, new_lr: float, reason: str):
-        """Track learning rate changes."""
         lr_change = {
             'epoch': epoch,
             'old_lr': old_lr,
@@ -267,7 +261,6 @@ class Trainer:
         self.current_session['lr_end'] = new_lr
 
     def _get_lr(self, epoch: int, base_lr: float) -> float:
-        """Calculate learning rate with decay."""
         if epoch < self.lr_decay_start:
             return base_lr
         else:
@@ -275,7 +268,6 @@ class Trainer:
             return base_lr * (1.0 - self.lr_decay_rate) ** decay_epochs
 
     def _should_stop(self) -> bool:
-        """Check if training should stop."""
         return self.stop_flag()
 
     def _calculate_bin_weights_from_beta(self) -> list:
@@ -283,7 +275,6 @@ class Trainer:
         return calculate_bin_weights_from_beta(self.config)
 
     def _update_lr(self, optimizer: optim.Optimizer, epoch: int, base_lr: float):
-        """Update optimiser learning rate."""
         lr = self._get_lr(epoch, base_lr)
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
@@ -428,7 +419,6 @@ class Trainer:
             # Update learning rate
             lr = self._update_lr(optimizer, epoch, self.lr)
 
-            # Training
             self.model.dme_subnet.train()
             train_loss = 0.0
 
@@ -506,10 +496,8 @@ class Trainer:
                 else:
                     train_bin_maes.append(0.0)
 
-            # Validation
             val_loss, val_mae_px, val_bin_maes, val_weighted_mae = self._validate_dme(val_loader)
 
-            # Logging
             self.writer.add_scalar('DME/train_loss', train_loss, epoch)
             self.writer.add_scalar('DME/train_weighted_mae', train_weighted_mae, epoch)
             self.writer.add_scalar('DME/val_loss', val_loss, epoch)
@@ -523,7 +511,6 @@ class Trainer:
                     f'DME/train_mae_bin_{low:.1f}-{high:.1f}px', train_mae, epoch)
                 self.writer.add_scalar(f'DME/val_mae_bin_{low:.1f}-{high:.1f}px', val_mae, epoch)
 
-            # Record curve history
             self.curve_history['epochs'].append(epoch)
             self.curve_history['train_loss'].append(train_loss)
             self.curve_history['val_loss'].append(val_loss)
@@ -541,11 +528,9 @@ class Trainer:
             logger.info(
                 f"  Val Binned:   [{bin_labels[0]}: {val_bin_maes[0]:.2f}, {bin_labels[1]}: {val_bin_maes[1]:.2f}, {bin_labels[2]}: {val_bin_maes[2]:.2f}, {bin_labels[3]}: {val_bin_maes[3]:.2f}] px")
 
-            # Clear cache between epochs
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
 
-            # Update session tracking
             self._update_session_info('dme', epoch, val_loss)
 
             # Save checkpoint (with optimizer for proper resumption)
@@ -574,7 +559,6 @@ class Trainer:
                     val_mae_px=val_weighted_mae)
                 logger.info(f"  → New session best (weighted MAE): {val_weighted_mae:.4f} px")
 
-            # Save history after each epoch
             self._save_training_history()
 
         # Finalize session when training ends
@@ -792,10 +776,8 @@ class Trainer:
         Args:
             resume_from: Path to checkpoint to resume from.
         """
-        # Create dataloaders
         logger.info("\nLoading data...")
 
-        # Validate data first
         self._validate_data()
 
         logger.info(f"\nDME batch size: {self.batch_size}")
@@ -1067,18 +1049,15 @@ def main():
 
     args = parser.parse_args()
 
-    # Load config
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
 
-    # Output directory
     if args.output_dir is None:
         timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
         output_dir = Path('checkpoints') / timestamp
     else:
         output_dir = Path(args.output_dir)
 
-    # Create trainer
     trainer = Trainer(
         config=config,
         data_dir=args.data_dir,
@@ -1086,7 +1065,6 @@ def main():
         device=args.device
     )
 
-    # Train
     trainer.train(resume_from=args.resume)
 
 

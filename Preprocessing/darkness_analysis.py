@@ -40,7 +40,6 @@ def get_dark_fraction(cine_obj: Any, idx: int) -> float:
 
     num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(dark_mask, connectivity=8)
 
-    # Only count dark regions not touching the image borders
     valid_area = 0
     for i in range(1, num_labels):
         x, y, bw, bh, area = stats[i]
@@ -90,7 +89,6 @@ def choose_best_frame_geometry_only(cine_obj: Any) -> Tuple[int, Dict[str, Any]]
     best_score: Optional[float] = None
     best_geo: Optional[Dict[str, Any]] = None
 
-    # Early stop tracking
     valid_frame_count = 0
     consecutive_lost = 0
 

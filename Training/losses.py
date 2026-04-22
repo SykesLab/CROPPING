@@ -114,7 +114,6 @@ def compute_ssim(
     C1 = 0.01 ** 2
     C2 = 0.03 ** 2
 
-    # Create Gaussian window
     sigma = 1.5
     coords = torch.arange(window_size, dtype=torch.float32) - window_size // 2
     g = torch.exp(-(coords ** 2) / (2 * sigma ** 2))
@@ -122,7 +121,6 @@ def compute_ssim(
     window = window / window.sum()
     window = window.view(1, 1, window_size, window_size).to(device=pred.device, dtype=pred.dtype)
 
-    # Compute local means
     mu_pred = F.conv2d(pred, window, padding=window_size // 2)
     mu_target = F.conv2d(target, window, padding=window_size // 2)
 
@@ -130,12 +128,10 @@ def compute_ssim(
     mu_target_sq = mu_target ** 2
     mu_pred_target = mu_pred * mu_target
 
-    # Compute local variances and covariance
     sigma_pred_sq = F.conv2d(pred ** 2, window, padding=window_size // 2) - mu_pred_sq
     sigma_target_sq = F.conv2d(target ** 2, window, padding=window_size // 2) - mu_target_sq
     sigma_pred_target = F.conv2d(pred * target, window, padding=window_size // 2) - mu_pred_target
 
-    # SSIM formula
     numerator = (2 * mu_pred_target + C1) * (2 * sigma_pred_target + C2)
     denominator = (mu_pred_sq + mu_target_sq + C1) * (sigma_pred_sq + sigma_target_sq + C2)
 

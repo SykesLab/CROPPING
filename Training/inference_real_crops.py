@@ -73,7 +73,6 @@ class DiameterMeasurer:
         Returns:
             Tuple of (diameter in pixels, binary mask, (center_x, center_y))
         """
-        # Convert to uint8 for OpenCV
         img_uint8 = (img * 255).astype(np.uint8)
 
         if self.use_otsu:
@@ -84,16 +83,12 @@ class DiameterMeasurer:
             threshold_uint8 = int(self.fallback_threshold * 255)
             binary = (img_uint8 < threshold_uint8).astype(np.uint8)
 
-        # Find contours
         contours, _ = cv2.findContours(binary, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
 
         if len(contours) == 0:
             return 0.0, binary, (0.0, 0.0)
 
-        # Get largest contour (main droplet)
         largest = max(contours, key=cv2.contourArea)
-
-        # Fit minimum enclosing circle
         (cx, cy), radius = cv2.minEnclosingCircle(largest)
 
         return 2 * radius, binary, (cx, cy)  # diameter, mask, center
@@ -138,7 +133,6 @@ class RealCropInference:
         self.defocus_calibration = defocus_calibration
         self.model_path = Path(model_path)
 
-        # Device setup
         if device == 'auto':
             self.device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
         else:
@@ -146,11 +140,9 @@ class RealCropInference:
 
         logger.info(f"Using device: {self.device}")
 
-        # Load checkpoint
         logger.info(f"Loading model from: {model_path}")
         checkpoint = torch.load(model_path, map_location=self.device, weights_only=True)
 
-        # Get config
         if config_path is not None:
             with open(config_path, 'r') as f:
                 self.config = yaml.safe_load(f)
@@ -159,12 +151,10 @@ class RealCropInference:
         else:
             raise ValueError("Config not found. Provide config_path or ensure it's in checkpoint.")
 
-        # Detect training mode from checkpoint
         self.training_mode = checkpoint.get('training_mode', 'optical')
         self.blur_term = "σ" if self.training_mode == "direct" else "CoC"
         logger.info(f"Training mode: {self.training_mode}")
 
-        # Load direct mode calibration if needed
         self.direct_slope = None
         self.direct_offset = None
         if self.training_mode == 'direct':
@@ -222,7 +212,6 @@ class RealCropInference:
                     "inference_camera_scale_px_per_mm provided but scale_calib_px_per_mm "
                     "not found in config — cross-camera correction skipped")
 
-        # Create and load model
         self.model = DefocusNet.from_config(self.config).to(self.device)
 
         if 'model_state_dict' in checkpoint:
@@ -343,7 +332,6 @@ class RealCropInference:
         Returns:
             (tensor, original_img, original_size)
         """
-        # Load grayscale
         img = cv2.imread(str(img_path), cv2.IMREAD_GRAYSCALE)
 
         if img is None:
@@ -386,7 +374,6 @@ class RealCropInference:
         Returns:
             Estimated blur in pixels (scaled to original image resolution)
         """
-        # Convert to grayscale if needed
         if len(img.shape) == 3:
             gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         else:
@@ -406,7 +393,6 @@ class RealCropInference:
         # Normalize to [-1, 1]
         gray_norm = (gray_resized.astype(np.float32) / 255.0) * 2.0 - 1.0
 
-        # Convert to tensor
         img_tensor = torch.from_numpy(gray_norm).unsqueeze(0).unsqueeze(0).to(self.device)
 
         # Run model — returns (B, 1) scalar in [0, 1]
@@ -447,7 +433,6 @@ class RealCropInference:
                 'original_size': tuple,
             }
         """
-        # Preprocess
         img_tensor, original_img, original_size = self.preprocess_image(img_path)
 
         # Run model — returns (B, 1) scalar in [0, 1]
@@ -457,11 +442,9 @@ class RealCropInference:
         # Extract blur value at model scale (128x128)
         blur_px_model = self.denormalize_blur(pred_norm.squeeze())
 
-        # Scale blur to original image resolution
         scale_factor = max(original_size[0], original_size[1]) / self.model_size
         blur_px = blur_px_model * scale_factor
 
-        # Classify focus status based on threshold (threshold is at original scale)
         if blur_threshold is not None and blur_px < blur_threshold:
             focus_status = 'in_focus'
         else:
@@ -517,7 +500,6 @@ class RealCropInference:
         else:
             raise ValueError(f"Unknown training_mode: {self.training_mode}")
 
-        # Compute calibration uncertainty if available
         unc_mm = 0.0
         rho_std = getattr(self, 'rho_std', 0.0)
         sigma_0_std = getattr(self, 'sigma_0_std', 0.0)
@@ -528,7 +510,6 @@ class RealCropInference:
                 rho_std, sigma_0_std,
             )
 
-        # Measure diameter from original image
         diameter_original, _, _ = self.diameter_measurer.measure_diameter(original_img / 255.0)
 
         # Use correct column name: sigma_px for direct mode, coc_px for optical mode
@@ -543,7 +524,6 @@ class RealCropInference:
             'original_size': original_size
         }
 
-        # Save visualization
         if save_visualization and output_dir is not None:
             viz_dir = output_dir / 'visualizations'
             viz_dir.mkdir(exist_ok=True, parents=True)
@@ -660,11 +640,9 @@ class RealCropInference:
 
         logger.info(f"Found {len(crop_files)} image files")
 
-        # Create output directory for this material
         output_dir = output_base / material_name
         output_dir.mkdir(exist_ok=True, parents=True)
 
-        # Process each crop
         results = []
 
         for i, crop_path in enumerate(tqdm(crop_files, desc=f"Processing {material_name}")):
@@ -685,11 +663,9 @@ class RealCropInference:
                 logger.error(f"Error processing {crop_path.name}: {e}")
                 continue
 
-        # Create DataFrame
         df = pd.DataFrame(results)
 
         if len(df) > 0:
-            # Save CSV
             csv_path = output_dir / 'blur_results.csv'
             df.to_csv(csv_path, index=False)
 
@@ -780,16 +756,13 @@ class RealCropInference:
             if len(df) > 0:
                 all_results.append(df)
 
-        # Combine all results
         if len(all_results) > 0:
             combined_df = pd.concat(all_results, ignore_index=True)
 
-            # Save combined results
-            summary_path = output_base / 'summary_all_materials.csv'
+                summary_path = output_base / 'summary_all_materials.csv'
             combined_df.to_csv(summary_path, index=False)
             logger.info(f"Saved combined summary to: {summary_path}")
 
-            # Create summary visualizations
             self._create_summary_plots(combined_df, output_base)
 
             # Print overall statistics
@@ -1190,14 +1163,12 @@ def main():
 
     args = parser.parse_args()
 
-    # Create inference engine
     inference = RealCropInference(
         model_path=args.model,
         config_path=args.config,
         device=args.device
     )
 
-    # Process all materials
     inference.process_all_materials(
         input_base=args.input,
         output_base=args.output,

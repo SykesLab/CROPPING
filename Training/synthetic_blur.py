@@ -342,19 +342,14 @@ def create_gaussian_kernel(sigma: float, radius_factor: float = 4.0) -> np.ndarr
         # Return identity kernel (no blur)
         return np.array([[1.0]])
 
-    # Kernel size (must be odd)
     radius = int(np.ceil(radius_factor * sigma))
     size = 2 * radius + 1
 
-    # Create coordinate grid
     x = np.arange(size) - radius
     y = np.arange(size) - radius
     X, Y = np.meshgrid(x, y)
 
-    # Gaussian formula
     kernel = np.exp(-(X**2 + Y**2) / (2 * sigma**2))
-
-    # Normalise
     kernel /= kernel.sum()
 
     return kernel.astype(np.float32)
@@ -381,7 +376,6 @@ def apply_gaussian_blur(
 
     kernel = create_gaussian_kernel(sigma, radius_factor)
 
-    # Apply convolution
     blurred = cv2.filter2D(image, -1, kernel, borderType=cv2.BORDER_REPLICATE)
 
     return blurred
@@ -1205,7 +1199,6 @@ class SyntheticBlurGenerator:
         output_dir = Path(output_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        # Create subdirectories
         (output_dir / 'sharp').mkdir(exist_ok=True)
         (output_dir / 'blur').mkdir(exist_ok=True)
         (output_dir / 'blur_map').mkdir(exist_ok=True)
@@ -1441,7 +1434,6 @@ class SyntheticBlurGenerator:
                 else:
                     log(f"Using 70% real / 30% synthetic (only {len(real_sharps)} images)")
 
-        # Generate samples
         metadata = []
         sample_idx = 0  # Track actual saved samples
         _sharp_cache = {}  # Cache decoded sharp images to avoid redundant disk reads
@@ -1638,7 +1630,6 @@ class SyntheticBlurGenerator:
 
         pbar.close()
 
-        # Save metadata
         import pandas as pd
         df = pd.DataFrame(metadata)
         # Set the image number as the actual index
@@ -1775,19 +1766,15 @@ def main():
 
     args = parser.parse_args()
 
-    # Load config
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
 
-    # Create optical parameters
     optical_params = BlurParams.from_config(config)
 
-    # Get ranges from config
     data_config = config.get('data', {})
     defocus_range = tuple(data_config.get('defocus_range_mm', [-12.0, 12.0]))
     diameter_range = tuple(data_config.get('droplet_diameter_range_px', [10, 50]))
 
-    # Create generator
     generator = SyntheticBlurGenerator(
         optical_params=optical_params,
         defocus_range_mm=defocus_range,
@@ -1795,7 +1782,6 @@ def main():
         crop_size=args.crop_size  # None defaults to image_size in the class
     )
 
-    # Generate dataset
     generator.generate_dataset(
         output_dir=args.output_dir,
         num_samples=args.num_samples,

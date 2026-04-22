@@ -42,8 +42,7 @@ def run_parallel(
     safe_mode: bool = False,
     gui_mode: bool = False,
 ) -> List[Any]:
-    """
-    Execute function over items with optional parallelisation.
+    """Parallel map with optional sequential fallback.
 
     safe_mode: Run sequentially (single process) for debugging.
     gui_mode: Emit progress markers for GUI instead of tqdm bars.

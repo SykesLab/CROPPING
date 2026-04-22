@@ -5,6 +5,7 @@ Provides silent output suppression and SDK initialisation used by both
 the preprocessing cine_io module and the calibration cine_loader.
 """
 
+import logging
 import os
 from contextlib import contextmanager
 from typing import Any, Generator, Optional
@@ -58,13 +59,15 @@ def init_pyphantom() -> tuple:
                 from pyphantom import Phantom
                 phantom = Phantom(init_camera=False)
                 initialized = phantom is not None
-            except Exception:
+            except Exception as e:
+                logging.debug(f"Phantom(init_camera=False) failed: {e}")
                 try:
                     phantom = Phantom()
                     initialized = phantom is not None
-                except Exception:
+                except Exception as e2:
+                    logging.debug(f"Phantom() fallback failed: {e2}")
                     phantom = None
     except ImportError:
-        pass
+        pass  # pyphantom not installed — optional dependency
 
     return cine_mod, utils_mod, phantom, available, initialized

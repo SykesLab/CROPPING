@@ -101,7 +101,6 @@ class OpticalParams:
         u0 = self.imaging_distance_mm
         D_lens = self.aperture_diameter_mm
 
-        # Object distance
         object_dist = defocus_mm + d0
 
         if object_dist <= 0:
@@ -190,7 +189,6 @@ def calibrate_approach_a(
     z = np.array(z_positions)
     sigma = np.array(sigma_values)
 
-    # Remove NaN values
     valid = ~np.isnan(sigma)
     z = z[valid]
     sigma = sigma[valid]
@@ -254,7 +252,6 @@ def calibrate_approach_a(
     z_fit = z_sorted[keep_mask]
     sigma_fit = s_sorted[keep_mask]
 
-    # Final fit on cleaned data
     try:
         popt, pcov = curve_fit(
             linear_model, z_fit, sigma_fit,
@@ -263,7 +260,6 @@ def calibrate_approach_a(
         )
         rho, sigma_0 = popt
 
-        # R-squared on the fitted points only (not including excluded plateau)
         sigma_pred_fit = linear_model(z_fit, rho, sigma_0)
         ss_res = np.sum((sigma_fit - sigma_pred_fit) ** 2)
         ss_tot = np.sum((sigma_fit - np.mean(sigma_fit)) ** 2)
@@ -314,12 +310,10 @@ def calibrate_approach_b(
     z = np.array(z_positions)
     sigma = np.array(sigma_values)
 
-    # Remove NaN values
     valid = ~np.isnan(sigma)
     z = z[valid]
     sigma = sigma[valid]
 
-    # Calculate CoC for each point
     coc_values = []
     rho_values = []
     valid_z = []
@@ -349,7 +343,6 @@ def calibrate_approach_b(
     # Use median for robustness
     rho_final = np.median(rho_values)
 
-    # Calculate R-squared
     sigma_pred = np.array(coc_values) * rho_final
     ss_res = np.sum((np.array(valid_sigma) - sigma_pred) ** 2)
     ss_tot = np.sum((np.array(valid_sigma) - np.mean(valid_sigma)) ** 2)
@@ -392,10 +385,8 @@ def calibrate_hybrid(
     Returns:
         CalibrationResultHybrid with both results
     """
-    # Step 1: Approach A calibration
     result_a = calibrate_approach_a(z_positions, sigma_values)
 
-    # Step 2: Convert to Approach B ρ
     coc_at_ref = optical_params.calculate_coc(reference_defocus)
     sigma_at_ref = result_a.rho_px_per_mm * reference_defocus + result_a.sigma_0
 
@@ -404,7 +395,6 @@ def calibrate_hybrid(
     else:
         rho_formula = 1.0
 
-    # Create Approach B result with converted ρ
     result_b = CalibrationResultB(
         rho=rho_formula,
         optical_params=optical_params,
@@ -466,7 +456,6 @@ def sigma_to_depth_approach_b(
         coc = optical_params.calculate_coc(d)
         return (coc - target_coc) ** 2
 
-    # Search for the defocus that gives the target CoC
     result = minimize_scalar(
         objective,
         bounds=(0.1, 50),
@@ -491,7 +480,6 @@ def find_focal_plane(sigmas: List[float], positions: List[float]) -> Tuple[int, 
     sigmas = np.array(sigmas)
     positions = np.array(positions)
 
-    # Remove NaN
     valid = ~np.isnan(sigmas)
     sigmas = sigmas[valid]
     positions = positions[valid]
