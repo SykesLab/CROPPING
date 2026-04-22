@@ -18,62 +18,22 @@ Usage:
     images, positions = loader.extract_zstack(z_start=-6, z_end=6)
 """
 
-import os
 import re
-from contextlib import contextmanager
+import sys
 from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import numpy as np
 import cv2
 
+# Import shared phantom utilities from Preprocessing
+_preproc_dir = str(Path(__file__).resolve().parent.parent / "Preprocessing")
+if _preproc_dir not in sys.path:
+    sys.path.insert(0, _preproc_dir)
 
-# =============================================================================
-# Silent pyphantom import (suppress SDK banner)
-# =============================================================================
-@contextmanager
-def _suppress_output() -> Generator[None, None, None]:
-    """Suppress stdout/stderr at OS level for C extensions."""
-    old_stdout_fd = os.dup(1)
-    old_stderr_fd = os.dup(2)
-    devnull_fd = os.open(os.devnull, os.O_WRONLY)
+from phantom_utils import init_pyphantom
 
-    os.dup2(devnull_fd, 1)
-    os.dup2(devnull_fd, 2)
-
-    try:
-        yield
-    finally:
-        os.dup2(old_stdout_fd, 1)
-        os.dup2(old_stderr_fd, 2)
-        os.close(devnull_fd)
-        os.close(old_stdout_fd)
-        os.close(old_stderr_fd)
-
-
-# Try to import pyphantom
-_cine_module: Optional[Any] = None
-_utils_module: Optional[Any] = None
-_phantom_instance: Optional[Any] = None
-PYPHANTOM_AVAILABLE = False
-
-try:
-    with _suppress_output():
-        from pyphantom import cine as _cine_module
-        from pyphantom import utils as _utils_module
-        PYPHANTOM_AVAILABLE = True
-
-        # Initialize Phantom SDK (required for cine handle creation)
-        try:
-            from pyphantom import Phantom
-            _phantom_instance = Phantom(init_camera=False)
-        except Exception:
-            try:
-                _phantom_instance = Phantom()
-            except Exception:
-                _phantom_instance = None
-except ImportError:
-    pass
+_cine_module, _utils_module, _phantom_instance, PYPHANTOM_AVAILABLE, _ = init_pyphantom()
 
 
 # =============================================================================
