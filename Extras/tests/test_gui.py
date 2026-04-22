@@ -708,8 +708,8 @@ class DiagnosticApp(tk.Tk):
         self.var_status.set("All diagnostics complete — click any to view results")
         # Show first result
         if self._all_results:
-            self.listbox.selection_clear(0, "end")
-            self.listbox.selection_set(0)
+            first_id = DIAGNOSTICS[0]["id"]
+            self.tree.selection_set(first_id)
             self._on_select(None)
 
     def _run_diagnostic(self, diag: Dict):
