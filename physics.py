@@ -26,6 +26,9 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple
 
 
+SATURATION_THRESHOLD = 0.01  # predictions within this of 0 or 1 are flagged
+
+
 @dataclass
 class ScalingParams:
     """All parameters needed for the forward/inverse blur chain."""
@@ -181,7 +184,7 @@ def label_to_defocus(
     defocus_mm, clamped = sigma_native_to_defocus(
         sigma_native, params.rho_eff, params.sigma_0_eff
     )
-    saturated = label < 0.01 or label > 0.99
+    saturated = label < SATURATION_THRESHOLD or label > (1.0 - SATURATION_THRESHOLD)
     return defocus_mm, clamped, saturated
 
 
