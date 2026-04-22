@@ -96,7 +96,7 @@ from calibration_core import (
     OpticalParams, CalibrationResultA, CalibrationResultB, CalibrationResultHybrid,
     calibrate_approach_a, calibrate_approach_b, calibrate_hybrid,
     find_focal_plane, validate_calibration, export_calibration_yaml,
-    export_calibration_yaml_direct
+    export_calibration_yaml_direct, loo_cv, generate_quality_report,
 )
 from cine_loader import CineFolderLoader, check_pyphantom, PYPHANTOM_AVAILABLE
 from sphere_processing import process_sphere_stack
@@ -1960,10 +1960,12 @@ The synthetic blur will match your camera!"""
             self.calibration_b = None
             self.calibration_hybrid = None
             self.calibration_direct = None
+            self.loo_result = None
 
             if mode == 'direct':
                 # Direct mode: just fit σ = ρ × |z| + σ₀, no optical params needed
                 self.calibration_direct = calibrate_approach_a(filtered_positions, filtered_sigmas)
+                self.loo_result = loo_cv(filtered_positions, filtered_sigmas)
                 self._display_results_direct()
 
             elif approach == 'B':
@@ -2055,6 +2057,15 @@ The ρ value compensates for any errors in your estimates!
     def _display_results_direct(self):
         """Display Direct Calibration results."""
         a = self.calibration_direct
+        loo = getattr(self, 'loo_result', None)
+        loo_text = ""
+        if loo and loo.rho_std > 0:
+            loo_text = f"""
+LOO Cross-Validation (n={len(loo.loo_residuals)}):
+  ρ = {loo.rho_mean:.4f} ± {loo.rho_std:.4f} px/mm
+  σ₀ = {loo.sigma_0_mean:.3f} ± {loo.sigma_0_std:.3f} px
+  MAE = {loo.loo_mae:.3f} px
+"""
         text = f"""{'=' * 50}
 DIRECT CALIBRATION - Linear Fit
 {'=' * 50}
@@ -2066,7 +2077,7 @@ Fitted from data (no optical params needed):
   Points used: {a.num_points}
 
 Formula: σ = ρ_direct × |defocus| + σ₀
-
+{loo_text}
 {'=' * 50}
 FOR TRAINING GUI:
 {'=' * 50}
@@ -2382,6 +2393,20 @@ FOR TRAINING GUI:
         output_dir = Path(self.export_folder_var.get())
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Check for existing files before overwriting
+        existing = [f.name for f in [
+            output_dir / "calibration_results.yaml",
+            output_dir / "measurements.csv",
+            output_dir / "calibration_curve.png",
+        ] if f.exists()]
+        if existing:
+            if not messagebox.askyesno(
+                "Overwrite?",
+                f"These files already exist in {output_dir.name}/:\n"
+                + "\n".join(existing) + "\n\nOverwrite?",
+            ):
+                return
+
         exported = []
 
         # Export YAML
@@ -2411,6 +2436,14 @@ FOR TRAINING GUI:
                     reference_resolution=reference_resolution,
                     scale_calib_px_per_mm=self.scale_calib_px_per_mm,
                 )
+                loo = getattr(self, 'loo_result', None)
+                if loo and loo.rho_std > 0:
+                    yaml_dict['direct']['loo_cv'] = {
+                        'rho_std': float(loo.rho_std),
+                        'sigma_0_std': float(loo.sigma_0_std),
+                        'loo_mae_px': float(loo.loo_mae),
+                        'n_folds': len(loo.loo_residuals),
+                    }
             else:
                 yaml_dict = export_calibration_yaml(
                     self.calibration_hybrid,
@@ -2443,6 +2476,20 @@ FOR TRAINING GUI:
             plot_path = output_dir / "calibration_curve.png"
             self.calib_fig.savefig(plot_path, dpi=150, bbox_inches='tight')
             exported.append("calibration_curve.png")
+
+        # Quality report
+        cal_result = self.calibration_direct or (
+            self.calibration_hybrid.direct_result if self.calibration_hybrid else None
+        )
+        if cal_result and HAS_MATPLOTLIB:
+            loo = getattr(self, 'loo_result', None)
+            report_path = output_dir / "calibration_report.png"
+            generate_quality_report(
+                cal_result, report_path,
+                loo_result=loo,
+                camera=self.camera_var.get(),
+            )
+            exported.append("calibration_report.png")
 
         self.export_status_var.set(f"✓ Exported to {output_dir.name}/")
         messagebox.showinfo("Export Complete", f"Calibration exported to:\n{output_dir}\n\nFiles:\n" + "\n".join(exported))

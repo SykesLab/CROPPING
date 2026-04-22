@@ -14,6 +14,7 @@ from scipy.optimize import curve_fit, minimize_scalar
 from dataclasses import dataclass, field
 from typing import List, Tuple, Optional, Dict
 from pathlib import Path
+from datetime import datetime
 
 
 @dataclass
@@ -145,6 +146,17 @@ class CalibrationResultHybrid:
     direct_result: CalibrationResultA = None
     formula_result: CalibrationResultB = None
     conversion_reference_d: float = 5.0  # Reference defocus for conversion
+
+
+@dataclass
+class LOOCVResult:
+    """Result from leave-one-out cross-validation on calibration."""
+    rho_mean: float
+    rho_std: float
+    sigma_0_mean: float
+    sigma_0_std: float
+    loo_residuals: List[float] = field(default_factory=list)
+    loo_mae: float = 0.0
 
 
 def linear_model(z: np.ndarray, rho: float, sigma_0: float) -> np.ndarray:
@@ -683,3 +695,157 @@ def export_calibration_yaml_direct(
         output['defocus_range_mm'] = [float(defocus_range_mm[0]), float(defocus_range_mm[1])]
 
     return output
+
+
+def loo_cv(
+    z_positions: List[float],
+    sigma_values: List[float],
+    exclude_near_focus: float = 0.5,
+) -> LOOCVResult:
+    """
+    Leave-one-out cross-validation on calibration fit.
+
+    For each point, removes it, refits the linear model on the
+    remaining n-1 points, and predicts the held-out sigma. Returns
+    error bars on rho and sigma_0.
+
+    Args:
+        z_positions: Defocus positions in mm
+        sigma_values: Measured blur sigma in pixels
+        exclude_near_focus: Exclude points closer than this to focus (mm)
+
+    Returns:
+        LOOCVResult with parameter uncertainties and prediction errors
+    """
+    z = np.array(z_positions)
+    sigma = np.array(sigma_values)
+
+    # Remove NaN and near-focus points (same filtering as calibrate_approach_a)
+    valid = ~np.isnan(sigma) & (np.abs(z) >= exclude_near_focus)
+    z = z[valid]
+    sigma = sigma[valid]
+    n = len(z)
+
+    if n < 4:
+        return LOOCVResult(
+            rho_mean=0.0, rho_std=0.0,
+            sigma_0_mean=0.0, sigma_0_std=0.0,
+            loo_residuals=[], loo_mae=0.0,
+        )
+
+    rho_values = []
+    sigma_0_values = []
+    residuals = []
+
+    for i in range(n):
+        z_train = np.delete(z, i)
+        sigma_train = np.delete(sigma, i)
+
+        try:
+            popt, _ = curve_fit(
+                linear_model, z_train, sigma_train,
+                p0=[1.0, 1.0],
+                bounds=([0.01, 0], [100, 50]),
+            )
+            rho_i, sigma_0_i = popt
+            rho_values.append(rho_i)
+            sigma_0_values.append(sigma_0_i)
+
+            # Predict held-out point
+            pred = linear_model(np.array([z[i]]), rho_i, sigma_0_i)[0]
+            residuals.append(pred - sigma[i])
+        except (RuntimeError, ValueError):
+            continue
+
+    if not rho_values:
+        return LOOCVResult(
+            rho_mean=0.0, rho_std=0.0,
+            sigma_0_mean=0.0, sigma_0_std=0.0,
+            loo_residuals=[], loo_mae=0.0,
+        )
+
+    return LOOCVResult(
+        rho_mean=float(np.mean(rho_values)),
+        rho_std=float(np.std(rho_values)),
+        sigma_0_mean=float(np.mean(sigma_0_values)),
+        sigma_0_std=float(np.std(sigma_0_values)),
+        loo_residuals=[float(r) for r in residuals],
+        loo_mae=float(np.mean(np.abs(residuals))),
+    )
+
+
+def generate_quality_report(
+    result: CalibrationResultA,
+    output_path: Path,
+    loo_result: Optional[LOOCVResult] = None,
+    camera: str = "unknown",
+) -> None:
+    """
+    Generate a standalone calibration quality report as a PNG image.
+
+    Contains: summary statistics, calibration curve with fit,
+    residual plot, and optionally LOO-CV results.
+
+    Args:
+        result: Calibration result from Approach A
+        output_path: Path to save the report image
+        loo_result: Optional LOO-CV results for uncertainty display
+        camera: Camera identifier for the title
+    """
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError:
+        return
+
+    fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+    fig.suptitle(f"Calibration Quality Report — Camera {camera}", fontsize=13)
+
+    z = np.array(result.z_values)
+    sigma = np.array(result.sigma_values)
+    sigma_fit = np.array(result.sigma_fitted)
+
+    # Left panel: calibration curve + fit
+    ax1 = axes[0]
+    ax1.scatter(z, sigma, s=20, c="steelblue", zorder=3, label="Measured")
+    sort_idx = np.argsort(z)
+    ax1.plot(z[sort_idx], sigma_fit[sort_idx], "r-", linewidth=1.5,
+             label=f"Fit: \u03c1={result.rho_px_per_mm:.4f} px/mm")
+    ax1.set_xlabel("Defocus z (mm)")
+    ax1.set_ylabel("Blur \u03c3 (px)")
+    ax1.set_title("Calibration Curve")
+    ax1.legend(fontsize=9)
+    ax1.grid(True, alpha=0.3)
+
+    # Right panel: residuals
+    ax2 = axes[1]
+    residuals = sigma - sigma_fit
+    ax2.scatter(z, residuals, s=20, c="steelblue", zorder=3)
+    ax2.axhline(0, color="red", linewidth=1, linestyle="--")
+    ax2.set_xlabel("Defocus z (mm)")
+    ax2.set_ylabel("Residual (px)")
+    ax2.set_title("Fit Residuals")
+    ax2.grid(True, alpha=0.3)
+
+    # Summary text box
+    quality = "Good" if result.r_squared > 0.95 else ("Fair" if result.r_squared > 0.9 else "Poor")
+    lines = [
+        f"R\u00b2 = {result.r_squared:.4f}  ({quality})",
+        f"\u03c1 = {result.rho_px_per_mm:.4f} px/mm",
+        f"\u03c3\u2080 = {result.sigma_0:.3f} px",
+        f"n = {result.num_points} points",
+    ]
+    if loo_result and loo_result.rho_std > 0:
+        lines.append(f"\u03c1 (LOO-CV) = {loo_result.rho_mean:.4f} \u00b1 {loo_result.rho_std:.4f}")
+        lines.append(f"\u03c3\u2080 (LOO-CV) = {loo_result.sigma_0_mean:.3f} \u00b1 {loo_result.sigma_0_std:.3f}")
+        lines.append(f"LOO MAE = {loo_result.loo_mae:.3f} px")
+    lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
+
+    text = "\n".join(lines)
+    fig.text(0.5, -0.02, text, ha="center", fontsize=9, family="monospace",
+             bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5))
+
+    fig.tight_layout(rect=[0, 0.08, 1, 0.95])
+    fig.savefig(output_path, dpi=150, bbox_inches="tight")
+    plt.close(fig)
