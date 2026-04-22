@@ -155,7 +155,7 @@ class InferenceEngine:
         device_str = self.settings.get("device", "cpu")
         self.device = torch.device(device_str)
 
-        checkpoint = torch.load(str(model_path), map_location=self.device, weights_only=False)
+        checkpoint = torch.load(str(model_path), map_location=self.device, weights_only=True)
 
         # Config from checkpoint
         if "config" in checkpoint:

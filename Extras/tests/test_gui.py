@@ -45,7 +45,7 @@ def _load_calibration_yaml(path: Path) -> Optional[Dict]:
 
 def _load_checkpoint(path: Path) -> Optional[Dict]:
     import torch
-    return torch.load(str(path), map_location="cpu", weights_only=False)
+    return torch.load(str(path), map_location="cpu", weights_only=True)
 
 
 def _load_metadata(data_dir: Path):
