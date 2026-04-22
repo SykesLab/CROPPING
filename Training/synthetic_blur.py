@@ -186,10 +186,10 @@ class BlurCalculator:
     def defocus_to_coc_mm(self, d: float) -> float:
         """
         Calculate CoC diameter in mm from defocus distance.
-        
+
         Args:
             d: Out-of-focus distance in mm (positive or negative)
-            
+
         Returns:
             Circle of confusion diameter in mm
         """
@@ -205,10 +205,10 @@ class BlurCalculator:
     def defocus_to_coc_px(self, d: float) -> float:
         """
         Calculate CoC diameter in pixels from defocus distance.
-        
+
         Args:
             d: Out-of-focus distance in mm
-            
+
         Returns:
             Circle of confusion diameter in pixels
         """
@@ -315,10 +315,10 @@ class BlurCalculator:
     def get_coc_range(self, defocus_range: Tuple[float, float]) -> Tuple[float, float]:
         """
         Get CoC range for a given defocus range.
-        
+
         Args:
             defocus_range: (min_d, max_d) in mm
-            
+
         Returns:
             (min_coc, max_coc) in pixels
         """
@@ -330,11 +330,11 @@ class BlurCalculator:
 def create_gaussian_kernel(sigma: float, radius_factor: float = 4.0) -> np.ndarray:
     """
     Create 2D Gaussian blur kernel.
-    
+
     Args:
         sigma: Standard deviation of Gaussian
         radius_factor: Kernel radius as multiple of sigma
-        
+
     Returns:
         Normalised 2D Gaussian kernel
     """
@@ -367,12 +367,12 @@ def apply_gaussian_blur(
 ) -> np.ndarray:
     """
     Apply Gaussian blur to image.
-    
+
     Args:
         image: Input image (grayscale, float32, range [0, 1])
         sigma: Blur kernel standard deviation
         radius_factor: Kernel radius as multiple of sigma
-        
+
     Returns:
         Blurred image
     """
@@ -706,14 +706,14 @@ class SphereAppearanceStats:
 
         stats = SphereAppearanceStats(
             bg_mean=float(np.mean(bg_intensities)),
-            bg_std=float(np.std(bg_intensities)) if len(bg_intensities) >1 else 0.02,
+            bg_std =float(np.std(bg_intensities)) if len(bg_intensities) > 1 else 0.02,
             interior_mean=float(np.mean(interior_intensities)),
             interior_std=float(np.std(interior_intensities))
-            if len(interior_intensities) >1 else 0.01, noise_std=float(np.mean(noise_stds))
+            if len(interior_intensities) > 1 else 0.01, noise_std=float(np.mean(noise_stds))
             if noise_stds else 0.003, diameter_min=float(np.min(diameters)),
             diameter_max=float(np.max(diameters)),
             diameter_mean=float(np.mean(diameters)),
-            image_size=image_size, has_highlight=len(highlight_intensities) >len(image_paths) *0.2,
+            image_size =image_size, has_highlight =len(highlight_intensities) > len(image_paths) * 0.2,
             highlight_intensity=float(np.mean(highlight_intensities))
             if highlight_intensities else 0.1, vignette_strength=float(
                 np.mean(vignette_strengths)) if vignette_strengths else 0.02,
@@ -951,11 +951,11 @@ class SyntheticBlurGenerator:
     ) -> Tuple[np.ndarray, np.ndarray]:
         """
         Apply synthetic defocus blur to sharp image.
-        
+
         Args:
             sharp_image: Sharp input image (0 = droplet, 1 = background)
             coc_px: Circle of confusion in pixels
-            
+
         Returns:
             Tuple of (blurred_image, coc_map)
         """

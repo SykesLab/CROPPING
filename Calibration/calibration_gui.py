@@ -1070,7 +1070,7 @@ The synthetic blur will match your camera!"""
         for img in images:
             img_u8 = cv2.normalize(
                 img, None, 0, 255, cv2.NORM_MINMAX).astype(
-                np.uint8) if img.dtype !=np.uint8 else img
+                np.uint8) if img.dtype != np.uint8 else img
             laplacian = cv2.Laplacian(img_u8, cv2.CV_64F)
             sharpness = laplacian.var()
             sharpness_values.append(sharpness)
@@ -1556,7 +1556,7 @@ The synthetic blur will match your camera!"""
         for img in self.zstack_images:
             img_u8 = cv2.normalize(
                 img, None, 0, 255, cv2.NORM_MINMAX).astype(
-                np.uint8) if img.dtype !=np.uint8 else img
+                np.uint8) if img.dtype != np.uint8 else img
             lap = cv2.Laplacian(img_u8, cv2.CV_64F)
             mask = img_u8 > 5
             if mask.any():
@@ -1591,7 +1591,7 @@ The synthetic blur will match your camera!"""
         for img in self.zstack_images:
             img_u8 = cv2.normalize(
                 img, None, 0, 255, cv2.NORM_MINMAX).astype(
-                np.uint8) if img.dtype !=np.uint8 else img
+                np.uint8) if img.dtype != np.uint8 else img
             lap = cv2.Laplacian(img_u8, cv2.CV_64F)
             mask = img_u8 > 5
             if mask.any():
@@ -1654,7 +1654,7 @@ The synthetic blur will match your camera!"""
         for img in self.zstack_images:
             img_u8 = cv2.normalize(
                 img, None, 0, 255, cv2.NORM_MINMAX).astype(
-                np.uint8) if img.dtype !=np.uint8 else img
+                np.uint8) if img.dtype != np.uint8 else img
             lap = cv2.Laplacian(img_u8, cv2.CV_64F)
             mask = img_u8 > 5
             sharpness.append(lap[mask].var() if mask.any() else 0.0)

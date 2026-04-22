@@ -255,8 +255,8 @@ class RealCropInference:
                 focal_length = optics_cfg.get('focal_length_mm', 70.0)
                 focus_distance = optics_cfg.get('focus_distance_mm', 200.0)
                 imaging_distance = optics_cfg.get(
-                    'imaging_distance_mm', 1.0 / (1.0 / focal_length -1.0 / focus_distance)
-                    if focus_distance !=focal_length else 200.0)
+                    'imaging_distance_mm', 1.0 / (1.0 / focal_length - 1.0 / focus_distance)
+                    if focus_distance != focal_length else 200.0)
 
                 self.optical_params = BlurParams(
                     focal_length_mm=focal_length,

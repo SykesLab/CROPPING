@@ -155,9 +155,9 @@ def _create_summary_plots(df: pd.DataFrame, output_dir: Path):
 
 
 def main():
-    print("="*60)
+    print("=" * 60)
     print("VALIDATION RESULTS ANALYZER")
-    print("="*60)
+    print("=" * 60)
     print("\nThis script analyzes existing validation results and generates")
     print("worst-case visualizations based on diameter error.\n")
 
@@ -194,7 +194,7 @@ def main():
     else:
         device = device_input
 
-    print("\n" + "="*60)
+    print("\n" + "=" * 60)
     print("Configuration:")
     print(f"  Results CSV: {results_csv}")
     print(f"  Data Dir: {data_dir}")
@@ -202,7 +202,7 @@ def main():
     print(f"  Output Dir: {output_dir}")
     print(f"  Worst Cases: {num_worst}")
     print(f"  Device: {device}")
-    print("="*60 + "\n")
+    print("=" * 60 + "\n")
 
     # Validate inputs
     if not results_csv.exists():
@@ -214,7 +214,7 @@ def main():
 
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Run analysis 
+    # Run analysis
     analyze_results(
         results_csv=results_csv,
         data_dir=data_dir,

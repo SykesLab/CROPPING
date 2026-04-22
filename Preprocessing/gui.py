@@ -45,6 +45,7 @@ def _save_settings(settings: dict) -> None:
     except Exception:
         pass
 
+
 # Queue for worker -> GUI communication (logs, progress, done signals)
 gui_queue: queue.Queue = queue.Queue()
 
@@ -1163,12 +1164,12 @@ class PipelineGUI:
     def _run_quick_test(self, safe_mode: bool) -> None:
         """Run quick detection test (1st droplet per folder)."""
         if not cine_io.PYPHANTOM_AVAILABLE:
-            emit_log("="*60)
+            emit_log("=" * 60)
             emit_log("ERROR: Phantom SDK (pyphantom) not installed!")
             emit_log("")
             emit_log("The pipeline cannot process .cine files without the Phantom SDK.")
             emit_log("Please install pyphantom to continue.")
-            emit_log("="*60)
+            emit_log("=" * 60)
             return
 
         from cine_io import (
@@ -1383,7 +1384,6 @@ class PipelineGUI:
 
         # Schedule next poll
         self.root.after(100, self._poll_queue)
-
 
 
 def run_gui() -> None:

@@ -477,7 +477,7 @@ class ModelTester:
                 num_bins = 4
                 bin_size = bin_range / num_bins
                 filtered_bins = [
-                    (min_blur_filter +i * bin_size, min_blur_filter +(i +1) *bin_size)
+                    (min_blur_filter + i * bin_size, min_blur_filter + (i + 1) * bin_size)
                     for i in range(num_bins)]
 
                 bin_weights = self.bin_weights
@@ -485,8 +485,8 @@ class ModelTester:
                 filtered_bin_counts = []
 
                 for low, high in filtered_bins:
-                    mask = (df_filtered[f'{self.blur_col}_gt_px'] >=low) &(
-                        df_filtered[f'{self.blur_col}_gt_px'] <high)
+                    mask = (df_filtered[f'{self.blur_col}_gt_px'] >= low) & (
+                        df_filtered[f'{self.blur_col}_gt_px'] < high)
                     bin_errors = df_filtered[mask]['error_px'].values
                     if len(bin_errors) > 0:
                         filtered_bin_maes.append(np.mean(bin_errors))
@@ -503,7 +503,7 @@ class ModelTester:
                 print(f"\n  Binned MAE (filtered, weighted {weights_str}%):")
                 filtered_bin_labels = [f"{low:.1f}-{high:.1f}" for low, high in filtered_bins]
                 for label, bin_mae, count, weight in zip(
-                    filtered_bin_labels, filtered_bin_maes, filtered_bin_counts, bin_weights):
+                        filtered_bin_labels, filtered_bin_maes, filtered_bin_counts, bin_weights):
                     print(f"    {label} px: {bin_mae:.2f} px (n={count}, weight={weight*100:.0f}%)")
                 print(f"  Filtered Weighted MAE: {filtered_weighted_mae:.2f} px")
             else:
@@ -519,7 +519,7 @@ class ModelTester:
             num_bins = 4
             bin_size = bin_range / num_bins
             bins = [
-                (min_blur_filter +i * bin_size, min_blur_filter +(i +1) *bin_size)
+                (min_blur_filter + i * bin_size, min_blur_filter + (i + 1) * bin_size)
                 for i in range(num_bins)]
         else:
             # Standard bins: 0 to max_blur
@@ -900,7 +900,7 @@ class ModelTester:
             num_bins = 4
             bin_size = bin_range / num_bins
             bins = [
-                (min_blur_filter +i * bin_size, min_blur_filter +(i +1) *bin_size)
+                (min_blur_filter + i * bin_size, min_blur_filter + (i + 1) * bin_size)
                 for i in range(num_bins)]
         else:
             # Standard bins: 0 to max_blur

@@ -306,7 +306,7 @@ def plot_comparison(merged: pd.DataFrame, metrics: Dict, output_dir: Path, blur_
     # Add count labels on bars
     for i, (bar, count) in enumerate(zip(bars, bin_counts)):
         if count > 0:
-            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.05,
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.05,
                     f'n={count}', ha='center', va='bottom', fontsize=8)
 
     ax.set_xticks(x_pos)

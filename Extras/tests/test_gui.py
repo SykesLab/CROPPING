@@ -92,7 +92,7 @@ def diag_calibration_fit(inputs: Dict) -> Tuple[Figure, str]:
     z_range = np.linspace(0, 8, 100)
     sigma_fit = rho * z_range + sigma_0
     axes[0].plot(z_range, sigma_fit, "r-", linewidth=2,
-        label=f"rho={rho:.4f}, sigma_0={sigma_0:.3f}")
+                 label=f"rho={rho:.4f}, sigma_0={sigma_0:.3f}")
     axes[0].set_xlabel("Defocus |z| (mm)")
     axes[0].set_ylabel("Blur sigma (px)")
     axes[0].set_title("Calibration Model")
@@ -253,10 +253,10 @@ def diag_config_consistency(inputs: Dict) -> Tuple[Figure, str]:
     rows = []
     all_match = True
     for key, (yaml_val, ckpt_val) in comparisons.items():
-        match = yaml_val ==ckpt_val or(
+        match = yaml_val == ckpt_val or (
             yaml_val is not None and ckpt_val is not None and abs(
-                float(yaml_val) -float(ckpt_val)) <1e-6
-            if isinstance(yaml_val, (int, float)) else yaml_val ==ckpt_val)
+                float(yaml_val) - float(ckpt_val)) < 1e-6
+            if isinstance(yaml_val, (int, float)) else yaml_val == ckpt_val)
         if not match and yaml_val is not None and ckpt_val is not None:
             all_match = False
         status = "match" if match or yaml_val is None or ckpt_val is None else "MISMATCH"

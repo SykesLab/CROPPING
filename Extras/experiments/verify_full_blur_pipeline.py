@@ -17,14 +17,18 @@ Or with PYTHONUTF8=1 to avoid Windows cp1252 issues with arrow chars in logs:
   set PYTHONUTF8=1 && python verify_full_blur_pipeline.py
 """
 
-import sys, csv, os, random, warnings
+import sys
+import csv
+import os
+import random
+import warnings
 from pathlib import Path
 import numpy as np
 import yaml
 import cv2
 
 # ── Repo paths ────────────────────────────────────────────────────────────────
-REPO_ROOT    = Path(__file__).parent
+REPO_ROOT = Path(__file__).parent
 TRAINING_DIR = REPO_ROOT / "training" / "Training"
 sys.path.insert(0, str(TRAINING_DIR))
 
@@ -33,24 +37,25 @@ from synthetic_blur import OpticalParams, SyntheticBlurGenerator
 
 # ── Config paths (all read from disk — no hardcoded values) ──────────────────
 OPTICAL_CONFIG_PATH = TRAINING_DIR / "training_output" / "optical_config.yaml"
-CALIB_YAML_PATH     = REPO_ROOT / "calibration" / "calibration_output" / "calibration_results.yaml"
-SHARP_CROPS_CSV     = (REPO_ROOT / "Preprocessing" / "CROPPING" / "Preprocessing"
-                       / "OUTPUTNEW" / "Focus" / "sharp_crops.csv")
-SHARP_CROPS_DIR     = SHARP_CROPS_CSV.parent
+CALIB_YAML_PATH = REPO_ROOT / "calibration" / "calibration_output" / "calibration_results.yaml"
+SHARP_CROPS_CSV = (REPO_ROOT / "Preprocessing" / "CROPPING" / "Preprocessing"
+                   / "OUTPUTNEW" / "Focus" / "sharp_crops.csv")
+SHARP_CROPS_DIR = SHARP_CROPS_CSV.parent
 
 # Output
 REPORT_CSV = REPO_ROOT / "verification_full_blur_pipeline_results.csv"
 
 # Test parameters
-Z_TEST_MM        = [1.0, 3.0, 5.0, 7.0]   # defocus values to probe
+Z_TEST_MM = [1.0, 3.0, 5.0, 7.0]   # defocus values to probe
 N_SAMPLES_PER_CROP = 200                    # samples for slope measurement
-REL_ERR_PASS_PCT   = 1.0                    # pass threshold: max relative error %
+REL_ERR_PASS_PCT = 1.0                    # pass threshold: max relative error %
 
 PASS_COLOUR = "\033[92m"
 FAIL_COLOUR = "\033[91m"
-RESET       = "\033[0m"
+RESET = "\033[0m"
 
 # ── helpers ───────────────────────────────────────────────────────────────────
+
 
 def _check(path: Path, label: str) -> None:
     if not path.exists():
@@ -75,17 +80,18 @@ print("  FULL BLUR PIPELINE VERIFICATION")
 print("=" * 60)
 
 _check(OPTICAL_CONFIG_PATH, "optical_config.yaml")
-_check(CALIB_YAML_PATH,     "calibration_results.yaml")
-_check(SHARP_CROPS_CSV,     "sharp_crops.csv")
+_check(CALIB_YAML_PATH, "calibration_results.yaml")
+_check(SHARP_CROPS_CSV, "sharp_crops.csv")
 
 optical_cfg = _load_yaml(OPTICAL_CONFIG_PATH)
-calib_cfg   = _load_yaml(CALIB_YAML_PATH)
+calib_cfg = _load_yaml(CALIB_YAML_PATH)
 
 training_sec = optical_cfg.get("training", {})
-data_sec     = optical_cfg.get("data", {})
-direct_sec   = calib_cfg.get("direct", {})
+data_sec = optical_cfg.get("data", {})
+direct_sec = calib_cfg.get("direct", {})
 
 # Extract all parameters — fail loudly if any are missing
+
 
 def _require(d: dict, key: str, source: str):
     val = d.get(key)
@@ -93,21 +99,22 @@ def _require(d: dict, key: str, source: str):
         raise KeyError(f"Required parameter '{key}' missing from {source}")
     return val
 
-rho_direct       = float(_require(training_sec, "rho_direct",           "optical_config.yaml [training]"))
-scale_calib      = float(_require(training_sec, "scale_calib_px_per_mm","optical_config.yaml [training]"))
-sigma_0          = float(training_sec.get("sigma_0", 0.0))
-crop_size        = int(_require(training_sec,   "crop_size_px",          "optical_config.yaml [training]"))
-model_size       = int(_require(data_sec,        "image_size_px",         "optical_config.yaml [data]"))
-defocus_range_mm = list(_require(data_sec,       "defocus_range_mm",      "optical_config.yaml [data]"))
-training_mode    = _require(training_sec,        "training_mode",         "optical_config.yaml [training]")
-calib_ref_res    = int(training_sec.get("calib_reference_resolution", crop_size))
+
+rho_direct = float(_require(training_sec, "rho_direct", "optical_config.yaml [training]"))
+scale_calib = float(_require(training_sec, "scale_calib_px_per_mm", "optical_config.yaml [training]"))
+sigma_0 = float(training_sec.get("sigma_0", 0.0))
+crop_size = int(_require(training_sec, "crop_size_px", "optical_config.yaml [training]"))
+model_size = int(_require(data_sec, "image_size_px", "optical_config.yaml [data]"))
+defocus_range_mm = list(_require(data_sec, "defocus_range_mm", "optical_config.yaml [data]"))
+training_mode = _require(training_sec, "training_mode", "optical_config.yaml [training]")
+calib_ref_res = int(training_sec.get("calib_reference_resolution", crop_size))
 
 # Verify direct mode
 if training_mode != "direct":
     raise ValueError(f"This script only verifies direct mode. training_mode={training_mode!r}")
 
 # Cross-check rho_direct against calibration YAML
-rho_from_calib   = float(_require(direct_sec, "rho_px_per_mm", "calibration_results.yaml [direct]"))
+rho_from_calib = float(_require(direct_sec, "rho_px_per_mm", "calibration_results.yaml [direct]"))
 scale_from_calib = float(_require(direct_sec, "scale_calib_px_per_mm", "calibration_results.yaml [direct]"))
 
 print(f"\nCalibration ({CALIB_YAML_PATH.name}):")
@@ -143,9 +150,9 @@ crops = []
 with open(SHARP_CROPS_CSV, newline="", encoding="utf-8") as f:
     for row in csv.DictReader(f):
         sc_str = row.get("scale_px_per_mm", "")
-        fn     = row.get("filename", "")
-        cam    = row.get("camera", "?")
-        diam   = row.get("diameter_px", "")
+        fn = row.get("filename", "")
+        cam = row.get("camera", "?")
+        diam = row.get("diameter_px", "")
         if not (sc_str and fn):
             continue
         try:
@@ -169,13 +176,13 @@ print(f"  {len(crops)} crops found on disk (of {sum(1 for _ in open(SHARP_CROPS_
 
 # Auto-select 3 representative crops: lowest scale, median scale, highest scale
 scales_sorted = sorted(crops, key=lambda c: c["scale"])
-low_crop  = scales_sorted[0]
-med_crop  = scales_sorted[len(scales_sorted) // 2]
+low_crop = scales_sorted[0]
+med_crop = scales_sorted[len(scales_sorted) // 2]
 high_crop = scales_sorted[-1]
 
 representative_crops = [
-    ("low_scale",  low_crop),
-    ("med_scale",  med_crop),
+    ("low_scale", low_crop),
+    ("med_scale", med_crop),
     ("high_scale", high_crop),
 ]
 
@@ -240,9 +247,9 @@ for label, c in representative_crops:
         if z > abs(defocus_range_mm[0]) and z > defocus_range_mm[1]:
             continue  # outside training range
 
-        sigma_calib_val   = rho_direct * abs(z)
-        sigma_native_exp  = sigma_calib_val * (sc / scale_calib)
-        sigma_model_exp   = sigma_native_exp * native_to_model
+        sigma_calib_val = rho_direct * abs(z)
+        sigma_native_exp = sigma_calib_val * (sc / scale_calib)
+        sigma_model_exp = sigma_native_exp * native_to_model
 
         # Verify slope is consistent
         slope_check = sigma_model_exp / abs(z)
@@ -310,7 +317,7 @@ for label, c in representative_crops:
         continue
 
     slope_measured = float(np.mean(ratios))
-    rel_err_pct    = 100.0 * abs(slope_measured - slope_expected) / slope_expected
+    rel_err_pct = 100.0 * abs(slope_measured - slope_expected) / slope_expected
     ok = rel_err_pct < REL_ERR_PASS_PCT
 
     slope_results[label] = {"expected": slope_expected, "measured": slope_measured,
@@ -329,7 +336,7 @@ for row in report_rows:
         abs_err = abs(sigma_actual - sigma_expected)
         rel_err = 100.0 * abs_err / sigma_expected if sigma_expected > 0 else float("nan")
         row["sigma_model_actual"] = round(sigma_actual, 6)
-        row["abs_err"]  = round(abs_err, 6)
+        row["abs_err"] = round(abs_err, 6)
         row["rel_err_pct"] = round(rel_err, 4)
 
 # ── Step 6 — Inference inversion sanity check ─────────────────────────────────
@@ -365,15 +372,15 @@ for label, c in representative_crops:
 
         # Inversion (inference_real_crops.py lines 491-492):
         z_hat = sigma_model * crop_size / (rho_eff * model_size)
-        err   = abs(z_hat - z)
-        ok    = err < 1e-9
+        err = abs(z_hat - z)
+        ok = err < 1e-9
         inversion_errors.append(err)
 
         # Update report_rows
         for row in report_rows:
             if row["crop_label"] == label and abs(row["z_mm"] - z) < 1e-9:
-                row["z_reconstructed"]   = round(z_hat, 9)
-                row["inversion_err_mm"]  = round(err, 9)
+                row["z_reconstructed"] = round(z_hat, 9)
+                row["inversion_err_mm"] = round(err, 9)
 
         print(f"  {label:10s} {sc:8.2f} {z:8.3f} {sigma_model:10.4f} "
               f"{z_hat:8.3f} {err:8.2e} {_verdict(ok)}")

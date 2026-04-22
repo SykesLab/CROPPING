@@ -19,7 +19,7 @@ def test_image(image_path: str):
     """Test blur measurement on a single image with verbose output."""
     print(f"\n{'='*60}")
     print(f"Testing: {Path(image_path).name}")
-    print('='*60)
+    print('=' * 60)
 
     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     if img is None:
@@ -67,9 +67,9 @@ def test_directory(image_dir: str, pattern: str = "*.png"):
     # Print summary
     print(f"\n{'='*60}")
     print("SUMMARY")
-    print('='*60)
+    print('=' * 60)
     print(f"{'Image':<30} {'σ (px)':>10} {'Confidence':>12}")
-    print('-'*60)
+    print('-' * 60)
     for name, sigma, conf in results:
         print(f"{name:<30} {sigma:>10.3f} {conf:>12.3f}")
 

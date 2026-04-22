@@ -37,6 +37,7 @@ SIGMA_THRESHOLD_PX = 1.5         # sigma < this (for sigma mode)
 
 class FrameRecord:
     """One row from per_frame_measurements.csv with derived fields."""
+
     def __init__(self, row: dict, sphere_folder: str):
         self.source_filename = row['source_filename']
         self.mechanical_position_mm = float(row['mechanical_position_mm'])

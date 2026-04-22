@@ -283,7 +283,7 @@ def _generate_summary_plot(
         ax1 = axes[0]
         counts = [total_sharp, total_medium, total_blurry]
         labels = [f'Sharp\n({total_sharp})', f'Medium\n({total_medium})',
-                            f'Blurry\n({total_blurry})']
+                  f'Blurry\n({total_blurry})']
         colors = ['#2ecc71', '#f39c12', '#e74c3c']
         ax1.pie(counts, labels=labels, colors=colors, autopct='%1.0f%%', startangle=90)
         ax1.set_title('Focus Classification (ERF sigma, Per-Folder+Camera)')
