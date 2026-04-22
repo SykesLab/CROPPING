@@ -7,7 +7,7 @@ name = "cropping"
 version = "0.1.0"
 description = "Depth-from-defocus measurement pipeline for high-speed shadowgraphy"
 readme = "README.md"
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.10"
 license = {text = "GPL-3.0-or-later"}
 authors = [
     {name = "Justice Ward"},
@@ -51,5 +51,15 @@ include = [
     "Inference.*",
 ]
 
+[project.scripts]
+cropping-preprocess = "Preprocessing.__main__:run_gui"
+cropping-calibrate = "Calibration.__main__:_run"
+cropping-train = "Training.__main__:_run"
+cropping-infer = "Inference.__main__:_run"
+
 [project.urls]
 Repository = "https://github.com/SykesLab/CROPPING"
+
+[tool.pytest.ini_options]
+testpaths = ["Extras/tests"]
+timeout = 10
