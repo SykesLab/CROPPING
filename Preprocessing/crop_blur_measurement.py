@@ -18,6 +18,11 @@ from typing import Optional, Tuple
 import cv2
 import numpy as np
 from scipy.optimize import curve_fit
+
+# ERF fitting constants
+SIGMA_INIT_GUESSES = [0.1, 0.3, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0]
+MIN_CONTRAST = 0.05
+MIN_EDGE_MARGIN_PX = 20
 from scipy.special import erf
 
 
@@ -84,7 +89,7 @@ def _fit_ray(r_valid: np.ndarray, intensities: np.ndarray,
              edge_margin: float) -> Tuple[Optional[np.ndarray], float]:
     """Fit erf to one radial ray. Returns (popt, r_squared) or (None, 0)."""
     r_min, r_max = r_valid.min(), r_valid.max()
-    sigma_inits = [0.1, 0.3, 0.5, 1.0, 2.0, 5.0, 10.0, 20.0, 50.0, 100.0]
+    sigma_inits = SIGMA_INIT_GUESSES
     best_popt, best_r2, best_res = None, -np.inf, np.inf
 
     for s0 in sigma_inits:
@@ -168,12 +173,12 @@ def measure_erf_blur(
     else:
         I_sphere_est, I_bg_est, contrast = 0.0, 1.0, 1.0
 
-    if contrast < 0.05:
+    if contrast < MIN_CONTRAST:
         return None
 
-    # Sharp crops have small sigma — 20 px is plenty and keeps runtime fast.
-    # (Calibration uses 80 px for heavily-defocused z-stacks.)
-    edge_margin = max(20, int(radius * 0.3))
+    # Sharp crops have small sigma — MIN_EDGE_MARGIN_PX is plenty and keeps
+    # runtime fast. (Calibration uses 80 px for heavily-defocused z-stacks.)
+    edge_margin = max(MIN_EDGE_MARGIN_PX, int(radius * 0.3))
 
     sigmas = []
 

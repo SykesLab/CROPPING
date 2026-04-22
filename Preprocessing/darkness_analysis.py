@@ -19,6 +19,10 @@ from config import DARKNESS_THRESHOLD_PERCENTILE, DARKNESS_WEIGHT, N_CANDIDATES
 from geom_analysis import analyze_frame_geometric
 from image_utils import load_frame_gray
 
+# Early stopping constants for frame scanning
+CONSECUTIVE_LOST_THRESHOLD = 3
+MIN_VALID_FRAMES_BEFORE_STOP = 10
+
 
 def get_dark_fraction(cine_obj: Any, idx: int) -> float:
     """
@@ -87,8 +91,6 @@ def choose_best_frame_geometry_only(cine_obj: Any) -> Tuple[int, Dict[str, Any]]
     best_geo: Optional[Dict[str, Any]] = None
 
     # Early stop tracking
-    CONSECUTIVE_LOST_THRESHOLD = 3
-    MIN_VALID_FRAMES_BEFORE_STOP = 10  # Need at least 10 valid frames before allowing early stop
     valid_frame_count = 0
     consecutive_lost = 0
 
