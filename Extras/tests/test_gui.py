@@ -686,12 +686,17 @@ class DiagnosticApp(tk.Tk):
             for i, diag in enumerate(DIAGNOSTICS):
                 self.after(0, self.var_status.set,
                            f"Running {i + 1}/{len(DIAGNOSTICS)}: {diag['name']}...")
+                self.after(0, self._set_tree_status, diag["id"], "...")
                 try:
                     fig, summary = diag["func"]()
                     self._all_results[diag["id"]] = (fig, summary)
+                    passed = "FAIL" not in summary
+                    self.after(0, self._set_tree_status, diag["id"],
+                               "PASS" if passed else "FAIL")
                 except Exception as e:
                     import traceback
                     self._all_results[diag["id"]] = (None, f"ERROR: {e}\n{traceback.format_exc()}")
+                    self.after(0, self._set_tree_status, diag["id"], "FAIL")
 
             self.after(0, self._on_run_all_done)
 
