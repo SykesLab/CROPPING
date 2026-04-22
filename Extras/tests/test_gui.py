@@ -712,6 +712,23 @@ class DiagnosticApp(tk.Tk):
             self.tree.selection_set(first_id)
             self._on_select(None)
 
+    def _set_tree_status(self, diag_id: str, status: str):
+        """Update the status column for a diagnostic in the tree."""
+        diag = next(d for d in DIAGNOSTICS if d["id"] == diag_id)
+        self.tree.item(diag_id, values=(status, diag["name"]))
+        # Colour the row via tags
+        if status == "PASS":
+            self.tree.item(diag_id, tags=("pass",))
+        elif status == "FAIL":
+            self.tree.item(diag_id, tags=("fail",))
+        elif status == "...":
+            self.tree.item(diag_id, tags=("running",))
+        else:
+            self.tree.item(diag_id, tags=())
+        self.tree.tag_configure("pass", foreground="#2d8a2d")
+        self.tree.tag_configure("fail", foreground="#cc3333")
+        self.tree.tag_configure("running", foreground="#888888")
+
     def _run_diagnostic(self, diag: Dict):
         if self._running:
             return
@@ -720,14 +737,22 @@ class DiagnosticApp(tk.Tk):
         self.var_status.set(f"Running: {diag['name']}...")
         self.var_name.set(diag["name"])
         self.var_desc.set(diag["description"])
+        self._set_tree_status(diag["id"], "...")
 
         def worker():
             try:
                 fig, summary = diag["func"]()
+                self._all_results[diag["id"]] = (fig, summary)
+                passed = "FAIL" not in summary
+                self.after(0, self._set_tree_status, diag["id"],
+                           "PASS" if passed else "FAIL")
                 self.after(0, self._show_result, fig, summary)
             except Exception as e:
                 import traceback
-                self.after(0, self._show_error, f"{e}\n\n{traceback.format_exc()}")
+                err_msg = f"{e}\n\n{traceback.format_exc()}"
+                self._all_results[diag["id"]] = (None, err_msg)
+                self.after(0, self._set_tree_status, diag["id"], "FAIL")
+                self.after(0, self._show_error, err_msg)
             finally:
                 self.after(0, self._on_diag_done)
 
