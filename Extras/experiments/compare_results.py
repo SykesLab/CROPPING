@@ -24,6 +24,16 @@ from typing import Optional, Dict, Tuple
 import warnings
 warnings.filterwarnings('ignore')
 
+N_BINS = 4  # consistent with training/test binning
+
+
+def _equal_bins(values: np.ndarray, n: int = N_BINS):
+    """Compute n equal-width bins from the data range. Returns (edges, labels)."""
+    lo, hi = float(np.nanmin(values)), float(np.nanmax(values))
+    edges = np.linspace(lo, hi, n + 1).tolist()
+    labels = [f"{edges[i]:.1f}-{edges[i+1]:.1f}" for i in range(n)]
+    return edges, labels
+
 
 def _blur_term(df: pd.DataFrame) -> str:
     """Return display term based on columns: 'σ' for direct mode, 'CoC' for optical."""
@@ -120,10 +130,10 @@ def compute_metrics(merged: pd.DataFrame) -> Dict:
         'defocus_correlation': merged['defocus_mm_gt'].corr(merged['defocus_mm_pred']),
     }
 
-    # Binned metrics (accuracy at different blur levels)
-    bins = [0, 2, 5, 10, 15, 20, float('inf')]
-    bin_labels = ['0-2', '2-5', '5-10', '10-15', '15-20', '20+']
-    merged['blur_bin'] = pd.cut(merged['blur_px_gt'], bins=bins, labels=bin_labels)
+    # Binned metrics (accuracy at different blur levels, derived from data range)
+    blur_edges, blur_labels = _equal_bins(merged['blur_px_gt'].values)
+    merged['blur_bin'] = pd.cut(merged['blur_px_gt'], bins=blur_edges, labels=blur_labels,
+                                include_lowest=True)
 
     binned_mae = merged.groupby('blur_bin')['blur_abs_error_px'].mean()
     binned_count = merged.groupby('blur_bin').size()
@@ -165,10 +175,10 @@ def compute_per_slice_metrics(merged: pd.DataFrame) -> Dict:
 
     # --- By defocus magnitude ---
     if 'defocus_mm_gt' in merged.columns:
-        defocus_bins = [0, 1, 2, 4, 6, float('inf')]
-        defocus_labels = ['0-1', '1-2', '2-4', '4-6', '6+']
+        defocus_edges, defocus_labels = _equal_bins(merged['defocus_mm_gt'].values)
         merged['defocus_bin'] = pd.cut(
-            merged['defocus_mm_gt'], bins=defocus_bins, labels=defocus_labels
+            merged['defocus_mm_gt'], bins=defocus_edges, labels=defocus_labels,
+            include_lowest=True,
         )
         defocus_groups = {}
         for name, group in merged.groupby('defocus_bin', observed=True):
@@ -185,17 +195,19 @@ def compute_per_slice_metrics(merged: pd.DataFrame) -> Dict:
 
     # --- Near-focus vs far-from-focus ---
     if 'defocus_mm_gt' in merged.columns:
-        near = merged[merged['defocus_mm_gt'] <= 2.0]
-        far = merged[merged['defocus_mm_gt'] > 2.0]
+        # Split at median defocus — adapts to whatever range is in the data
+        median_z = float(merged['defocus_mm_gt'].median())
+        near = merged[merged['defocus_mm_gt'] <= median_z]
+        far = merged[merged['defocus_mm_gt'] > median_z]
         focus_groups = {}
         if len(near) >= 3:
-            focus_groups['near (<=2mm)'] = {
+            focus_groups[f'near (<={median_z:.1f}mm)'] = {
                 'n': len(near),
                 'blur_mae_px': float(near['blur_abs_error_px'].mean()),
                 'defocus_mae_mm': float(near['defocus_abs_error_mm'].mean()),
             }
         if len(far) >= 3:
-            focus_groups['far (>2mm)'] = {
+            focus_groups[f'far (>{median_z:.1f}mm)'] = {
                 'n': len(far),
                 'blur_mae_px': float(far['blur_abs_error_px'].mean()),
                 'defocus_mae_mm': float(far['defocus_abs_error_mm'].mean()),
@@ -207,11 +219,11 @@ def compute_per_slice_metrics(merged: pd.DataFrame) -> Dict:
     if 'diameter_px' in merged.columns:
         valid = merged[merged['diameter_px'] > 0]
         if len(valid) >= 10:
-            size_bins = [0, 40, 80, 120, float('inf')]
-            size_labels = ['<40px', '40-80px', '80-120px', '120+px']
             valid_copy = valid.copy()
+            size_edges, size_labels = _equal_bins(valid_copy['diameter_px'].values)
             valid_copy['size_bin'] = pd.cut(
-                valid_copy['diameter_px'], bins=size_bins, labels=size_labels
+                valid_copy['diameter_px'], bins=size_edges, labels=size_labels,
+                include_lowest=True,
             )
             size_groups = {}
             for name, group in valid_copy.groupby('size_bin', observed=True):

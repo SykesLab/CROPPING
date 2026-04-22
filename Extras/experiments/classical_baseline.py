@@ -33,6 +33,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+MIN_BLUR_NONZERO = 0.1  # px — threshold for MAPE denominator
+
 # Add preprocessing to path for focus_metrics
 _REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 for _p in (_REPO_ROOT / "Preprocessing", _REPO_ROOT / "Training"):
@@ -153,7 +155,7 @@ def evaluate_method(
     abs_errors = np.abs(errors)
 
     # Avoid div-by-zero for MAPE
-    nonzero = blur_gt > 0.1
+    nonzero = blur_gt > MIN_BLUR_NONZERO
     mape = np.mean(np.abs(errors[nonzero]) / blur_gt[nonzero]) * 100 if nonzero.sum() > 5 else float("nan")
 
     corr = np.corrcoef(blur_gt, blur_pred)[0, 1] if len(blur_gt) > 2 else 0.0
