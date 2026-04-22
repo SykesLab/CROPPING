@@ -91,7 +91,8 @@ def diag_calibration_fit(inputs: Dict) -> Tuple[Figure, str]:
     # Panel 1: reconstructed calibration curve
     z_range = np.linspace(0, 8, 100)
     sigma_fit = rho * z_range + sigma_0
-    axes[0].plot(z_range, sigma_fit, "r-", linewidth=2, label=f"rho={rho:.4f}, sigma_0={sigma_0:.3f}")
+    axes[0].plot(z_range, sigma_fit, "r-", linewidth=2,
+        label=f"rho={rho:.4f}, sigma_0={sigma_0:.3f}")
     axes[0].set_xlabel("Defocus |z| (mm)")
     axes[0].set_ylabel("Blur sigma (px)")
     axes[0].set_title("Calibration Model")
@@ -136,8 +137,8 @@ def diag_calibration_fit(inputs: Dict) -> Tuple[Figure, str]:
         axes[2].set_title("LOO-CV Stability")
         axes[2].grid(axis="y", alpha=0.3)
     else:
-        axes[2].text(0.5, 0.5, "No LOO-CV data\nin calibration YAML",
-                     ha="center", va="center", fontsize=12, color="gray", transform=axes[2].transAxes)
+        axes[2].text(0.5, 0.5, "No LOO-CV data\nin calibration YAML", ha="center",
+                     va="center", fontsize=12, color="gray", transform=axes[2].transAxes)
         axes[2].set_title("LOO-CV Stability")
 
     fig.tight_layout()
@@ -252,9 +253,10 @@ def diag_config_consistency(inputs: Dict) -> Tuple[Figure, str]:
     rows = []
     all_match = True
     for key, (yaml_val, ckpt_val) in comparisons.items():
-        match = yaml_val == ckpt_val or (yaml_val is not None and ckpt_val is not None
-                                         and abs(float(yaml_val) - float(ckpt_val)) < 1e-6
-                                         if isinstance(yaml_val, (int, float)) else yaml_val == ckpt_val)
+        match = yaml_val ==ckpt_val or(
+            yaml_val is not None and ckpt_val is not None and abs(
+                float(yaml_val) -float(ckpt_val)) <1e-6
+            if isinstance(yaml_val, (int, float)) else yaml_val ==ckpt_val)
         if not match and yaml_val is not None and ckpt_val is not None:
             all_match = False
         status = "match" if match or yaml_val is None or ckpt_val is None else "MISMATCH"
@@ -496,7 +498,8 @@ def diag_checkpoint_sanity(inputs: Dict) -> Tuple[Figure, str]:
     axes[1].hist(all_weights, bins=100, color="steelblue", edgecolor="none", alpha=0.7)
     axes[1].set_xlabel("Weight value")
     axes[1].set_ylabel("Count")
-    axes[1].set_title(f"Weight Distribution ({sum(p.numel() for p in model.parameters()):,} params)")
+    axes[1].set_title(
+        f"Weight Distribution ({sum(p.numel() for p in model.parameters()):,} params)")
     axes[1].grid(axis="y", alpha=0.3)
 
     # Panel 3: response to varying intensity
@@ -1034,7 +1037,8 @@ class DiagnosticApp(tk.Tk):
             ttk.Label(paths_frame, text=label, width=18).grid(row=i, column=0, sticky="w", pady=1)
             var = tk.StringVar()
             self._path_vars[key] = var
-            ttk.Entry(paths_frame, textvariable=var, width=65).grid(row=i, column=1, sticky="ew", padx=4)
+            ttk.Entry(paths_frame, textvariable=var, width=65).grid(
+                row=i, column=1, sticky="ew", padx=4)
             cmd = (lambda k=key, kd=kind: self._browse(k, kd))
             ttk.Button(paths_frame, text="Browse", command=cmd).grid(row=i, column=2, padx=2)
             var.trace_add("write", lambda *_, k=key: self._on_path_change(k))
@@ -1217,7 +1221,8 @@ class DiagnosticApp(tk.Tk):
 
         missing = [r for r in diag["requires"] if r not in self._inputs]
         if missing:
-            self._show_error(f"Missing inputs: {', '.join(missing)}\nLoad them in Data Paths above.")
+            self._show_error(
+                f"Missing inputs: {', '.join(missing)}\nLoad them in Data Paths above.")
             return
 
         self._run_single(diag)
