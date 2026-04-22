@@ -8,7 +8,6 @@ Usage:
 """
 
 import torch
-import torch.nn.functional as F
 from torch.utils.data import Dataset, DataLoader
 import numpy as np
 import cv2
@@ -191,143 +190,8 @@ class ModelTester:
         self.bin_weights = self._calculate_bin_weights_from_beta()
 
     def _calculate_bin_weights_from_beta(self) -> list:
-        """Calculate bin weights from beta distribution parameters in config.
-
-        Returns:
-            List of 4 weights that sum to 1.0
-        """
-        data_cfg = self.config.get('data', {})
-        blur_distribution = data_cfg.get('blur_distribution', data_cfg.get('coc_distribution'))
-        beta_alpha = data_cfg.get('beta_alpha')
-        beta_beta = data_cfg.get('beta_beta')
-
-        # If no distribution type specified, infer from presence of beta parameters
-        if blur_distribution is None:
-            if beta_alpha is not None and beta_beta is not None:
-                blur_distribution = 'weighted'
-            else:
-                # No distribution type and no beta params -> assume uniform
-                print("ℹ️  No distribution type or beta parameters found in config")
-                print("   Defaulting to uniform distribution: equal bin weights [0.25, 0.25, 0.25, 0.25]")
-                return [0.25, 0.25, 0.25, 0.25]
-
-        # If uniform distribution, use equal weights
-        if blur_distribution == 'uniform':
-            print("ℹ️  Using uniform distribution: equal bin weights [0.25, 0.25, 0.25, 0.25]")
-            return [0.25, 0.25, 0.25, 0.25]
-
-        # For weighted distribution, calculate from beta parameters
-        if beta_alpha is None or beta_beta is None:
-            print("⚠️  WARNING: Weighted distribution specified but beta parameters not found!")
-            print("   Falling back to uniform weights [0.25, 0.25, 0.25, 0.25]")
-            print("   To fix: Re-generate data with 'weighted' distribution and beta parameters")
-            return [0.25, 0.25, 0.25, 0.25]
-
-        try:
-            from scipy import stats
-
-            # Sample from beta distribution
-            num_samples = 100000
-            beta_samples = stats.beta.rvs(beta_alpha, beta_beta, size=num_samples)
-
-            # Calculate distribution across 4 equal-width bins
-            bin_edges = [0.0, 0.25, 0.5, 0.75, 1.0]
-            weights = []
-
-            for i in range(4):
-                count = np.sum((beta_samples >= bin_edges[i]) & (beta_samples < bin_edges[i+1]))
-                weight = count / num_samples
-                weights.append(weight)
-
-            # Normalize
-            total = sum(weights)
-            weights = [w / total for w in weights]
-
-            print(f"ℹ️  Calculated bin weights from β({beta_alpha:.3f}, {beta_beta:.3f}): " +
-                  '-'.join([f"{int(w*100)}" for w in weights]) + "%")
-
-            return weights
-
-        except ImportError:
-            print("⚠️  WARNING: scipy not available, using default weights [0.40, 0.30, 0.20, 0.10]")
-            return [0.40, 0.30, 0.20, 0.10]
-        except Exception as e:
-            print(f"⚠️  WARNING: Error calculating bin weights: {e}")
-            return [0.40, 0.30, 0.20, 0.10]
-
-    def _grad_mag(self, img: torch.Tensor) -> torch.Tensor:
-        """Sobel gradient magnitude (used as an edge-preservation proxy)."""
-        # Accept [H,W], [C,H,W], or [B,C,H,W]
-        if img.dim() == 2:
-            img = img.unsqueeze(0).unsqueeze(0)
-        elif img.dim() == 3:
-            img = img.unsqueeze(0)
-
-        # Convert to single-channel for gradient computation
-        if img.size(1) > 1:
-            x = img.mean(dim=1, keepdim=True)
-        else:
-            x = img
-
-        device, dtype = x.device, x.dtype
-        kx = torch.tensor([[-1, 0, 1],
-                           [-2, 0, 2],
-                           [-1, 0, 1]], device=device, dtype=dtype).view(1, 1, 3, 3)
-        ky = torch.tensor([[-1, -2, -1],
-                           [ 0,  0,  0],
-                           [ 1,  2,  1]], device=device, dtype=dtype).view(1, 1, 3, 3)
-
-        gx = F.conv2d(x, kx, padding=1)
-        gy = F.conv2d(x, ky, padding=1)
-        return torch.sqrt(gx * gx + gy * gy + 1e-12)
-
-
-    def load_sample(
-        self,
-        sample_path: Path,
-        data_dir: Path
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, float]:
-        """
-        Load a single test sample.
-
-        Returns:
-            (blur_tensor, blur_map_tensor, sharp_tensor, blur_value_px)
-        """
-        stem = sample_path.stem
-
-        # Load images
-        blur = cv2.imread(str(sample_path), cv2.IMREAD_GRAYSCALE)
-        bm_dir = data_dir / 'blur_map' if (data_dir / 'blur_map').exists() else data_dir / 'coc_map'
-        blur_map = cv2.imread(str(bm_dir / f'{stem}.png'), cv2.IMREAD_GRAYSCALE)
-        sharp = cv2.imread(str(data_dir / 'sharp' / f'{stem}.png'), cv2.IMREAD_GRAYSCALE)
-
-        if blur is None or blur_map is None or sharp is None:
-            raise ValueError(f"Failed to load sample {stem}")
-
-        # Convert to float [0, 1]
-        blur = blur.astype(np.float32) / 255.0
-        blur_map_img = blur_map.astype(np.float32) / 255.0
-        sharp = sharp.astype(np.float32) / 255.0
-
-        # Get blur value from metadata
-        metadata_path = data_dir / 'metadata.csv'
-        if metadata_path.exists():
-            df = pd.read_csv(metadata_path, index_col='index', dtype={'index': str})
-            blur_col = 'sigma_px' if 'sigma_px' in df.columns else 'coc_px'
-            blur_value = df.loc[stem, blur_col]
-        else:
-            blur_value = blur_map_img.mean() * self.max_blur
-
-        # Normalize images to [-1, 1], blur maps stay [0, 1]
-        blur = blur * 2.0 - 1.0
-        sharp = sharp * 2.0 - 1.0
-
-        # Convert to tensors
-        blur_tensor = torch.from_numpy(blur).unsqueeze(0).unsqueeze(0).to(self.device)
-        blur_map_tensor = torch.from_numpy(blur_map_img).unsqueeze(0).unsqueeze(0).to(self.device)
-        sharp_tensor = torch.from_numpy(sharp).unsqueeze(0).unsqueeze(0).to(self.device)
-
-        return blur_tensor, blur_map_tensor, sharp_tensor, blur_value
+        from utils import calculate_bin_weights_from_beta
+        return calculate_bin_weights_from_beta(self.config)
 
     def denormalize_blur(self, blur_normalized) -> float:
         """Convert normalized blur [0, 1] to pixels. Delegates to physics module."""

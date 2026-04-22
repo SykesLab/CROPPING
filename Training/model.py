@@ -90,9 +90,6 @@ class DefocusNet(nn.Module):
     def forward(self, blur: torch.Tensor) -> torch.Tensor:
         return self.dme_subnet(blur)
 
-    def estimate_defocus(self, blur: torch.Tensor) -> torch.Tensor:
-        return self.dme_subnet(blur)
-
     @classmethod
     def from_config(cls, config: Dict[str, Any]) -> 'DefocusNet':
         net_config = config.get('network', {})
