@@ -506,6 +506,232 @@ def diag_uncertainty() -> tuple:
     return fig, summary
 
 
+def diag_compare_results() -> tuple:
+    """Compare model predictions against ground truth from synthetic data."""
+    from tkinter import filedialog
+
+    metadata_path = filedialog.askopenfilename(
+        title="Select metadata.csv (ground truth)",
+        filetypes=[("CSV files", "*.csv")],
+    )
+    if not metadata_path:
+        return _placeholder_fig("No metadata.csv selected"), "Cancelled by user"
+
+    inference_path = filedialog.askopenfilename(
+        title="Select blur_results.csv (model predictions)",
+        filetypes=[("CSV files", "*.csv")],
+    )
+    if not inference_path:
+        return _placeholder_fig("No inference CSV selected"), "Cancelled by user"
+
+    import pandas as pd
+    metadata_path = Path(metadata_path)
+    inference_path = Path(inference_path)
+
+    # Load ground truth
+    gt_df = pd.read_csv(metadata_path)
+    gt_df["index"] = gt_df["index"].astype(str).str.zfill(6)
+    gt_df = gt_df.set_index("index")
+    blur_col = "sigma_px" if "sigma_px" in gt_df.columns else "coc_px"
+    blur_term = "sigma" if blur_col == "sigma_px" else "CoC"
+
+    # Load predictions
+    pred_df = pd.read_csv(inference_path)
+    pred_df["index"] = pred_df["filename"].str.replace(".png", "", regex=False).str.zfill(6)
+    pred_df = pred_df.set_index("index")
+
+    # Merge
+    merged = gt_df.join(pred_df, lsuffix="_gt", rsuffix="_pred", how="inner")
+    merged["blur_gt"] = merged[f"{blur_col}_gt"]
+    merged["blur_pred"] = merged[f"{blur_col}_pred"]
+    merged["error"] = merged["blur_pred"] - merged["blur_gt"]
+    merged["abs_error"] = merged["error"].abs()
+
+    mae = merged["abs_error"].mean()
+    rmse = np.sqrt((merged["error"] ** 2).mean())
+    bias = merged["error"].mean()
+    corr = merged["blur_gt"].corr(merged["blur_pred"])
+
+    fig, axes = plt.subplots(1, 3, figsize=(14, 4))
+
+    # Panel 1: scatter
+    max_val = max(merged["blur_gt"].max(), merged["blur_pred"].max()) * 1.05
+    axes[0].scatter(merged["blur_gt"], merged["blur_pred"], s=10, alpha=0.4, c="steelblue")
+    axes[0].plot([0, max_val], [0, max_val], "r--", linewidth=1.5)
+    axes[0].set_xlabel(f"GT {blur_term} (px)")
+    axes[0].set_ylabel(f"Predicted {blur_term} (px)")
+    axes[0].set_title(f"Predicted vs GT (R²={corr**2:.4f})")
+    axes[0].set_xlim(0, max_val)
+    axes[0].set_ylim(0, max_val)
+    axes[0].set_aspect("equal", adjustable="box")
+    axes[0].grid(True, alpha=0.3)
+
+    # Panel 2: error histogram
+    axes[1].hist(merged["error"], bins=40, color="steelblue", edgecolor="black", alpha=0.7)
+    axes[1].axvline(0, color="red", linewidth=1.5, linestyle="--")
+    axes[1].axvline(bias, color="orange", linewidth=1.5, label=f"Bias: {bias:+.3f}")
+    axes[1].set_xlabel("Error (px)")
+    axes[1].set_ylabel("Count")
+    axes[1].set_title(f"Error Distribution (MAE={mae:.3f})")
+    axes[1].legend(fontsize=8)
+    axes[1].grid(axis="y", alpha=0.3)
+
+    # Panel 3: error vs GT blur
+    axes[2].scatter(merged["blur_gt"], merged["error"], s=10, alpha=0.4, c="steelblue")
+    axes[2].axhline(0, color="red", linewidth=1, linestyle="--")
+    axes[2].set_xlabel(f"GT {blur_term} (px)")
+    axes[2].set_ylabel("Error (px)")
+    axes[2].set_title("Error vs Blur Level")
+    axes[2].grid(True, alpha=0.3)
+
+    fig.tight_layout()
+
+    defocus_mae = ""
+    if "defocus_mm_gt" in merged.columns and "defocus_mm_pred" in merged.columns:
+        d_mae = (merged["defocus_mm_pred"] - merged["defocus_mm_gt"]).abs().mean()
+        defocus_mae = f"\n  Defocus MAE: {d_mae:.4f} mm"
+
+    summary = (
+        f"Model vs Ground Truth ({len(merged)} samples)\n"
+        f"  MAE:  {mae:.4f} px\n"
+        f"  RMSE: {rmse:.4f} px\n"
+        f"  Bias: {bias:+.4f} px\n"
+        f"  R²:   {corr**2:.4f}"
+        f"{defocus_mae}\n"
+        f"  {'PASS' if mae < 2.0 else 'FAIL'}: MAE {'<' if mae < 2.0 else '>'} 2.0 px"
+    )
+    return fig, summary
+
+
+def diag_classical_baseline() -> tuple:
+    """Compare classical focus metrics against CNN on synthetic data."""
+    from tkinter import filedialog
+
+    data_dir = filedialog.askdirectory(
+        title="Select synthetic data folder (contains metadata.csv + blur/)",
+    )
+    if not data_dir:
+        return _placeholder_fig("No data folder selected"), "Cancelled by user"
+
+    data_dir = Path(data_dir)
+    metadata_path = data_dir / "metadata.csv"
+    blur_dir = data_dir / "blur"
+
+    if not metadata_path.exists() or not blur_dir.is_dir():
+        return _placeholder_fig("Invalid folder — need metadata.csv + blur/"), \
+               f"FAIL: {data_dir} missing metadata.csv or blur/ subfolder"
+
+    import pandas as pd
+    import cv2
+    from focus_metrics import compute_all_focus_metrics
+
+    # Load metadata
+    df = pd.read_csv(metadata_path)
+    df["index"] = df["index"].astype(str).str.zfill(6)
+    df = df.set_index("index")
+    blur_col = "sigma_px" if "sigma_px" in df.columns else "coc_px"
+
+    # Compute classical metrics on a sample (cap at 500 for speed)
+    sample = df.head(500)
+    metric_names = ["laplacian_var", "tenengrad", "tenengrad_var",
+                    "brenner", "norm_laplacian", "energy_gradient"]
+    scores = {m: [] for m in metric_names}
+    valid_idx = []
+
+    for idx in sample.index:
+        img_path = blur_dir / f"{idx}.png"
+        if not img_path.exists():
+            continue
+        gray = cv2.imread(str(img_path), cv2.IMREAD_GRAYSCALE)
+        if gray is None:
+            continue
+        metrics = compute_all_focus_metrics(gray)
+        for m in metric_names:
+            scores[m].append(metrics[m])
+        valid_idx.append(idx)
+
+    if len(valid_idx) < 20:
+        return _placeholder_fig(f"Only {len(valid_idx)} valid crops found"), \
+               f"FAIL: need at least 20 crops, found {len(valid_idx)}"
+
+    blur_gt = sample.loc[valid_idx, blur_col].values
+
+    # Split-half calibration for each metric
+    np.random.seed(42)
+    indices = np.random.permutation(len(valid_idx))
+    split = len(indices) // 2
+    cal_idx, test_idx = indices[:split], indices[split:]
+
+    results = {}
+    for m in metric_names:
+        s = np.array(scores[m])
+        log_s = np.log(s + 1)
+
+        # Calibrate on first half
+        A = np.vstack([log_s[cal_idx], np.ones(len(cal_idx))]).T
+        params, _, _, _ = np.linalg.lstsq(A, blur_gt[cal_idx], rcond=None)
+        a, b = params
+
+        # Predict on test half
+        pred = a * log_s[test_idx] + b
+        gt = blur_gt[test_idx]
+        mae = np.mean(np.abs(pred - gt))
+        corr = np.corrcoef(gt, pred)[0, 1] if len(gt) > 2 else 0
+        results[m] = {"mae": mae, "r2": corr ** 2, "pred": pred, "gt": gt}
+
+    # Plot
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+
+    # Panel 1: MAE bar chart
+    names = list(results.keys())
+    maes = [results[m]["mae"] for m in names]
+    colours = ["steelblue"] * len(names)
+    best_idx = np.argmin(maes)
+    colours[best_idx] = "#2d8a2d"
+
+    bars = axes[0].bar(range(len(names)), maes, color=colours, edgecolor="black", alpha=0.8)
+    axes[0].set_xticks(range(len(names)))
+    axes[0].set_xticklabels(names, rotation=35, ha="right", fontsize=8)
+    axes[0].set_ylabel("MAE (px)")
+    axes[0].set_title("Classical Focus Metrics: Blur Estimation MAE")
+    axes[0].grid(axis="y", alpha=0.3)
+    for bar, mae_val in zip(bars, maes):
+        axes[0].text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.05,
+                     f"{mae_val:.2f}", ha="center", va="bottom", fontsize=8)
+
+    # Panel 2: best metric scatter
+    best_name = names[best_idx]
+    best = results[best_name]
+    axes[1].scatter(best["gt"], best["pred"], s=10, alpha=0.4, c="steelblue")
+    max_val = max(best["gt"].max(), best["pred"].max()) * 1.05
+    axes[1].plot([0, max_val], [0, max_val], "r--", linewidth=1)
+    axes[1].set_xlabel("GT blur (px)")
+    axes[1].set_ylabel("Predicted blur (px)")
+    axes[1].set_title(f"Best: {best_name} (R²={best['r2']:.3f}, MAE={best['mae']:.2f})")
+    axes[1].set_xlim(0, max_val)
+    axes[1].set_ylim(0, max_val)
+    axes[1].set_aspect("equal", adjustable="box")
+    axes[1].grid(True, alpha=0.3)
+
+    fig.tight_layout()
+
+    lines = [f"Classical Baseline ({len(valid_idx)} crops, split-half eval)"]
+    for m in names:
+        r = results[m]
+        marker = " <-- BEST" if m == best_name else ""
+        lines.append(f"  {m:<20s} MAE={r['mae']:.3f} px  R²={r['r2']:.4f}{marker}")
+
+    return fig, "\n".join(lines)
+
+
+def _placeholder_fig(msg: str):
+    """Create a blank figure with a message."""
+    fig, ax = plt.subplots(figsize=(8, 4))
+    ax.text(0.5, 0.5, msg, ha="center", va="center", fontsize=14, color="gray")
+    ax.axis("off")
+    return fig
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Diagnostic registry
 # ═══════════════════════════════════════════════════════════════════════════
@@ -560,6 +786,22 @@ DIAGNOSTICS: List[Dict[str, Any]] = [
         "func": diag_uncertainty,
         "description": "Propagates LOO-CV calibration uncertainty through the inverse chain. "
                        "Shows confidence bands, absolute and relative uncertainty vs defocus.",
+    },
+    {
+        "id": "compare_results",
+        "name": "Model vs Ground Truth",
+        "func": diag_compare_results,
+        "description": "Compares model predictions against ground truth from synthetic data. "
+                       "Prompts for metadata.csv and blur_results.csv, then shows scatter, "
+                       "error histogram, and error vs blur level.",
+    },
+    {
+        "id": "classical_baseline",
+        "name": "Classical Baseline",
+        "func": diag_classical_baseline,
+        "description": "Runs 6 classical focus metrics (Laplacian, Tenengrad, Brenner, etc.) "
+                       "on synthetic crops and compares blur estimation accuracy. "
+                       "Prompts for the synthetic data folder.",
     },
 ]
 
