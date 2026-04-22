@@ -1729,7 +1729,8 @@ This gives the model examples with known ground truth to learn from."""
                     _sys.path.insert(0, _calib_dir)
                 from cine_loader import check_pyphantom as _cpq
             _pa, _ = _cpq()
-        except Exception:
+        except Exception as e:
+            logging.debug(f"pyphantom check failed: {e}")
             _pa = False
         ttk.Label(src_type_row, text=f"({'✓' if _pa else '⚠'} pyphantom)",
                   font=('TkDefaultFont', 8), foreground='green' if _pa else 'orange').pack(side='left', padx=10)
