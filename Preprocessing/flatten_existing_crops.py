@@ -76,31 +76,7 @@ def flatten_and_measure_crop(
     return True, sigma, None
 
 
-def classify_by_erf_sigma(
-    erf_sigmas: np.ndarray,
-    sharp_percentile: float = 25.0,
-    blur_percentile: float = 75.0,
-) -> Tuple[np.ndarray, float, float]:
-    """Classify focus using ERF sigma. Lower sigma = sharper."""
-    valid = erf_sigmas[~np.isnan(erf_sigmas)]
-    if len(valid) < 4:
-        return np.full(len(erf_sigmas), None, dtype=object), 0.0, 0.0
-
-    sharp_thresh = float(np.percentile(valid, sharp_percentile))
-    blur_thresh = float(np.percentile(valid, blur_percentile))
-
-    classifications = []
-    for sigma in erf_sigmas:
-        if np.isnan(sigma):
-            classifications.append(None)
-        elif sigma <= sharp_thresh:
-            classifications.append("sharp")
-        elif sigma >= blur_thresh:
-            classifications.append("blurry")
-        else:
-            classifications.append("medium")
-
-    return np.array(classifications, dtype=object), sharp_thresh, blur_thresh
+from focus_classification import classify_by_erf_sigma
 
 
 def main():
