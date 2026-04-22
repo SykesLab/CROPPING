@@ -1,6 +1,6 @@
 [build-system]
 requires = ["setuptools>=64", "wheel"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
 
 [project]
 name = "cropping"
@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "Depth-from-defocus measurement pipeline for high-speed shadowgraphy"
 readme = "README.md"
 requires-python = ">=3.10,<3.13"
-license = {text = "MIT"}
+license = {text = "GPL-3.0-or-later"}
 authors = [
     {name = "Justice Ward"},
 ]
@@ -40,7 +40,16 @@ all = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["Preprocessing*", "Calibration*", "Training*", "Inference*"]
+include = [
+    "Preprocessing",
+    "Preprocessing.*",
+    "Calibration",
+    "Calibration.*",
+    "Training",
+    "Training.*",
+    "Inference",
+    "Inference.*",
+]
 
 [project.urls]
 Repository = "https://github.com/SykesLab/CROPPING"
