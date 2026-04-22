@@ -184,8 +184,8 @@ def main():
                 meta_df['_match_filename'] = meta_df['crop_path'].apply(
                     lambda p: Path(str(p)).name if pd.notna(p) else "")
                 existing_meta.append(meta_df)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.warning(f"Failed to load metadata CSV: {e}")
 
     if existing_meta:
         meta_combined = pd.concat(existing_meta, ignore_index=True)

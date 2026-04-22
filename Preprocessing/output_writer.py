@@ -97,8 +97,8 @@ def _notify_image_saved(path: Path) -> None:
     if _on_image_saved is not None:
         try:
             _on_image_saved(path)
-        except Exception:
-            pass  # Don't let GUI errors stop processing
+        except Exception as e:
+            logging.debug(f"GUI callback error: {e}")
 
 
 def _reload_frame_and_mask(
