@@ -26,7 +26,6 @@ Output structure:
 
 import logging
 import torch
-import torch.nn as nn
 import cv2
 import numpy as np
 import yaml
@@ -237,37 +236,35 @@ class RealCropInference:
 
         self.model.eval()
 
-        # Optical parameters for blur → defocus distance conversion
-        # If inference_optical_params provided, create custom BlurParams for the inference camera
-        if self.inference_optical_params:
-            # Start with training config, override with inference params
-            optics_cfg = self.config.get('optics', {}).copy()
-            for key in ['pixel_size_mm', 'focal_length_mm', 'aperture_diameter_mm', 'focus_distance_mm']:
-                if key in self.inference_optical_params:
-                    optics_cfg[key] = self.inference_optical_params[key]
+        # Optical parameters for blur → defocus distance conversion (optical mode only)
+        self.blur_calc = None
+        if self.training_mode == 'optical':
+            if self.inference_optical_params:
+                optics_cfg = self.config.get('optics', {}).copy()
+                for key in ['pixel_size_mm', 'focal_length_mm', 'aperture_diameter_mm', 'focus_distance_mm']:
+                    if key in self.inference_optical_params:
+                        optics_cfg[key] = self.inference_optical_params[key]
 
-            # Get rho from blur config (camera-independent)
-            blur_cfg = self.config.get('blur', {})
-            rho = blur_cfg.get('rho', 0.25)
+                blur_cfg = self.config.get('blur', {})
+                rho = blur_cfg.get('rho', 0.25)
 
-            # Calculate imaging distance from thin lens equation: 1/F = 1/u₀ + 1/d₀
-            focal_length = optics_cfg.get('focal_length_mm', 70.0)
-            focus_distance = optics_cfg.get('focus_distance_mm', 200.0)
-            imaging_distance = optics_cfg.get('imaging_distance_mm',
-                                              1.0 / (1.0/focal_length - 1.0/focus_distance) if focus_distance != focal_length else 200.0)
+                focal_length = optics_cfg.get('focal_length_mm', 70.0)
+                focus_distance = optics_cfg.get('focus_distance_mm', 200.0)
+                imaging_distance = optics_cfg.get('imaging_distance_mm',
+                                                  1.0 / (1.0/focal_length - 1.0/focus_distance) if focus_distance != focal_length else 200.0)
 
-            self.optical_params = BlurParams(
-                focal_length_mm=focal_length,
-                focus_distance_mm=focus_distance,
-                imaging_distance_mm=imaging_distance,
-                aperture_diameter_mm=optics_cfg.get('aperture_diameter_mm', 17.5),
-                pixel_size_mm=optics_cfg.get('pixel_size_mm', 0.02),
-                rho=rho
-            )
-            logger.info(f"Using custom inference camera settings")
-        else:
-            self.optical_params = BlurParams.from_config(self.config)
-        self.blur_calc = BlurCalculator(self.optical_params)
+                self.optical_params = BlurParams(
+                    focal_length_mm=focal_length,
+                    focus_distance_mm=focus_distance,
+                    imaging_distance_mm=imaging_distance,
+                    aperture_diameter_mm=optics_cfg.get('aperture_diameter_mm', 17.5),
+                    pixel_size_mm=optics_cfg.get('pixel_size_mm', 0.02),
+                    rho=rho
+                )
+                logger.info(f"Using custom inference camera settings")
+            else:
+                self.optical_params = BlurParams.from_config(self.config)
+            self.blur_calc = BlurCalculator(self.optical_params)
 
         # Get max blur for denormalization (at model scale)
         # Priority: checkpoint max_blur/max_coc > config > fallback
@@ -365,9 +362,11 @@ class RealCropInference:
 
         return img_tensor, img, original_size
 
-    def denormalize_blur(self, blur_normalized: torch.Tensor) -> float:
-        """Convert normalized blur [0, 1] (sigmoid output) to pixels."""
-        return (blur_normalized * self.max_blur).item()
+    def denormalize_blur(self, blur_normalized) -> float:
+        """Convert normalized blur [0, 1] (sigmoid output) to pixels. Delegates to physics module."""
+        val = blur_normalized.item() if hasattr(blur_normalized, 'item') else float(blur_normalized)
+        from physics import denormalise_label
+        return denormalise_label(val, self.max_blur)
 
     def estimate_blur_from_image(self, img: np.ndarray) -> float:
         """

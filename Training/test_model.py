@@ -329,9 +329,11 @@ class ModelTester:
 
         return blur_tensor, blur_map_tensor, sharp_tensor, blur_value
 
-    def denormalize_blur(self, blur_normalized: torch.Tensor) -> float:
-        """Convert normalized blur [0, 1] to pixels."""
-        return blur_normalized * self.max_blur
+    def denormalize_blur(self, blur_normalized) -> float:
+        """Convert normalized blur [0, 1] to pixels. Delegates to physics module."""
+        val = blur_normalized.item() if hasattr(blur_normalized, 'item') else float(blur_normalized)
+        from physics import denormalise_label
+        return denormalise_label(val, self.max_blur)
 
     def _get_bins(self):
         """Compute 4 equal bins from 0 to max_blur (ceiling)."""
@@ -510,8 +512,6 @@ class ModelTester:
 
                     # Convert to pixels
                     pred_blur_px = self.denormalize_blur(pred_blur_map.mean())
-                    if isinstance(pred_blur_px, torch.Tensor):
-                        pred_blur_px = pred_blur_px.cpu().item()
 
                     # Compute error
                     error = abs(pred_blur_px - blur_value_gt)
@@ -1328,10 +1328,6 @@ class ModelTester:
         plt.close()
 
         print(f"Saved grid summary to: {output_dir / 'dme_grid_summary.png'}")
-
-
-# Dead dual/DD code removed (2026-03-18)
-
 
 
 def main():
