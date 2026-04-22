@@ -18,10 +18,11 @@ from typing import Dict, List, Optional, Tuple
 
 import yaml
 
+from paths_config import STAGE1_ROOT, STAGE2_OUTPUT_DIR
+
 # -- Configuration ------------------------------------------------------------
 
-STAGE1_ROOT = Path(r"C:\Users\justi\Downloads\justice\batch_output")
-OUTPUT_DIR = Path(r"C:\Users\justi\Downloads\justice\stage2_output")
+OUTPUT_DIR = STAGE2_OUTPUT_DIR
 
 # Which sphere's calibration to treat as authoritative
 AUTHORITATIVE_SPHERE = "7mm"
