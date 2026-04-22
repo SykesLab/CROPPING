@@ -7,30 +7,34 @@ Usage:
     python test_model.py --model checkpoints/dme_best.pth --data data/synthetic --samples 100
 """
 
-import torch
-from torch.utils.data import Dataset, DataLoader
-import numpy as np
-import cv2
-from pathlib import Path
-import yaml
 import argparse
-from typing import Dict, List, Tuple, Optional
-import pandas as pd
-from tqdm import tqdm
-import matplotlib.pyplot as plt
-import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend
-from PIL import Image
+import logging
+import sys
 from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional, Tuple
 
-import sys as _sys
+import cv2
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
+import torch
+import yaml
+from PIL import Image
+from torch.utils.data import DataLoader, Dataset
+from tqdm import tqdm
+
 _repo_root = str(Path(__file__).resolve().parent.parent)
-if _repo_root not in _sys.path:
-    _sys.path.insert(0, _repo_root)
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
 
 from model import DefocusNet
-from synthetic_blur import BlurParams, BlurCalculator
 from physics import defocus_uncertainty
+from synthetic_blur import BlurCalculator, BlurParams
+
+logger = logging.getLogger(__name__)
 
 
 class TestDataset(Dataset):
@@ -112,21 +116,17 @@ class ModelTester:
         else:
             self.device = torch.device(device)
 
-        print(f"\n{'='*60}")
-        print(f"Loading checkpoint: {Path(model_path).name}")
-        print(f"Full path: {model_path}")
         checkpoint = torch.load(model_path, map_location=self.device, weights_only=True)
 
-        # Display checkpoint info
-        epoch = checkpoint.get('epoch', 'unknown')
-        print(f"Checkpoint epoch: {epoch}")
+        info = [f"Loaded {Path(model_path).name}",
+                f"epoch={checkpoint.get('epoch', '?')}"]
         if 'val_mae_px' in checkpoint:
-            print(f"Checkpoint validation MAE: {checkpoint['val_mae_px']:.4f} px")
+            info.append(f"val_mae={checkpoint['val_mae_px']:.4f}px")
         if 'val_psnr' in checkpoint:
-            print(f"Checkpoint validation PSNR: {checkpoint['val_psnr']:.2f} dB")
+            info.append(f"val_psnr={checkpoint['val_psnr']:.2f}dB")
         if 'val_ssim' in checkpoint:
-            print(f"Checkpoint validation SSIM: {checkpoint['val_ssim']:.4f}")
-        print(f"{'='*60}\n")
+            info.append(f"val_ssim={checkpoint['val_ssim']:.4f}")
+        logger.info(" | ".join(info))
 
         if config_path is not None:
             with open(config_path, 'r') as f:

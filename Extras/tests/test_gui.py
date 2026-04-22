@@ -118,18 +118,7 @@ def diag_calibration_fit(inputs: Dict) -> Tuple[Figure, str]:
     # Panel 2: parameter plausibility
     params = ["R^2", "rho", "sigma_0", "n_points"]
     values = [r2, rho, sigma_0, n_pts]
-    thresholds_good = [0.95, 0.5, 0, 10]
-    thresholds_bad = [0.9, 0.1, 5, 5]
-    colours = []
-    for val, good, bad in zip(values, thresholds_good, thresholds_bad):
-        if params[len(colours)] == "R^2":
-            colours.append("#2d8a2d" if val > good else ("#cc8800" if val > bad else "#cc3333"))
-        elif params[len(colours)] == "sigma_0":
-            colours.append("#2d8a2d" if val < bad else "#cc8800")
-        elif params[len(colours)] == "n_points":
-            colours.append("#2d8a2d" if val >= good else ("#cc8800" if val >= bad else "#cc3333"))
-        else:
-            colours.append("#2d8a2d" if val > good else "#cc8800")
+    colours = [_classify_param(name, val) for name, val in zip(params, values)]
 
     bars = axes[1].barh(params, values, color=colours, edgecolor="black")
     for bar, val in zip(bars, values):
