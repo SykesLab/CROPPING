@@ -51,7 +51,7 @@ def _analyze_droplet_global_full(
     """Analyse single droplet with full darkness curve (global mode)."""
     folder_path, droplet_id, cams = args
     folder_name = folder_path.name
-    
+
     cam_results: Dict[str, Dict[str, Any]] = {}
     diams: List[float] = []
     gaps: List[float] = []
@@ -108,7 +108,7 @@ def _analyze_droplet_global_crops_only(
     """Analyse single droplet with geometry-only scan (global mode)."""
     folder_path, droplet_id, cams = args
     folder_name = folder_path.name
-    
+
     cam_results: Dict[str, Dict[str, Any]] = {}
     diams: List[float] = []
     gaps: List[float] = []
@@ -321,11 +321,11 @@ def process_global(
     from cine_io import PYPHANTOM_AVAILABLE
     if not PYPHANTOM_AVAILABLE:
         error_msg = (
-            "\n" + "="*60 + "\n"
+            "\n" + "=" *60 + "\n"
             "ERROR: Phantom SDK (pyphantom) not installed!\n\n"
             "The pipeline cannot process .cine files without the Phantom SDK.\n"
             "Please install pyphantom to continue.\n"
-            "="*60 + "\n"
+            "=" *60 + "\n"
         )
         print(error_msg)
         return
@@ -366,7 +366,7 @@ def process_global(
         groups = group_cines_by_droplet(sub)
         selected_indices = list(range(0, len(groups), step))
         folder_droplet_counts[sub.name] = len(selected_indices)
-        
+
         for idx in selected_indices:
             droplet_id, cams = groups[idx]
             all_droplets.append((sub, droplet_id, cams))
@@ -374,7 +374,7 @@ def process_global(
     total_droplets = len(all_droplets)
     logger.info(f"Found {total_droplets} droplets across {n_folders} folders")
     print(f"[GLOBAL] Found {total_droplets} droplets across {n_folders} folders")
-    
+
     for folder_name, count in sorted(folder_droplet_counts.items()):
         print(f"  {folder_name}: {count} droplets")
 
@@ -638,7 +638,7 @@ def _quick_test_global(
     """Quick test: first droplet per folder only."""
     subfolders = get_cine_folders(CINE_ROOT)
     total_folders = len(subfolders)
-    
+
     if total_folders == 0:
         print("[QUICK TEST] No folders with .cine files found!")
         return

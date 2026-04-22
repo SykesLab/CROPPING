@@ -22,6 +22,8 @@ import sys
 # =============================================================================
 # Dependency Check
 # =============================================================================
+
+
 def check_dependencies():
     """Check for required dependencies and provide install instructions."""
     missing = []
@@ -69,6 +71,7 @@ def check_dependencies():
         print("  pip install pyyaml numpy opencv-python scipy pandas pillow matplotlib")
         print("=" * 60)
         sys.exit(1)
+
 
 check_dependencies()
 
@@ -226,7 +229,7 @@ class CalibrationGUI:
         ttk.Radiobutton(source_type_frame, text="Image Folder", variable=self.source_type_var,
                         value="folder", command=self._on_source_type_change).pack(side='left', padx=5)
         cine_rb = ttk.Radiobutton(source_type_frame, text=".cine File", variable=self.source_type_var,
-                        value="cine", command=self._on_source_type_change)
+                                  value="cine", command=self._on_source_type_change)
         cine_rb.pack(side='left', padx=5)
 
         # Show pyphantom status
@@ -834,9 +837,9 @@ The synthetic blur will match your camera!"""
 
             if not PYPHANTOM_AVAILABLE:
                 messagebox.showwarning("pyphantom Not Available",
-                    "The pyphantom library is not installed.\n\n"
-                    "To load .cine files, install the Phantom SDK and pyphantom package.\n\n"
-                    "Alternatively, export your z-stack as individual images.")
+                                       "The pyphantom library is not installed.\n\n"
+                                       "To load .cine files, install the Phantom SDK and pyphantom package.\n\n"
+                                       "Alternatively, export your z-stack as individual images.")
 
     def _browse_cine_folder(self):
         """Browse for folder containing .cine files."""

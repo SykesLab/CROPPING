@@ -123,17 +123,17 @@ def compute_ssim(
     window = window.view(1, 1, window_size, window_size).to(device=pred.device, dtype=pred.dtype)
 
     # Compute local means
-    mu_pred = F.conv2d(pred, window, padding=window_size//2)
-    mu_target = F.conv2d(target, window, padding=window_size//2)
+    mu_pred = F.conv2d(pred, window, padding=window_size // 2)
+    mu_target = F.conv2d(target, window, padding=window_size // 2)
 
     mu_pred_sq = mu_pred ** 2
     mu_target_sq = mu_target ** 2
     mu_pred_target = mu_pred * mu_target
 
     # Compute local variances and covariance
-    sigma_pred_sq = F.conv2d(pred ** 2, window, padding=window_size//2) - mu_pred_sq
-    sigma_target_sq = F.conv2d(target ** 2, window, padding=window_size//2) - mu_target_sq
-    sigma_pred_target = F.conv2d(pred * target, window, padding=window_size//2) - mu_pred_target
+    sigma_pred_sq = F.conv2d(pred ** 2, window, padding=window_size // 2) - mu_pred_sq
+    sigma_target_sq = F.conv2d(target ** 2, window, padding=window_size // 2) - mu_target_sq
+    sigma_pred_target = F.conv2d(pred * target, window, padding=window_size // 2) - mu_pred_target
 
     # SSIM formula
     numerator = (2 * mu_pred_target + C1) * (2 * sigma_pred_target + C2)
@@ -162,9 +162,9 @@ if __name__ == "__main__":
     # Verify relative error property: same % error at different magnitudes
     # should give similar loss
     pred_low = torch.tensor([[0.1]])    # 1.37 px
-    target_low = torch.tensor([[0.15]]) # 2.06 px  (~50% error)
+    target_low = torch.tensor([[0.15]])  # 2.06 px  (~50% error)
     pred_high = torch.tensor([[0.7]])   # 9.60 px
-    target_high = torch.tensor([[1.0]]) # 13.72 px (~43% error)
+    target_high = torch.tensor([[1.0]])  # 13.72 px (~43% error)
 
     loss_low = dme_loss(pred_low, target_low)
     loss_high = dme_loss(pred_high, target_high)

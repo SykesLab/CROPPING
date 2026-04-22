@@ -175,7 +175,7 @@ def run_focus_classification() -> None:
                     'erf_sigma_std': float(np.nanstd(cam_erf)),
                     # Keep laplacian stats for comparison
                     'laplacian_mean': float(cam_df['laplacian_var'].mean())
-                        if 'laplacian_var' in cam_df.columns else None,
+                    if 'laplacian_var' in cam_df.columns else None,
                 })
 
                 # Copy sharp images to Focus/folder/camera/

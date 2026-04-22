@@ -361,9 +361,9 @@ class Trainer:
             epochs: Number of epochs
             resume_from: Optional checkpoint path to resume from
         """
-        logger.info("\n" + "="*60)
+        logger.info("\n" + "=" * 60)
         logger.info("Training DME-subnet (scalar head)")
-        logger.info("="*60)
+        logger.info("=" * 60)
         logger.info("\nCheckpoint Strategy:")
         logger.info("  • dme_best.pth - Global best (never overwritten unless beaten)")
         logger.info("  • dme_best_current_session.pth - Best in this training run")
@@ -797,10 +797,10 @@ class Trainer:
 
         self.train_dme(dme_train, dme_val, self.epochs_dme, resume_from=resume_from)
 
-        logger.info("\n" + "="*60)
+        logger.info("\n" + "=" * 60)
         logger.info("Training complete!")
         logger.info(f"Best model saved to: {self.output_dir / 'dme_best.pth'}")
-        logger.info("="*60)
+        logger.info("=" * 60)
 
         self.writer.close()
 

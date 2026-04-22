@@ -37,7 +37,7 @@ class BlurParams:
     focal_length_mm: float      # F
     focus_distance_mm: float    # d₀
     imaging_distance_mm: float  # u₀
-    aperture_diameter_mm: float # D_lens
+    aperture_diameter_mm: float  # D_lens
     pixel_size_mm: float        # Physical pixel size
     rho: float = 1.0            # Gaussian blur constant
     # Cross-resolution/camera scaling parameters
@@ -163,7 +163,7 @@ class BlurCalculator:
     Implements the relationship between physical defocus distance (Δz)
     and blur kernel size. Supports both optical (CoC) and direct (sigma) modes.
     """
-    
+
     def __init__(self, params: BlurParams):
         """
         Args:
@@ -178,7 +178,7 @@ class BlurCalculator:
         self.D_lens = params.aperture_diameter_mm
         self.pixel_size = params.pixel_size_mm
         self.rho = params.rho
-    
+
     def defocus_to_coc_mm(self, d: float) -> float:
         """
         Calculate CoC diameter in mm from defocus distance.
@@ -197,7 +197,7 @@ class BlurCalculator:
         term2 = 1.0 / denominator
         coc = self.D_lens * self.u0 * abs(term1 - term2)
         return coc
-    
+
     def defocus_to_coc_px(self, d: float) -> float:
         """
         Calculate CoC diameter in pixels from defocus distance.
@@ -210,7 +210,7 @@ class BlurCalculator:
         """
         coc_mm = self.defocus_to_coc_mm(d)
         return coc_mm / self.pixel_size
-    
+
     def coc_to_sigma(self, coc_px: float) -> float:
         """
         Convert CoC to Gaussian blur sigma.
@@ -294,20 +294,20 @@ class BlurCalculator:
 
         rhs = coc_mm / (self.D_lens * self.u0)
         base = 1.0 / self.F - 1.0 / self.u0
-        
+
         # Two possible solutions (in front / behind focal plane)
         # 1/(d + d₀) = base - rhs  or  1/(d + d₀) = base + rhs
-        
+
         try:
             d1 = 1.0 / (base - rhs) - self.d0
             d2 = 1.0 / (base + rhs) - self.d0
-            
+
             # Return the one with smaller absolute value
             # (closer to focal plane is more likely)
             return min(abs(d1), abs(d2))
         except ZeroDivisionError:
             return float('inf')
-    
+
     def get_coc_range(self, defocus_range: Tuple[float, float]) -> Tuple[float, float]:
         """
         Get CoC range for a given defocus range.
@@ -337,22 +337,22 @@ def create_gaussian_kernel(sigma: float, radius_factor: float = 4.0) -> np.ndarr
     if sigma <= 0:
         # Return identity kernel (no blur)
         return np.array([[1.0]])
-    
+
     # Kernel size (must be odd)
     radius = int(np.ceil(radius_factor * sigma))
     size = 2 * radius + 1
-    
+
     # Create coordinate grid
     x = np.arange(size) - radius
     y = np.arange(size) - radius
     X, Y = np.meshgrid(x, y)
-    
+
     # Gaussian formula
     kernel = np.exp(-(X**2 + Y**2) / (2 * sigma**2))
-    
+
     # Normalise
     kernel /= kernel.sum()
-    
+
     return kernel.astype(np.float32)
 
 
@@ -374,12 +374,12 @@ def apply_gaussian_blur(
     """
     if sigma <= 0.05:
         return image.copy()
-    
+
     kernel = create_gaussian_kernel(sigma, radius_factor)
-    
+
     # Apply convolution
     blurred = cv2.filter2D(image, -1, kernel, borderType=cv2.BORDER_REPLICATE)
-    
+
     return blurred
 
 
@@ -844,7 +844,7 @@ class SyntheticBlurGenerator:
     """
     Generate synthetic blurred training data from sharp droplet images.
     """
-    
+
     def __init__(
         self,
         optical_params: BlurParams,
@@ -940,7 +940,7 @@ class SyntheticBlurGenerator:
                 f"CoC range (native): {self.coc_range_native[0]:.1f} - {self.coc_range_native[1]:.1f} px, "
                 f"Resolution scale: {self.resolution_scale:.3f} ({self.crop_size}→{self.image_size})"
             )
-    
+
     def blur_image(
         self,
         sharp_image: np.ndarray,
@@ -958,12 +958,12 @@ class SyntheticBlurGenerator:
         """
         sigma = self.blur_calc.coc_to_sigma(coc_px)
         blurred = apply_gaussian_blur(sharp_image, sigma, self.radius_factor)
-        
+
         # Create CoC map (uniform value across image)
         coc_map = np.full_like(sharp_image, coc_px / self.coc_range[1])  # Normalise to [0, 1]
-        
+
         return blurred, coc_map
-    
+
     def generate_sample(
         self,
         sharp_image: Optional[np.ndarray] = None,
@@ -1131,7 +1131,7 @@ class SyntheticBlurGenerator:
                 'coc_value': coc_px,
                 'defocus_mm': defocus_mm
             }
-    
+
     def generate_dataset(
         self,
         output_dir: Union[str, Path],
@@ -1171,7 +1171,7 @@ class SyntheticBlurGenerator:
         """
         def log(msg):
             print(msg)
-        
+
         # Log generator settings
         if hasattr(self, '_init_info') and self._init_info is not None:
             log(self._init_info)
@@ -1201,7 +1201,7 @@ class SyntheticBlurGenerator:
         (output_dir / 'sharp').mkdir(exist_ok=True)
         (output_dir / 'blur').mkdir(exist_ok=True)
         (output_dir / 'blur_map').mkdir(exist_ok=True)
-        
+
         # Scale diameter range based on image size (fallback for old behavior)
         min_diam = max(diameter_range_px[0], self.image_size // 5)   # 20% of image
         max_diam = min(diameter_range_px[1], self.image_size * 3 // 5)  # 60% of image
@@ -1310,8 +1310,8 @@ class SyntheticBlurGenerator:
                     rho = self.params.rho_direct
 
                     self.max_sigma = (self.max_sigma_calib
-                                     * scale_ratio
-                                     * self.native_to_model_scale)
+                                      * scale_ratio
+                                      * self.native_to_model_scale)
 
                     # Compute min_sigma_model for model-space sampling.
                     # Use the LOWEST cc_factor crop so the floor is the true minimum
@@ -1424,7 +1424,7 @@ class SyntheticBlurGenerator:
                     log("Using 100% real images (enough available)")
                 else:
                     log(f"Using 70% real / 30% synthetic (only {len(real_sharps)} images)")
-        
+
         # Generate samples
         metadata = []
         sample_idx = 0  # Track actual saved samples
@@ -1434,7 +1434,7 @@ class SyntheticBlurGenerator:
         pbar = tqdm(total=num_samples, desc="Generating synthetic data")
         attempt = 0
         max_attempts = num_samples * 2  # Prevent infinite loop
-        
+
         while sample_idx < num_samples and attempt < max_attempts:
             attempt += 1
             sharp_path = None  # Reset each iteration; set below if a real image is used
@@ -1504,7 +1504,7 @@ class SyntheticBlurGenerator:
                     diameter_px = None  # Let generate_sample pick from sphere_stats
                     sharp = None
                     sharp_path = None
-            
+
             # Look up per-crop values for this image
             if sharp_path is not None:
                 scale_camera = scale_map.get(sharp_path.name)
@@ -1527,15 +1527,15 @@ class SyntheticBlurGenerator:
                 scale_px_per_mm=scale_camera,
                 native_blur_sigma=native_blur,
             )
-            
+
             # Add noise if requested
             if add_noise and noise_level > 0:
                 noise = np.random.normal(0, noise_level, sample['blur'].shape)
                 sample['blur'] = np.clip(sample['blur'] + noise, 0, 1)
-            
+
             # Save images with sequential index (no gaps)
             idx_str = f"{sample_idx:06d}"
-            
+
             cv2.imwrite(
                 str(output_dir / 'sharp' / f'{idx_str}.png'),
                 (sample['sharp'] * 255).astype(np.uint8)
@@ -1555,7 +1555,7 @@ class SyntheticBlurGenerator:
             blur_key = 'sigma_px' if self.params.training_mode == 'direct' else 'coc_px'
             value_key = 'sigma_value' if self.params.training_mode == 'direct' else 'coc_value'
             _diam_model = (round(diameter_px * self.native_to_model_scale)
-                          if diameter_px is not None else '')
+                           if diameter_px is not None else '')
             row = {
                 'index': idx_str,
                 blur_key: sample[value_key],
@@ -1565,41 +1565,41 @@ class SyntheticBlurGenerator:
             }
 
             if save_blur_trace and self.params.training_mode == 'direct':
-                _src         = sharp_path.name if sharp_path is not None else 'synthetic'
-                _cam         = camera_map.get(sharp_path.name, '') if sharp_path is not None else ''
-                _scale       = scale_camera
+                _src = sharp_path.name if sharp_path is not None else 'synthetic'
+                _cam = camera_map.get(sharp_path.name, '') if sharp_path is not None else ''
+                _scale = scale_camera
                 _scale_calib = self.params.scale_calib_px_per_mm
-                _cc          = (_scale / _scale_calib
-                               if (_scale is not None and _scale_calib is not None and _scale_calib > 0)
-                               else None)
-                _rho         = self.params.rho_direct
-                _abs_def     = abs(sample['defocus_mm'])
-                _sigma_0     = self.params.sigma_0 if self.params.sigma_0 is not None else 0.0
-                _sig_cal     = (_rho * _abs_def + _sigma_0) if _rho else 0.0
+                _cc = (_scale / _scale_calib
+                       if (_scale is not None and _scale_calib is not None and _scale_calib > 0)
+                       else None)
+                _rho = self.params.rho_direct
+                _abs_def = abs(sample['defocus_mm'])
+                _sigma_0 = self.params.sigma_0 if self.params.sigma_0 is not None else 0.0
+                _sig_cal = (_rho * _abs_def + _sigma_0) if _rho else 0.0
                 _sig_nat_exp = _sig_cal * _cc if _cc is not None else _sig_cal
                 _sig_mdl_exp = _sig_nat_exp * self.native_to_model_scale
                 _sig_applied = sample.get('sigma_kernel', float('nan'))
-                _sig_err     = _sig_applied - _sig_mdl_exp
+                _sig_err = _sig_applied - _sig_mdl_exp
                 _sig_err_pct = (100.0 * _sig_err / _sig_mdl_exp
-                               if _sig_mdl_exp != 0 else float('nan'))
+                                if _sig_mdl_exp != 0 else float('nan'))
                 _native_blur_model = native_blur * self.native_to_model_scale
                 row.update({
-                    'source_image':             _src,
-                    'camera':                   _cam,
-                    'scale_px_per_mm':          '' if _scale is None else _scale,
-                    'scale_calib_px_per_mm':    '' if _scale_calib is None else _scale_calib,
-                    'cc_factor':                '' if _cc is None else round(_cc, 6),
-                    'rho_direct':               _rho,
-                    'sigma_calib_px':           round(_sig_cal, 6),
+                    'source_image': _src,
+                    'camera': _cam,
+                    'scale_px_per_mm': '' if _scale is None else _scale,
+                    'scale_calib_px_per_mm': '' if _scale_calib is None else _scale_calib,
+                    'cc_factor': '' if _cc is None else round(_cc, 6),
+                    'rho_direct': _rho,
+                    'sigma_calib_px': round(_sig_cal, 6),
                     'sigma_native_expected_px': round(_sig_nat_exp, 6),
-                    'sigma_model_expected_px':  round(_sig_mdl_exp, 6),
-                    'sigma_applied_px':         round(_sig_applied, 6),
-                    'native_blur_crop_px':      round(native_blur, 6),
-                    'native_blur_model_px':     round(_native_blur_model, 6),
-                    'quadrature_error_px':      round(_sig_err, 6),
-                    'quadrature_error_pct':     round(_sig_err_pct, 4),
-                    'crop_size_px':             self.crop_size,
-                    'model_size_px':            self.image_size,
+                    'sigma_model_expected_px': round(_sig_mdl_exp, 6),
+                    'sigma_applied_px': round(_sig_applied, 6),
+                    'native_blur_crop_px': round(native_blur, 6),
+                    'native_blur_model_px': round(_native_blur_model, 6),
+                    'quadrature_error_px': round(_sig_err, 6),
+                    'quadrature_error_pct': round(_sig_err_pct, 4),
+                    'crop_size_px': self.crop_size,
+                    'model_size_px': self.image_size,
                 })
 
             # ERF validation for selected samples
@@ -1611,17 +1611,17 @@ class SyntheticBlurGenerator:
                 row.update(erf_result)
 
             metadata.append(row)
-            
+
             sample_idx += 1
             pbar.update(1)
-            
+
             # Log progress every 10%
             progress_interval = max(1, num_samples // 10)
             if sample_idx % progress_interval == 0:
                 log(f"Progress: {sample_idx}/{num_samples} ({100*sample_idx//num_samples}%)")
-        
+
         pbar.close()
-        
+
         # Save metadata
         import pandas as pd
         df = pd.DataFrame(metadata)
@@ -1671,34 +1671,34 @@ class SyntheticBlurGenerator:
             'diameter_bins_used': use_binning,
             'diameter_bin_boundaries': bin_boundaries if use_binning else None
         }
-    
+
     def _prepare_image(self, image: np.ndarray) -> np.ndarray:
         """Resize image to target size (preserves droplet, scales down)."""
         h, w = image.shape[:2]
         target = self.image_size
-        
+
         # If image is larger, resize it down (don't just crop!)
         if h > target or w > target:
             # Calculate scale to fit within target
             scale = target / max(h, w)
             new_h = int(h * scale)
             new_w = int(w * scale)
-            
+
             # Resize using area interpolation (best for downscaling)
             image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
             h, w = image.shape[:2]
-        
+
         # Pad to exact target size if needed (centers the image)
         if h < target or w < target:
             pad_h = (target - h) // 2
             pad_w = (target - w) // 2
             image = np.pad(
                 image,
-                ((pad_h, target-h-pad_h), (pad_w, target-w-pad_w)),
+                ((pad_h, target -h -pad_h), (pad_w, target -w -pad_w)),
                 mode='constant',
                 constant_values=1.0  # White background
             )
-        
+
         return image
 
 
@@ -1756,21 +1756,21 @@ def main():
         default=0.01,
         help='Noise standard deviation'
     )
-    
+
     args = parser.parse_args()
-    
+
     # Load config
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
-    
+
     # Create optical parameters
     optical_params = BlurParams.from_config(config)
-    
+
     # Get ranges from config
     data_config = config.get('data', {})
     defocus_range = tuple(data_config.get('defocus_range_mm', [-12.0, 12.0]))
     diameter_range = tuple(data_config.get('droplet_diameter_range_px', [10, 50]))
-    
+
     # Create generator
     generator = SyntheticBlurGenerator(
         optical_params=optical_params,
@@ -1778,7 +1778,7 @@ def main():
         image_size=args.image_size,
         crop_size=args.crop_size  # None defaults to image_size in the class
     )
-    
+
     # Generate dataset
     generator.generate_dataset(
         output_dir=args.output_dir,

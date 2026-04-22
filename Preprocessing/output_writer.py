@@ -339,7 +339,7 @@ def generate_folder_outputs(
 
                 crop_path = ""
                 focus_metrics: Dict[str, float] = {}
-                
+
                 if y_top is not None and y_bottom is not None:
                     t0 = time.perf_counter()
                     frame, mask = _reload_frame_and_mask(path, best_idx)

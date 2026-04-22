@@ -25,6 +25,7 @@ import numpy as np
 # Dependency check
 # ---------------------------------------------------------------------------
 
+
 def _check_deps():
     missing = []
     for pkg, imp in [("numpy", "numpy"), ("opencv-python", "cv2"),
@@ -38,6 +39,7 @@ def _check_deps():
         print("Missing dependencies: " + ", ".join(missing))
         print("Install with:  pip install " + " ".join(missing))
         sys.exit(1)
+
 
 _check_deps()
 
@@ -333,7 +335,7 @@ class InferenceApp(tk.Tk):
         img_frame.pack(fill="both", expand=True, padx=0, pady=0)
 
         self.canvas = tk.Canvas(img_frame, bg="#2b2b2b", highlightthickness=0,
-                               borderwidth=0, relief="flat")
+                                borderwidth=0, relief="flat")
         self.canvas.pack(fill="both", expand=True)
         self._canvas_img_id = None
         self._current_full_image: Optional[np.ndarray] = None  # full-res image for zoom

@@ -250,9 +250,9 @@ class ModelTester:
         if num_worst > 0 and num_worst_px == 0 and num_worst_pct == 0:
             num_worst_px = num_worst
             num_worst_pct = num_worst
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print("DME-Only Testing Mode")
-        print("="*60)
+        print("=" * 60)
 
         data_dir = Path(data_dir)
         print(f"Test data directory: {data_dir}")
@@ -362,9 +362,9 @@ class ModelTester:
 
                 # Process each sample in the batch
                 for j in range(blur_batch.size(0)):
-                    blur = blur_batch[j:j+1]
-                    blur_gt = blur_gt_batch[j:j+1]
-                    pred_blur_map = pred_blur_map_batch[j:j+1]
+                    blur = blur_batch[j:j + 1]
+                    blur_gt = blur_gt_batch[j:j + 1]
+                    pred_blur_map = pred_blur_map_batch[j:j + 1]
                     blur_value_gt = blur_values_gt[j]
                     sample_name = sample_names[j]
 
@@ -559,10 +559,10 @@ class ModelTester:
         if min_blur_filter is not None and min_blur_filter > 0:
             # Filtered intervals: start from ceil(min_blur_filter) to max_blur
             start_interval = int(np.ceil(min_blur_filter))
-            intervals = [(i, i+1) for i in range(start_interval, max_blur_ceil)]
+            intervals = [(i, i + 1) for i in range(start_interval, max_blur_ceil)]
         else:
             # Standard intervals: 0 to max_blur
-            intervals = [(i, i+1) for i in range(max_blur_ceil)]
+            intervals = [(i, i + 1) for i in range(max_blur_ceil)]
 
         interval_maes = []
         interval_counts = []
@@ -655,9 +655,9 @@ class ModelTester:
 
         with open(summary_path, 'w', encoding='utf-8') as f:
             # Header
-            f.write("="*80 + "\n")
+            f.write("=" * 80 + "\n")
             f.write(f"{test_mode} Test Summary\n")
-            f.write("="*80 + "\n\n")
+            f.write("=" * 80 + "\n\n")
 
             # Timestamp
             f.write(f"Test Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
@@ -795,7 +795,7 @@ class ModelTester:
                 if config.get('num_worst_px', 0) > 0 or config.get('num_worst_defocus_pct', 0) > 0:
                     f.write(f"Worst Cases: {output_dir / 'worst_cases'}\n")
 
-            f.write("\n" + "="*80 + "\n")
+            f.write("\n" + "=" * 80 + "\n")
 
         print(f"Saved test summary to: {summary_path}")
 
@@ -844,9 +844,9 @@ class ModelTester:
         p50_error = np.percentile(errors, 50)
         p95_error = np.percentile(errors, 95)
         axes[0, 2].text(0.98, 0.50, f'{p50_error:.2f}px', transform=axes[0, 2].get_yaxis_transform(),
-                       ha='right', va='center', fontsize=8, bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+                        ha='right', va='center', fontsize=8, bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
         axes[0, 2].text(0.98, 0.95, f'{p95_error:.2f}px', transform=axes[0, 2].get_yaxis_transform(),
-                       ha='right', va='center', fontsize=8, bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+                        ha='right', va='center', fontsize=8, bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
         axes[0, 2].legend(loc='lower right', fontsize=8)
 
         # 4. Error vs Reference scatter
@@ -899,9 +899,9 @@ class ModelTester:
         for i, (bar, count, mae) in enumerate(zip(bars, bin_counts, bin_maes)):
             height = bar.get_height()
             if height > 0:
-                axes[1, 0].text(bar.get_x() + bar.get_width()/2., height,
-                               f'{mae:.2f}\n(n={count})',
-                               ha='center', va='bottom', fontsize=8)
+                axes[1, 0].text(bar.get_x() + bar.get_width() / 2., height,
+                                f'{mae:.2f}\n(n={count})',
+                                ha='center', va='bottom', fontsize=8)
 
         # Add padding above the tallest bar to fit the labels
         if len(bin_maes) > 0 and max(bin_maes) > 0:
@@ -978,7 +978,7 @@ class ModelTester:
             self._create_dme_grid_summary_from_csv(csv_path, vis_dir, data_dir, num_grid_samples=25)
 
         print(f"Saved visual comparisons to: {vis_dir}")
-    
+
     def _plot_dme_sample(self, sample_data: Dict, output_dir: Path):
         """Create a single sample comparison image - scalar blur focused."""
         sample_name = sample_data['sample_path'].stem
@@ -998,12 +998,12 @@ class ModelTester:
 
         # Create figure - 3 panel layout
         fig, axes = plt.subplots(1, 3, figsize=(15, 4))
-        
+
         # 1. Blurred input with annotations
         axes[0].imshow(blur, cmap='gray', vmin=0, vmax=1)
         axes[0].set_title(f'Blurred Input\n(Sample {sample_name})', fontsize=11)
         axes[0].axis('off')
-        
+
         # 2. Bar chart comparison
         # Reference is always blue, Predicted is color-coded by % error
         # Green: < 25%, Orange: 25-50%, Red: > 50%
@@ -1016,7 +1016,7 @@ class ModelTester:
             pred_color = '#e74c3c'  # Red
 
         bars = axes[1].bar(['Reference', 'Predicted'], [gt_blur, pred_blur],
-                          color=['#3498db', pred_color], edgecolor='black', linewidth=1.5)
+                           color=['#3498db', pred_color], edgecolor='black', linewidth=1.5)
         axes[1].set_ylabel(f'{self.blur_term} (px)', fontsize=11)
         axes[1].set_title(f'{self.blur_term} Estimation (relative to sharpest crops)\nError: {error:.2f} px ({error/gt_blur*100:.1f}%)', fontsize=11)
         # Set y-axis with 20% headroom for labels
@@ -1028,9 +1028,9 @@ class ModelTester:
         for bar, val in zip(bars, [gt_blur, pred_blur]):
             # Position text at 5% above bar height (centered in the 20% gap)
             label_y = bar.get_height() + (y_max - bar.get_height()) * 0.25
-            axes[1].text(bar.get_x() + bar.get_width()/2, label_y,
-                        f'{val:.1f} px', ha='center', va='center', fontsize=12, fontweight='bold')
-        
+            axes[1].text(bar.get_x() + bar.get_width() / 2, label_y,
+                         f'{val:.1f} px', ha='center', va='center', fontsize=12, fontweight='bold')
+
         axes[1].grid(axis='y', alpha=0.3)
 
         # 3. Defocus Distance Bar chart comparison (same color coding)
@@ -1061,15 +1061,15 @@ class ModelTester:
             label_text = f'{val:.2f} mm'
             if bar == bars_defocus[1] and unc_mm > 0:
                 label_text = f'{val:.2f} ± {unc_mm:.2f} mm'
-            axes[2].text(bar.get_x() + bar.get_width()/2, label_y,
-                        label_text, ha='center', va='center', fontsize=11, fontweight='bold')
+            axes[2].text(bar.get_x() + bar.get_width() / 2, label_y,
+                         label_text, ha='center', va='center', fontsize=11, fontweight='bold')
 
         axes[2].grid(axis='y', alpha=0.3)
 
         plt.tight_layout()
         plt.savefig(output_dir / f'{sample_name}_dme_comparison.png', dpi=150, bbox_inches='tight')
         plt.close()
-    
+
     def _create_dme_grid_summary_from_csv(
         self,
         csv_path: Path,
@@ -1172,7 +1172,7 @@ class ModelTester:
                     color = '#e74c3c'
 
                 ax.set_title(f'Ref: {gt:.1f} → Pred: {pred:.1f} px\nErr: {err:.2f} px ({err_pct:.0f}%)',
-                            fontsize=9, color=color, fontweight='bold')
+                             fontsize=9, color=color, fontweight='bold')
                 ax.axis('off')
 
             except Exception as e:
@@ -1197,19 +1197,19 @@ class ModelTester:
 def main():
     parser = argparse.ArgumentParser(description="Test defocus estimation models")
     parser.add_argument('--mode', type=str, choices=['dme', '1'], default='dme',
-                       help="Testing mode: 'dme'/'1' for blur estimation only")
+                        help="Testing mode: 'dme'/'1' for blur estimation only")
     parser.add_argument('--model', '-m', type=str,
-                       help="Path to model checkpoint")
+                        help="Path to model checkpoint")
     parser.add_argument('--config', '-c', type=str, default=None,
-                       help="Path to config YAML (optional if in checkpoint)")
+                        help="Path to config YAML (optional if in checkpoint)")
     parser.add_argument('--data', '-d', type=str,
-                       help="Path to test data directory")
+                        help="Path to test data directory")
     parser.add_argument('--samples', '-n', type=int, default=100,
-                       help="Number of samples to test (0 for all)")
+                        help="Number of samples to test (0 for all)")
     parser.add_argument('--output', '-o', type=str, default=None,
-                       help="Output directory for results and visualizations")
+                        help="Output directory for results and visualizations")
     parser.add_argument('--device', type=str, default='auto',
-                       help="Device: 'cuda', 'cpu', or 'auto'")
+                        help="Device: 'cuda', 'cpu', or 'auto'")
 
     args = parser.parse_args()
 
@@ -1228,10 +1228,10 @@ def main():
                 args.model = str(checkpoint_file)
                 print(f"\nAuto-detected checkpoint: {args.model}")
             else:
-                print("\n" + "="*60)
+                print("\n" + "=" * 60)
                 args.model = input("Path to model checkpoint: ").strip()
         else:
-            print("\n" + "="*60)
+            print("\n" + "=" * 60)
             args.model = input("Path to model checkpoint: ").strip()
 
     if args.data is None:
@@ -1259,7 +1259,7 @@ def main():
     blur_dir = data_path / 'blur'
     if blur_dir.exists():
         total_samples = len(list(blur_dir.glob('*.png')))
-        print("\n" + "="*60)
+        print("\n" + "=" * 60)
         print(f"Found {total_samples} samples in dataset")
         samples_input = input(f"Number of samples to test (press Enter for all {total_samples}): ").strip()
         if samples_input:

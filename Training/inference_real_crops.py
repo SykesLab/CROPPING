@@ -181,10 +181,10 @@ class RealCropInference:
                 self.rho_std = float(loo.get('rho_std', 0.0))
                 self.sigma_0_std = float(loo.get('sigma_0_std', 0.0))
                 logger.info(f"  Direct calibration (from file): rho={self.direct_slope} px/mm, "
-                      f"sigma_0={self.direct_offset} px  |z| = (sigma - sigma_0) / rho")
+                            f"sigma_0={self.direct_offset} px  |z| = (sigma - sigma_0) / rho")
                 if self.rho_std > 0:
                     logger.info(f"  LOO-CV uncertainty: rho_std={self.rho_std:.4f}, "
-                          f"sigma_0_std={self.sigma_0_std:.4f}")
+                                f"sigma_0_std={self.sigma_0_std:.4f}")
             else:
                 # Fall back to checkpoint config (rho_direct and sigma_0 saved during training)
                 training_cfg = self.config.get('training', {})
@@ -200,7 +200,7 @@ class RealCropInference:
                 self.rho_std = float(training_cfg.get('rho_std', 0.0))
                 self.sigma_0_std = float(training_cfg.get('sigma_0_std', 0.0))
                 logger.info(f"  Direct calibration (from checkpoint): rho={self.direct_slope} px/mm, "
-                      f"sigma_0={self.direct_offset} px  |z| = (sigma - sigma_0) / rho")
+                            f"sigma_0={self.direct_offset} px  |z| = (sigma - sigma_0) / rho")
 
         # Apply cross-camera scale correction to rho (direct mode only)
         # rho was measured on the calibration camera; if inference is on a different camera
@@ -212,12 +212,12 @@ class RealCropInference:
                 scale_factor = self.inference_camera_scale_px_per_mm / float(scale_calib)
                 self.direct_slope = self.direct_slope * scale_factor
                 logger.info(f"  Cross-camera scale correction applied: "
-                      f"scale_inf={self.inference_camera_scale_px_per_mm:.1f} px/mm, "
-                      f"scale_calib={scale_calib:.1f} px/mm, "
-                      f"factor={scale_factor:.3f} → rho_eff={self.direct_slope:.6f} px/mm")
+                            f"scale_inf={self.inference_camera_scale_px_per_mm:.1f} px/mm, "
+                            f"scale_calib={scale_calib:.1f} px/mm, "
+                            f"factor={scale_factor:.3f} → rho_eff={self.direct_slope:.6f} px/mm")
             elif self.inference_camera_scale_px_per_mm is not None and scale_calib is None:
                 logger.warning("inference_camera_scale_px_per_mm provided but scale_calib_px_per_mm "
-                      "not found in config — cross-camera correction skipped")
+                               "not found in config — cross-camera correction skipped")
 
         # Create and load model
         self.model = DefocusNet.from_config(self.config).to(self.device)
@@ -251,7 +251,7 @@ class RealCropInference:
                 focal_length = optics_cfg.get('focal_length_mm', 70.0)
                 focus_distance = optics_cfg.get('focus_distance_mm', 200.0)
                 imaging_distance = optics_cfg.get('imaging_distance_mm',
-                                                  1.0 / (1.0/focal_length - 1.0/focus_distance) if focus_distance != focal_length else 200.0)
+                                                  1.0 / (1.0 /focal_length - 1.0 /focus_distance) if focus_distance != focal_length else 200.0)
 
                 self.optical_params = BlurParams(
                     focal_length_mm=focal_length,
@@ -596,13 +596,13 @@ class RealCropInference:
 
         # Draw double-headed arrow
         ax.annotate('', xy=(x_end, y_pos), xytext=(x_start, y_pos),
-                   arrowprops=dict(arrowstyle='<->', color='red', lw=2))
+                    arrowprops=dict(arrowstyle='<->', color='red', lw=2))
 
         # Add text label
         ax.text(cx, y_pos - radius * 0.3, f'{diameter:.1f} px',
-               color='red', fontsize=10, fontweight='bold',
-               ha='center', va='bottom',
-               bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='red', alpha=0.8))
+                color='red', fontsize=10, fontweight='bold',
+                ha='center', va='bottom',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='red', alpha=0.8))
 
     def process_material_folder(
         self,
@@ -788,7 +788,6 @@ class RealCropInference:
             logger.info(f"  Std:    {combined_df[blur_col].std():.2f} px")
             logger.info(f"  Range:  {combined_df[blur_col].min():.2f} - {combined_df[blur_col].max():.2f} px")
 
-
             logger.info(f"Defocus Statistics (all materials):")
             logger.info(f"  Mean:   {combined_df['defocus_mm'].mean():.2f} mm")
             logger.info(f"  Median: {combined_df['defocus_mm'].median():.2f} mm")
@@ -846,7 +845,7 @@ class RealCropInference:
         n_excluded = n_before - len(df)
         if n_excluded > 0:
             logger.info(f"  Excluded {n_excluded} frames outside calibration range "
-                  f"(|z| < 0.5 mm or |z| > 6.8 mm), {len(df)} remaining")
+                        f"(|z| < 0.5 mm or |z| > 6.8 mm), {len(df)} remaining")
 
         # --- Figure 1: Main 4-panel analysis ---
         fig, axes = plt.subplots(2, 2, figsize=(14, 10))
@@ -939,9 +938,9 @@ class RealCropInference:
         ax.set_title('Per-Range MAE', fontsize=12, fontweight='bold')
         ax.grid(True, alpha=0.3, axis='y')
         for bar, mae_val, n in zip(bars, bin_stats['mae'], bin_stats['n']):
-            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height() + 0.01,
+            ax.text(bar.get_x() + bar.get_width() /2, bar.get_height() + 0.01,
                     f'{mae_val:.2f}', ha='center', va='bottom', fontsize=9, fontweight='bold')
-            ax.text(bar.get_x() + bar.get_width()/2, bar.get_height()/2,
+            ax.text(bar.get_x() + bar.get_width() /2, bar.get_height() /2,
                     f'n={n}', ha='center', va='center', fontsize=8, color='white', fontweight='bold')
         if len(bin_stats) > 0 and bin_stats['mae'].max() > 0:
             ax.set_ylim(top=bin_stats['mae'].max() * 1.25)
@@ -1017,7 +1016,7 @@ class RealCropInference:
         logger.info(f"Saved sample strip to: {strip_path}")
 
     def _print_validation_summary(self, df: pd.DataFrame, slope: float,
-                                   intercept: float, r_value: float, output_dir: Path):
+                                  intercept: float, r_value: float, output_dir: Path):
         """Print and save a text summary of z-stack validation results."""
         import numpy as np
 

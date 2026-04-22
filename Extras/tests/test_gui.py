@@ -116,7 +116,7 @@ def diag_calibration_fit(inputs: Dict) -> Tuple[Figure, str]:
 
     bars = axes[1].barh(params, values, color=colours, edgecolor="black")
     for bar, val in zip(bars, values):
-        axes[1].text(bar.get_width() + 0.02 * max(values), bar.get_y() + bar.get_height()/2,
+        axes[1].text(bar.get_width() + 0.02 * max(values), bar.get_y() + bar.get_height() /2,
                      f"{val:.4f}" if isinstance(val, float) else str(val),
                      va="center", fontsize=9)
     axes[1].set_title("Parameter Plausibility")
@@ -127,7 +127,7 @@ def diag_calibration_fit(inputs: Dict) -> Tuple[Figure, str]:
         labels = ["rho", "sigma_0"]
         means = [rho, sigma_0]
         stds = [loo["rho_std"], loo["sigma_0_std"]]
-        cvs = [s/m*100 if m > 0 else 0 for s, m in zip(stds, means)]
+        cvs = [s /m *100 if m > 0 else 0 for s, m in zip(stds, means)]
         axes[2].bar(labels, cvs, color="steelblue", edgecolor="black")
         for i, (cv, std, mean) in enumerate(zip(cvs, stds, means)):
             axes[2].text(i, cv + 0.5, f"{mean:.4f} +/- {std:.4f}\n(CV={cv:.1f}%)",
@@ -253,8 +253,8 @@ def diag_config_consistency(inputs: Dict) -> Tuple[Figure, str]:
     all_match = True
     for key, (yaml_val, ckpt_val) in comparisons.items():
         match = yaml_val == ckpt_val or (yaml_val is not None and ckpt_val is not None
-                                          and abs(float(yaml_val) - float(ckpt_val)) < 1e-6
-                                          if isinstance(yaml_val, (int, float)) else yaml_val == ckpt_val)
+                                         and abs(float(yaml_val) - float(ckpt_val)) < 1e-6
+                                         if isinstance(yaml_val, (int, float)) else yaml_val == ckpt_val)
         if not match and yaml_val is not None and ckpt_val is not None:
             all_match = False
         status = "match" if match or yaml_val is None or ckpt_val is None else "MISMATCH"
@@ -1047,7 +1047,7 @@ class DiagnosticApp(tk.Tk):
         self._load_status_var = tk.StringVar(value="Set paths and click Load All")
         ttk.Label(paths_frame, textvariable=self._load_status_var, foreground="gray",
                   font=("Segoe UI", 8)).grid(row=len(path_defs), column=0, columnspan=2,
-                                              sticky="w", pady=(4, 0))
+                                             sticky="w", pady=(4, 0))
 
         # ── Main: diagnostics list + results ──
         paned = ttk.PanedWindow(self, orient="horizontal")

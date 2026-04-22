@@ -108,9 +108,9 @@ def count_parameters(model: nn.Module) -> int:
 
 
 def model_summary(model: nn.Module, input_size: Tuple[int, ...] = (1, 1, 256, 256)):
-    print("="*60)
+    print("=" * 60)
     print(f"Model: {model.__class__.__name__}")
-    print("="*60)
+    print("=" * 60)
 
     total_params = count_parameters(model)
     print(f"Total trainable parameters: {total_params:,}")
@@ -119,7 +119,7 @@ def model_summary(model: nn.Module, input_size: Tuple[int, ...] = (1, 1, 256, 25
     if hasattr(model, 'dme_subnet'):
         print(f"  DME-subnet: {count_parameters(model.dme_subnet):,} params")
 
-    print("="*60)
+    print("=" * 60)
 
 
 if __name__ == "__main__":
