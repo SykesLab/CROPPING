@@ -7,68 +7,17 @@ by droplet ID based on filename patterns (e.g. sphere0843g.cine).
 Includes silent pyphantom import to suppress SDK banner on worker spawn.
 """
 
-import os
 import re
 import logging
-from contextlib import contextmanager
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+from phantom_utils import init_pyphantom
 
 logger = logging.getLogger(__name__)
-from pathlib import Path
-from typing import Any, Dict, Generator, List, Optional, Tuple
-
-
-# --- Silent pyphantom import ---
-
-@contextmanager
-def _suppress_output() -> Generator[None, None, None]:
-    """Context manager to silence stdout and stderr at the OS level.
-
-    Uses low-level file descriptor manipulation to suppress output from
-    C extensions that bypass Python's sys.stdout/stderr.
-    """
-    old_stdout_fd = os.dup(1)
-    old_stderr_fd = os.dup(2)
-    devnull_fd = os.open(os.devnull, os.O_WRONLY)
-
-    os.dup2(devnull_fd, 1)
-    os.dup2(devnull_fd, 2)
-
-    try:
-        yield
-    finally:
-        os.dup2(old_stdout_fd, 1)
-        os.dup2(old_stderr_fd, 2)
-        os.close(devnull_fd)
-        os.close(old_stdout_fd)
-        os.close(old_stderr_fd)
-
 
 # Load pyphantom components silently (optional)
-cine: Optional[Any] = None
-utils: Optional[Any] = None
-ph: Optional[Any] = None
-PYPHANTOM_AVAILABLE = False
-PHANTOM_INITIALIZED = False
-
-try:
-    with _suppress_output():
-        from pyphantom import cine, utils
-        PYPHANTOM_AVAILABLE = True
-
-        try:
-            from pyphantom import Phantom
-            ph = Phantom(init_camera=False)
-            PHANTOM_INITIALIZED = ph is not None
-        except Exception:
-            try:
-                ph = Phantom()
-                PHANTOM_INITIALIZED = ph is not None
-            except Exception:
-                ph = None
-                PHANTOM_INITIALIZED = False
-except ImportError:
-    # pyphantom not installed - this is OK, just can't read .cine files
-    pass
+cine, utils, ph, PYPHANTOM_AVAILABLE, PHANTOM_INITIALIZED = init_pyphantom()
 
 
 # --- CINE loading and grouping ---
