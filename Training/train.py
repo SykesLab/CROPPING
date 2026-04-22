@@ -35,6 +35,12 @@ from model import DefocusNet, model_summary
 from dataset import create_dme_dataloaders, DMEDataset
 from losses import DMELoss
 
+import sys as _sys
+_repo_root = str(Path(__file__).resolve().parent.parent)
+if _repo_root not in _sys.path:
+    _sys.path.insert(0, _repo_root)
+from physics import validate_training_config, ConfigError
+
 logger = logging.getLogger(__name__)
 
 
@@ -63,6 +69,12 @@ class Trainer:
         self.data_dir = Path(data_dir)
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+
+        # Validate config before proceeding
+        training_mode = config.get('training', {}).get('training_mode', 'optical')
+        config_warnings = validate_training_config(config, training_mode)
+        for w in config_warnings:
+            logger.warning(f"Config: {w}")
 
         # Device
         if device == 'auto':
