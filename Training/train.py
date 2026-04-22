@@ -8,37 +8,37 @@ Usage:
     python train.py --config training_config.yaml --data-dir data/synthetic
 """
 
+import argparse
 import logging
 import platform
+import sys
+from datetime import datetime
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import matplotlib
+matplotlib.use('Agg')
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.optim as optim
+import yaml
 from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
-
-import numpy as np
-
-# Windows + tkinter GUI causes multiprocessing issues; use workers on Linux/Mac only
-_NUM_WORKERS = 0 if platform.system() == "Windows" else 4
-import matplotlib
-matplotlib.use('Agg')  # Non-interactive backend for saving PNGs
-import matplotlib.pyplot as plt
-from pathlib import Path
-import yaml
-import argparse
-from datetime import datetime
 from tqdm import tqdm
-from typing import Dict, Any, Optional, Tuple, List
 
-from model import DefocusNet, model_summary
 from dataset import create_dme_dataloaders, DMEDataset
 from losses import DMELoss
+from model import DefocusNet, model_summary
 
-import sys as _sys
 _repo_root = str(Path(__file__).resolve().parent.parent)
-if _repo_root not in _sys.path:
-    _sys.path.insert(0, _repo_root)
+if _repo_root not in sys.path:
+    sys.path.insert(0, _repo_root)
 from physics import validate_training_config, ConfigError
+
+# Windows + tkinter GUI causes multiprocessing issues
+_NUM_WORKERS = 0 if platform.system() == "Windows" else 4
 
 logger = logging.getLogger(__name__)
 
@@ -392,7 +392,7 @@ class Trainer:
             ckpt_max = checkpoint.get('max_blur', checkpoint.get('max_coc'))
             if ckpt_max is not None:
                 if abs(ckpt_max - self.max_blur) > 0.01:
-                    logger.warning(f"⚠ max {_bt} mismatch!")
+                    logger.warning(f"WARNING:max {_bt} mismatch!")
                     logger.warning(f"  Checkpoint max {_bt}: {ckpt_max:.4f} px")
                     logger.warning(f"  Current max {_bt}:    {self.max_blur:.4f} px")
                     logger.warning(f"  Using checkpoint value for consistency")
@@ -400,7 +400,7 @@ class Trainer:
                     # Update loss function with checkpoint max_blur
                     self.dme_loss_fn = DMELoss(max_blur=self.max_blur, eps=self.log_eps)
                 else:
-                    logger.info(f"✓ max {_bt} verified: {self.max_blur:.4f} px")
+                    logger.info(f"OK:max {_bt} verified: {self.max_blur:.4f} px")
 
             # Handle LR: use checkpoint LR by default, or override if requested
             checkpoint_lr = optimizer.param_groups[0]['lr']
@@ -412,7 +412,7 @@ class Trainer:
                 self.lr = checkpoint_lr  # Use checkpoint LR
                 logger.info(f"Resuming from epoch {start_epoch}, training for {epochs} more epochs with LR={checkpoint_lr:.2e} (from checkpoint)")
         elif resume_from:
-            logger.warning(f"⚠ Checkpoint not found: {resume_from}, starting from scratch")
+            logger.warning(f"WARNING:Checkpoint not found: {resume_from}, starting from scratch")
 
         target_epoch = start_epoch + epochs - 1
         bins = self._get_bins()
@@ -434,7 +434,7 @@ class Trainer:
             for blur_img, blur_norm, blur_px in pbar:
                 # Check for stop request
                 if self._should_stop():
-                    logger.warning("\n⚠️  Training stopped by user")
+                    logger.warning("\nWARNING:  Training stopped by user")
                     return
 
                 try:
@@ -478,7 +478,7 @@ class Trainer:
                 except RuntimeError as e:
                     if 'out of memory' in str(e).lower() or 'CUDA' in str(e):
                         sample_range = f"{batch_idx * self.batch_size} - {(batch_idx + 1) * self.batch_size}"
-                        logger.error(f"\n⚠ CUDA Error at batch {batch_idx} (samples {sample_range})")
+                        logger.error(f"\nWARNING:CUDA Error at batch {batch_idx} (samples {sample_range})")
                         logger.error(f"Error: {e}")
                         logger.error("Try: 1) Reduce batch size, 2) Use CPU, 3) Check images around this index")
                         raise
@@ -742,7 +742,7 @@ class Trainer:
                 self.model.dme_subnet.load_state_dict(dme_state)
                 logger.info(f"Loaded DME-subnet from full model checkpoint: {path}")
             else:
-                logger.warning(f"⚠ No DME weights found in full model checkpoint: {path}")
+                logger.warning(f"WARNING:No DME weights found in full model checkpoint: {path}")
         elif 'dme_state_dict' in checkpoint:
             self.model.dme_subnet.load_state_dict(checkpoint['dme_state_dict'])
             logger.info(f"Loaded DME-subnet from {path}")
@@ -755,14 +755,14 @@ class Trainer:
                 optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
                 logger.info(f"Restored optimizer state (epoch {checkpoint.get('epoch', '?')})")
             except Exception as e:
-                logger.warning(f"⚠ Could not restore optimizer state: {e}")
+                logger.warning(f"WARNING:Could not restore optimizer state: {e}")
                 logger.warning("  Continuing with fresh optimizer state")
 
         # Validate training mode consistency
         checkpoint_mode = checkpoint.get('training_mode', 'optical')
         current_mode = self.config.get('training', {}).get('training_mode', 'optical')
         if checkpoint_mode != current_mode:
-            logger.warning(f"⚠ Training mode mismatch!")
+            logger.warning(f"WARNING:Training mode mismatch!")
             logger.warning(f"  Checkpoint mode: {checkpoint_mode}")
             logger.warning(f"  Current config mode: {current_mode}")
             logger.warning(f"  Resuming with checkpoint mode: {checkpoint_mode}")
@@ -848,7 +848,7 @@ class Trainer:
                 logger.info(f"ℹ Using specified checkpoint: {checkpoint_path.name}")
                 resume_checkpoint = str(checkpoint_path)
             else:
-                logger.warning(f"⚠ Specified checkpoint not found: {explicit_checkpoint}")
+                logger.warning(f"WARNING:Specified checkpoint not found: {explicit_checkpoint}")
                 logger.info("ℹ Falling back to auto-detection")
                 resume_checkpoint = self._find_latest_checkpoint('dme', preference=checkpoint_preference)
         else:
@@ -929,7 +929,7 @@ class Trainer:
                 if val_mae is not None:
                     logger.info(f"  • Val MAE: {val_mae:.4f} px")
             except Exception as e:
-                logger.warning(f"  ⚠ Could not read checkpoint metadata: {e}")
+                logger.warning(f"  WARNING:Could not read checkpoint metadata: {e}")
 
             return str(checkpoint_to_use)
 
@@ -955,7 +955,7 @@ class Trainer:
                 sizes.add(img.shape)
 
         if len(sizes) > 1:
-            logger.warning(f"⚠ Mixed image sizes detected: {sizes}")
+            logger.warning(f"WARNING:Mixed image sizes detected: {sizes}")
         else:
             size = list(sizes)[0]
             logger.info(f"Data validated: {len(images)} samples checked, all {size[1]}×{size[0]}")
@@ -971,7 +971,7 @@ class Trainer:
                 torch.cuda.empty_cache()
                 logger.info(f"CUDA sanity check passed! Output shape: {out_shape}")
             except Exception as e:
-                logger.error(f"⚠ CUDA sanity check FAILED: {e}")
+                logger.error(f"WARNING:CUDA sanity check FAILED: {e}")
                 logger.info("Falling back to CPU...")
                 self.device = torch.device('cpu')
                 self.model = self.model.to(self.device)
