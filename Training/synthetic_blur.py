@@ -46,11 +46,14 @@ class BlurParams:
     training_crop_size_px: Optional[int] = None       # Training crop size before resize
     training_image_size_px: int = 128                 # Training image size after resize
     # Cross-camera scaling
-    scale_calib_px_per_mm: Optional[float] = None  # px/mm of calibration camera (from calibration GUI)
+    # px/mm of calibration camera (from calibration GUI)
+    scale_calib_px_per_mm: Optional[float] = None
     # Dual-mode training support
     training_mode: str = "optical"                    # "optical" or "direct"
-    rho_direct: Optional[float] = None                # Direct mode: px/mm (only used if training_mode == "direct")
-    sigma_0: Optional[float] = None                   # Loaded from config for backwards compat; NOT used in direct mode training (crops carry native blur)
+    # Direct mode: px/mm (only used if training_mode == "direct")
+    rho_direct: Optional[float] = None
+    # Loaded from config for backwards compat; NOT used in direct mode training (crops carry native blur)
+    sigma_0: Optional[float] = None
 
     @property
     def f_number(self) -> float:
@@ -108,7 +111,8 @@ class BlurParams:
             # Calculate using thin lens equation: 1/f = 1/D + 1/u0
             # u0 = f × D / (D - f)
             if focus_distance_mm > focal_length_mm:
-                imaging_distance_mm = focal_length_mm * focus_distance_mm / (focus_distance_mm - focal_length_mm)
+                imaging_distance_mm = focal_length_mm * \
+                    focus_distance_mm / (focus_distance_mm - focal_length_mm)
             else:
                 imaging_distance_mm = focus_distance_mm  # Fallback
 
@@ -702,19 +706,19 @@ class SphereAppearanceStats:
 
         stats = SphereAppearanceStats(
             bg_mean=float(np.mean(bg_intensities)),
-            bg_std=float(np.std(bg_intensities)) if len(bg_intensities) > 1 else 0.02,
+            bg_std=float(np.std(bg_intensities)) if len(bg_intensities) >1 else 0.02,
             interior_mean=float(np.mean(interior_intensities)),
-            interior_std=float(np.std(interior_intensities)) if len(interior_intensities) > 1 else 0.01,
-            noise_std=float(np.mean(noise_stds)) if noise_stds else 0.003,
-            diameter_min=float(np.min(diameters)),
+            interior_std=float(np.std(interior_intensities))
+            if len(interior_intensities) >1 else 0.01, noise_std=float(np.mean(noise_stds))
+            if noise_stds else 0.003, diameter_min=float(np.min(diameters)),
             diameter_max=float(np.max(diameters)),
             diameter_mean=float(np.mean(diameters)),
-            image_size=image_size,
-            has_highlight=len(highlight_intensities) > len(image_paths) * 0.2,
-            highlight_intensity=float(np.mean(highlight_intensities)) if highlight_intensities else 0.1,
-            vignette_strength=float(np.mean(vignette_strengths)) if vignette_strengths else 0.02,
-            rim_light_strength=float(np.mean(rim_light_strengths)) if rim_light_strengths else 0.01,
-        )
+            image_size=image_size, has_highlight=len(highlight_intensities) >len(image_paths) *0.2,
+            highlight_intensity=float(np.mean(highlight_intensities))
+            if highlight_intensities else 0.1, vignette_strength=float(
+                np.mean(vignette_strengths)) if vignette_strengths else 0.02,
+            rim_light_strength=float(np.mean(rim_light_strengths))
+            if rim_light_strengths else 0.01,)
 
         log(f"Sphere appearance stats from {len(bg_intensities)} crops:")
         log(f"  Background: {stats.bg_mean:.3f} +/- {stats.bg_std:.3f}"
@@ -938,8 +942,7 @@ class SyntheticBlurGenerator:
             self._init_info = (
                 f"CoC range (model scale): {self.coc_range[0]:.2f} - {self.coc_range[1]:.2f} px, "
                 f"CoC range (native): {self.coc_range_native[0]:.1f} - {self.coc_range_native[1]:.1f} px, "
-                f"Resolution scale: {self.resolution_scale:.3f} ({self.crop_size}→{self.image_size})"
-            )
+                f"Resolution scale: {self.resolution_scale:.3f} ({self.crop_size}→{self.image_size})")
 
     def blur_image(
         self,
@@ -1002,7 +1005,9 @@ class SyntheticBlurGenerator:
                     # Scale diameters from native crop resolution to model resolution
                     scale = self.image_size / self.sphere_stats.image_size
                     d_min = max(int(self.sphere_stats.diameter_min * scale), self.image_size // 5)
-                    d_max = min(int(self.sphere_stats.diameter_max * scale), self.image_size * 4 // 5)
+                    d_max = min(
+                        int(self.sphere_stats.diameter_max * scale),
+                        self.image_size * 4 // 5)
                     if d_min >= d_max:
                         d_min = d_max - 1
                     diameter_px = random.randint(d_min, d_max)
@@ -1066,7 +1071,8 @@ class SyntheticBlurGenerator:
                 if max_sigma_calib > min_sigma_calib:
                     if self.blur_distribution == "weighted":
                         beta_sample = np.random.beta(a=self.beta_alpha, b=self.beta_beta)
-                        sigma_defocus = min_sigma_calib + beta_sample * (max_sigma_calib - min_sigma_calib)
+                        sigma_defocus = min_sigma_calib + beta_sample * \
+                            (max_sigma_calib - min_sigma_calib)
                     else:
                         sigma_defocus = random.uniform(min_sigma_calib, max_sigma_calib)
                 else:
@@ -1114,7 +1120,8 @@ class SyntheticBlurGenerator:
             if coc_px is None:
                 if self.blur_distribution == "weighted":
                     beta_sample = np.random.beta(a=self.beta_alpha, b=self.beta_beta)
-                    coc_px = self.coc_range[0] + beta_sample * (self.coc_range[1] - self.coc_range[0])
+                    coc_px = self.coc_range[0] + beta_sample * \
+                        (self.coc_range[1] - self.coc_range[0])
                 else:
                     coc_px = random.uniform(self.coc_range[0], self.coc_range[1])
 
@@ -1181,7 +1188,8 @@ class SyntheticBlurGenerator:
             blur_label = "blur" if self.params.training_mode == "direct" else "CoC"
             log(f"Minimum {blur_label} filter applied: {self.min_blur_px:.2f} px (at calibration scale)")
             if self.params.training_mode != "direct":
-                log(f"   {blur_label} range adjusted to [{self.coc_range[0]:.2f}, {self.coc_range[1]:.2f}] px")
+                log(
+                    f"   {blur_label} range adjusted to [{self.coc_range[0]:.2f}, {self.coc_range[1]:.2f}] px")
 
         # ERF validation setup
         validate_indices = set()
@@ -1238,7 +1246,8 @@ class SyntheticBlurGenerator:
                         scale_map = dict(zip(df['filename'], df['scale_px_per_mm']))
                         log(f"Loaded scale info for {len(scale_map)} crops from CSV")
                     if 'filename' in df.columns and 'native_blur_sigma' in df.columns:
-                        native_blur_map = dict(zip(df['filename'], df['native_blur_sigma'].fillna(0.0)))
+                        native_blur_map = dict(
+                            zip(df['filename'], df['native_blur_sigma'].fillna(0.0)))
                         log(f"Loaded native blur info for {len(native_blur_map)} crops from CSV")
                     if 'filename' in df.columns and 'camera' in df.columns:
                         camera_map = dict(zip(df['filename'], df['camera'].astype(str)))
@@ -1398,28 +1407,35 @@ class SyntheticBlurGenerator:
 
                     # Calculate median diameter for each bin (for synthetic generation)
                     bin_medians = [
-                        np.median([d for _, d in diameter_bins[0]]) if diameter_bins[0] else np.median(diameters_only),
-                        np.median([d for _, d in diameter_bins[1]]) if diameter_bins[1] else np.median(diameters_only),
-                        np.median([d for _, d in diameter_bins[2]]) if diameter_bins[2] else np.median(diameters_only)
-                    ]
+                        np.median([d for _, d in diameter_bins[0]])
+                        if diameter_bins[0] else np.median(diameters_only), np.median(
+                            [d for _, d in diameter_bins[1]])
+                        if diameter_bins[1] else np.median(diameters_only), np.median(
+                            [d for _, d in diameter_bins[2]])
+                        if diameter_bins[2] else np.median(diameters_only)]
 
                     use_binning = True
                     total_images = sum(len(diameter_bins[i]) for i in range(3))
 
                     log(f"Created 3 diameter bins (tertiles):")
-                    log(f"  Bin 0 (Small):  {len(diameter_bins[0])} images, median={bin_medians[0]:.1f}px")
-                    log(f"  Bin 1 (Medium): {len(diameter_bins[1])} images, median={bin_medians[1]:.1f}px")
-                    log(f"  Bin 2 (Large):  {len(diameter_bins[2])} images, median={bin_medians[2]:.1f}px")
+                    log(
+                        f"  Bin 0 (Small):  {len(diameter_bins[0])} images, median={bin_medians[0]:.1f}px")
+                    log(
+                        f"  Bin 1 (Medium): {len(diameter_bins[1])} images, median={bin_medians[1]:.1f}px")
+                    log(
+                        f"  Bin 2 (Large):  {len(diameter_bins[2])} images, median={bin_medians[2]:.1f}px")
 
                     if total_images >= 50:
                         log("Using 100% real images with uniform diameter distribution")
                     else:
-                        log(f"Supplementing bins with synthetic droplets (only {total_images} real images)")
+                        log(
+                            f"Supplementing bins with synthetic droplets (only {total_images} real images)")
 
             # Fallback: no diameter info, use old behavior
             if not use_binning:
                 log("No diameter binning - using random sampling")
-                log(f"Synthetic droplet diameter range: {diameter_range_px[0]}-{diameter_range_px[1]} px")
+                log(
+                    f"Synthetic droplet diameter range: {diameter_range_px[0]}-{diameter_range_px[1]} px")
                 if len(real_sharps) >= 50:
                     log("Using 100% real images (enough available)")
                 else:

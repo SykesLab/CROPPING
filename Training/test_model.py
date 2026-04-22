@@ -172,7 +172,8 @@ class ModelTester:
         else:
             data_cfg = self.config.get('data', {})
             self.max_blur = data_cfg.get('coc_range_px', [1, 20])[1]
-            print(f"⚠ max_blur not found in checkpoint, using config default: {self.max_blur:.2f} px")
+            print(
+                f"⚠ max_blur not found in checkpoint, using config default: {self.max_blur:.2f} px")
 
         print(f"Device: {self.device}")
 
@@ -184,7 +185,8 @@ class ModelTester:
         self.rho_direct = float(training_cfg.get('rho_direct', 0.0))
         self.sigma_0_direct = float(training_cfg.get('sigma_0', 0.0))
         if self.rho_std > 0:
-            print(f"Calibration uncertainty: rho_std={self.rho_std:.4f}, sigma_0_std={self.sigma_0_std:.4f}")
+            print(
+                f"Calibration uncertainty: rho_std={self.rho_std:.4f}, sigma_0_std={self.sigma_0_std:.4f}")
 
         # Calculate bin weights from beta distribution
         self.bin_weights = self._calculate_bin_weights_from_beta()
@@ -266,7 +268,8 @@ class ModelTester:
 
         # Show a sample of file names to verify we're loading the right data
         if len(all_samples) > 0:
-            print(f"Sample files: {all_samples[0].name}, {all_samples[min(1, len(all_samples)-1)].name}, ...")
+            print(
+                f"Sample files: {all_samples[0].name}, {all_samples[min(1, len(all_samples)-1)].name}, ...")
 
         if num_samples > 0 and num_samples < total_available:
             all_samples = all_samples[:num_samples]
@@ -284,7 +287,8 @@ class ModelTester:
                 blur_col_name = 'sigma_px' if 'sigma_px' in metadata_df.columns else 'coc_px'
                 blur_lookup = {}
                 for _, row in metadata_df.iterrows():
-                    sample_idx = str(int(row['index']))  # Convert to int then str to remove leading zeros
+                    # Convert to int then str to remove leading zeros
+                    sample_idx = str(int(row['index']))
                     blur_px = float(row[blur_col_name])
                     blur_lookup[sample_idx] = blur_px
 
@@ -311,11 +315,14 @@ class ModelTester:
                         filtered_samples.append(sample_path)
 
                 all_samples = filtered_samples
-                print(f"{self.blur_term} Exclusion Filter: Excluded {excluded_count} samples with |{self.blur_term}| < {min_blur_filter} px")
+                print(
+                    f"{self.blur_term} Exclusion Filter: Excluded {excluded_count} samples with |{self.blur_term}| < {min_blur_filter} px")
                 if missing_metadata_count > 0:
-                    print(f"  WARNING: {missing_metadata_count} samples missing from metadata CSV (included in test)")
+                    print(
+                        f"  WARNING: {missing_metadata_count} samples missing from metadata CSV (included in test)")
             else:
-                print(f"  WARNING: Metadata CSV not found at {metadata_csv} - skipping {self.blur_term} exclusion filter")
+                print(
+                    f"  WARNING: Metadata CSV not found at {metadata_csv} - skipping {self.blur_term} exclusion filter")
 
         print(f"Testing on {len(all_samples)} samples (out of {total_available} available)")
         print(f"Batch size: {batch_size}, Num workers: {num_workers}")
@@ -329,7 +336,8 @@ class ModelTester:
             # Select random indices for variety across test runs
             import random
             save_viz_indices = set(random.sample(range(n), min(num_viz, n)))
-            print(f"Visualization saving: {len(save_viz_indices)} comparisons ({viz_percent}% of {n} samples)")
+            print(
+                f"Visualization saving: {len(save_viz_indices)} comparisons ({viz_percent}% of {n} samples)")
 
         # Create dataset and dataloader for batched processing
         dataset = TestDataset(all_samples, data_dir, self.max_blur)
@@ -386,7 +394,8 @@ class ModelTester:
                     defocus_gt_mm = self.blur_calc.blur_to_defocus(blur_value_gt)
                     defocus_pred_mm = self.blur_calc.blur_to_defocus(pred_blur_px)
                     defocus_error_mm = abs(defocus_pred_mm - defocus_gt_mm)
-                    defocus_error_pct = (defocus_error_mm / abs(defocus_gt_mm) * 100) if defocus_gt_mm != 0 else 0
+                    defocus_error_pct = (defocus_error_mm / abs(defocus_gt_mm)
+                                         * 100) if defocus_gt_mm != 0 else 0
 
                     # Compute calibration uncertainty for this prediction
                     unc_mm = 0.0
@@ -411,7 +420,8 @@ class ModelTester:
 
                     # Debug: Print first 3 predictions to verify model is running
                     if global_idx < 3:
-                        print(f"Sample {global_idx}: GT={blur_value_gt:.2f}px, Pred={pred_blur_px:.2f}px, Error={error:.2f}px")
+                        print(
+                            f"Sample {global_idx}: GT={blur_value_gt:.2f}px, Pred={pred_blur_px:.2f}px, Error={error:.2f}px")
 
                     # Store data for visualization
                     if (output_dir is not None) and (global_idx in save_viz_indices):
@@ -452,8 +462,10 @@ class ModelTester:
                 print(f"\n{'='*60}")
                 print(f"Filtered Metrics ({self.blur_term} >= {min_blur_filter} px)")
                 print(f"{'='*60}")
-                print(f"  Samples: {len(df_filtered)} ({len(df_filtered)/len(df)*100:.1f}% of total)")
-                print(f"  Excluded: {len(df) - len(df_filtered)} low-{self.blur_term} samples where metrics are less meaningful")
+                print(
+                    f"  Samples: {len(df_filtered)} ({len(df_filtered)/len(df)*100:.1f}% of total)")
+                print(
+                    f"  Excluded: {len(df) - len(df_filtered)} low-{self.blur_term} samples where metrics are less meaningful")
                 print(f"\n  MAE:    {filtered_mae:.2f} px (vs {mae:.2f} px full dataset)")
                 print(f"  RMSE:   {filtered_rmse:.2f} px (vs {rmse:.2f} px full dataset)")
                 print(f"  Median: {filtered_median:.2f} px (vs {median_error:.2f} px full dataset)")
@@ -464,14 +476,17 @@ class ModelTester:
                 bin_range = max_blur_ceil - min_blur_filter
                 num_bins = 4
                 bin_size = bin_range / num_bins
-                filtered_bins = [(min_blur_filter + i * bin_size, min_blur_filter + (i + 1) * bin_size) for i in range(num_bins)]
+                filtered_bins = [
+                    (min_blur_filter +i * bin_size, min_blur_filter +(i +1) *bin_size)
+                    for i in range(num_bins)]
 
                 bin_weights = self.bin_weights
                 filtered_bin_maes = []
                 filtered_bin_counts = []
 
                 for low, high in filtered_bins:
-                    mask = (df_filtered[f'{self.blur_col}_gt_px'] >= low) & (df_filtered[f'{self.blur_col}_gt_px'] < high)
+                    mask = (df_filtered[f'{self.blur_col}_gt_px'] >=low) &(
+                        df_filtered[f'{self.blur_col}_gt_px'] <high)
                     bin_errors = df_filtered[mask]['error_px'].values
                     if len(bin_errors) > 0:
                         filtered_bin_maes.append(np.mean(bin_errors))
@@ -487,11 +502,13 @@ class ModelTester:
                 weights_str = '-'.join([f"{int(w*100)}" for w in bin_weights])
                 print(f"\n  Binned MAE (filtered, weighted {weights_str}%):")
                 filtered_bin_labels = [f"{low:.1f}-{high:.1f}" for low, high in filtered_bins]
-                for label, bin_mae, count, weight in zip(filtered_bin_labels, filtered_bin_maes, filtered_bin_counts, bin_weights):
+                for label, bin_mae, count, weight in zip(
+                    filtered_bin_labels, filtered_bin_maes, filtered_bin_counts, bin_weights):
                     print(f"    {label} px: {bin_mae:.2f} px (n={count}, weight={weight*100:.0f}%)")
                 print(f"  Filtered Weighted MAE: {filtered_weighted_mae:.2f} px")
             else:
-                print(f"\n⚠ No samples with {self.blur_term} >= {min_blur_filter} px for filtered metrics")
+                print(
+                    f"\n⚠ No samples with {self.blur_term} >= {min_blur_filter} px for filtered metrics")
 
         # Compute binned MAE (aligned with training)
         # If filtering is enabled, bins start from min_blur_filter instead of 0
@@ -501,7 +518,9 @@ class ModelTester:
             bin_range = max_blur_ceil - min_blur_filter
             num_bins = 4
             bin_size = bin_range / num_bins
-            bins = [(min_blur_filter + i * bin_size, min_blur_filter + (i + 1) * bin_size) for i in range(num_bins)]
+            bins = [
+                (min_blur_filter +i * bin_size, min_blur_filter +(i +1) *bin_size)
+                for i in range(num_bins)]
         else:
             # Standard bins: 0 to max_blur
             bins = self._get_bins()
@@ -585,7 +604,8 @@ class ModelTester:
         print(f"\n{'='*60}")
         print(f"Per-Integer Interval Metrics (unweighted)")
         if min_blur_filter is not None and min_blur_filter > 0:
-            print(f"Filtered range: {start_interval}-{max_blur_ceil} px (starting from ceil({min_blur_filter})={start_interval})")
+            print(
+                f"Filtered range: {start_interval}-{max_blur_ceil} px (starting from ceil({min_blur_filter})={start_interval})")
         print(f"{'='*60}")
 
         print(f"\nPer-Integer MAE:")
@@ -629,7 +649,8 @@ class ModelTester:
             self._plot_dme_results(df, errors, dme_test_dir, min_blur_filter)
 
             # Create visual sample comparisons
-            self._create_dme_visual_comparisons(visual_samples_data, dme_test_dir, num_visual_samples, csv_path, data_dir)
+            self._create_dme_visual_comparisons(
+                visual_samples_data, dme_test_dir, num_visual_samples, csv_path, data_dir)
 
             # Worst-case visualizations removed with DD cleanup
 
@@ -722,11 +743,13 @@ class ModelTester:
                     bin_weights = self.bin_weights
 
                     for (low, high), weight in zip(bins, bin_weights):
-                        mask = (df[f'{self.blur_col}_gt_px'] >= low) & (df[f'{self.blur_col}_gt_px'] < high)
+                        mask = (df[f'{self.blur_col}_gt_px'] >= low) & (
+                            df[f'{self.blur_col}_gt_px'] < high)
                         bin_df = df[mask]
                         if len(bin_df) > 0:
                             bin_mae = bin_df['error_px'].mean()
-                            f.write(f"  {int(low)}-{int(high)} px: MAE={bin_mae:.4f} px (n={len(bin_df)}, weight={weight*100:.0f}%)\n")
+                            f.write(
+                                f"  {int(low)}-{int(high)} px: MAE={bin_mae:.4f} px (n={len(bin_df)}, weight={weight*100:.0f}%)\n")
 
             elif test_mode == 'Dual':
                 f.write(f"PSNR: {df['psnr_db'].mean():.2f} dB\n")
@@ -735,13 +758,16 @@ class ModelTester:
                 f.write(f"Sharp RMSE: {df['sharp_rmse'].mean():.2f} px\n\n")
 
                 # Include defocus distance alongside blur metric
-                defocus_mae = df['defocus_error_mm'].mean() if 'defocus_error_mm' in df.columns else 0
-                f.write(f"{self.blur_term} Error: {df[f'{self.blur_col}_error_px'].mean():.4f} px ({defocus_mae:.2f} mm)\n")
+                defocus_mae = df['defocus_error_mm'].mean(
+                ) if 'defocus_error_mm' in df.columns else 0
+                f.write(
+                    f"{self.blur_term} Error: {df[f'{self.blur_col}_error_px'].mean():.4f} px ({defocus_mae:.2f} mm)\n")
                 if 'blur_map_mae_px' in df.columns:
                     f.write(f"{self.blur_term} Map MAE: {df['blur_map_mae_px'].mean():.4f} px\n")
                 # Compute RMSE from error column
                 blur_rmse = np.sqrt((df[f'{self.blur_col}_error_px']**2).mean())
-                defocus_rmse = np.sqrt((df['defocus_error_mm']**2).mean()) if 'defocus_error_mm' in df.columns else 0
+                defocus_rmse = np.sqrt((df['defocus_error_mm']**2).mean()
+                                       ) if 'defocus_error_mm' in df.columns else 0
                 f.write(f"{self.blur_term} RMSE: {blur_rmse:.4f} px ({defocus_rmse:.2f} mm)\n\n")
 
                 f.write(f"Diameter Error: {df['diameter_error_px'].mean():.2f} px\n")
@@ -761,7 +787,8 @@ class ModelTester:
                     f.write("-" * 80 + "\n")
                     f.write(f"FILTERED RESULTS ({self.blur_term} >= {min_blur_filter} px)\n")
                     f.write("-" * 80 + "\n")
-                    f.write(f"Filtered Samples: {len(df_filtered)} ({len(df_filtered)/len(df)*100:.1f}% of total)\n")
+                    f.write(
+                        f"Filtered Samples: {len(df_filtered)} ({len(df_filtered)/len(df)*100:.1f}% of total)\n")
                     f.write(f"Excluded Samples: {len(df) - len(df_filtered)}\n\n")
 
                     if test_mode == 'DME':
@@ -771,10 +798,14 @@ class ModelTester:
                     elif test_mode == 'Dual':
                         f.write(f"PSNR: {df_filtered['psnr_db'].mean():.2f} dB\n")
                         f.write(f"SSIM: {df_filtered['ssim'].mean():.4f}\n")
-                        filtered_defocus = df_filtered['defocus_error_mm'].mean() if 'defocus_error_mm' in df_filtered.columns else 0
-                        f.write(f"{self.blur_term} Error: {df_filtered[f'{self.blur_col}_error_px'].mean():.4f} px ({filtered_defocus:.2f} mm)\n")
-                        f.write(f"Diameter Error: {df_filtered['diameter_error_px'].mean():.2f} px\n")
-                        f.write(f"Diameter Error %: {df_filtered['diameter_error_pct'].mean():.2f}%\n")
+                        filtered_defocus = df_filtered['defocus_error_mm'].mean(
+                        ) if 'defocus_error_mm' in df_filtered.columns else 0
+                        f.write(
+                            f"{self.blur_term} Error: {df_filtered[f'{self.blur_col}_error_px'].mean():.4f} px ({filtered_defocus:.2f} mm)\n")
+                        f.write(
+                            f"Diameter Error: {df_filtered['diameter_error_px'].mean():.2f} px\n")
+                        f.write(
+                            f"Diameter Error %: {df_filtered['diameter_error_pct'].mean():.2f}%\n")
                     f.write("\n")
 
             # File outputs
@@ -786,7 +817,8 @@ class ModelTester:
 
             if test_mode == 'DME':
                 f.write(f"Visual Comparisons: {output_dir / 'dme_visual_comparisons'}\n")
-                f.write(f"Grid Summary: {output_dir / 'dme_visual_comparisons' / 'dme_grid_summary.png'}\n")
+                f.write(
+                    f"Grid Summary: {output_dir / 'dme_visual_comparisons' / 'dme_grid_summary.png'}\n")
                 if config.get('num_worst_px', 0) > 0 or config.get('num_worst_pct', 0) > 0:
                     f.write(f"Worst Cases: {output_dir / 'worst_cases_dme'}\n")
             elif test_mode == 'Dual':
@@ -817,12 +849,15 @@ class ModelTester:
         axes[0, 0].set_xlabel('Absolute Error (px)')
         axes[0, 0].set_ylabel('Frequency')
         axes[0, 0].set_title(f'{self.blur_term} Error Distribution')
-        axes[0, 0].axvline(np.mean(errors), color='r', linestyle='--', label=f'MAE: {np.mean(errors):.2f}')
+        axes[0, 0].axvline(np.mean(errors), color='r', linestyle='--',
+                           label=f'MAE: {np.mean(errors):.2f}')
         axes[0, 0].legend()
 
         # 2. Predicted vs Reference scatter
-        axes[0, 1].scatter(df[f'{self.blur_col}_gt_px'], df[f'{self.blur_col}_pred_px'], alpha=0.5, s=20)
-        axes[0, 1].plot([0, df[f'{self.blur_col}_gt_px'].max()], [0, df[f'{self.blur_col}_gt_px'].max()], 'r--', label='Perfect')
+        axes[0, 1].scatter(df[f'{self.blur_col}_gt_px'],
+                           df[f'{self.blur_col}_pred_px'], alpha=0.5, s=20)
+        axes[0, 1].plot([0, df[f'{self.blur_col}_gt_px'].max()], [
+                        0, df[f'{self.blur_col}_gt_px'].max()], 'r--', label='Perfect')
         axes[0, 1].set_xlabel(f'Reference {self.blur_term} (px)')
         axes[0, 1].set_ylabel(f'Predicted {self.blur_term} (px)')
         axes[0, 1].set_title(f'Predicted vs Reference {self.blur_term}')
@@ -843,10 +878,10 @@ class ModelTester:
         # Add percentile annotations
         p50_error = np.percentile(errors, 50)
         p95_error = np.percentile(errors, 95)
-        axes[0, 2].text(0.98, 0.50, f'{p50_error:.2f}px', transform=axes[0, 2].get_yaxis_transform(),
-                        ha='right', va='center', fontsize=8, bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-        axes[0, 2].text(0.98, 0.95, f'{p95_error:.2f}px', transform=axes[0, 2].get_yaxis_transform(),
-                        ha='right', va='center', fontsize=8, bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        axes[0, 2].text(0.98, 0.50, f'{p50_error:.2f}px', transform=axes[0, 2].get_yaxis_transform(
+        ), ha='right', va='center', fontsize=8, bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        axes[0, 2].text(0.98, 0.95, f'{p95_error:.2f}px', transform=axes[0, 2].get_yaxis_transform(
+        ), ha='right', va='center', fontsize=8, bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
         axes[0, 2].legend(loc='lower right', fontsize=8)
 
         # 4. Error vs Reference scatter
@@ -864,7 +899,9 @@ class ModelTester:
             bin_range = max_blur_ceil - min_blur_filter
             num_bins = 4
             bin_size = bin_range / num_bins
-            bins = [(min_blur_filter + i * bin_size, min_blur_filter + (i + 1) * bin_size) for i in range(num_bins)]
+            bins = [
+                (min_blur_filter +i * bin_size, min_blur_filter +(i +1) *bin_size)
+                for i in range(num_bins)]
         else:
             # Standard bins: 0 to max_blur
             bins = self._get_bins()
@@ -914,11 +951,13 @@ class ModelTester:
         axes[1, 1].set_ylabel('Frequency')
         axes[1, 1].set_title('Defocus Error Distribution')
         defocus_mae = np.mean(defocus_errors)
-        axes[1, 1].axvline(defocus_mae, color='r', linestyle='--', label=f'MAE: {defocus_mae:.2f} mm')
+        axes[1, 1].axvline(defocus_mae, color='r', linestyle='--',
+                           label=f'MAE: {defocus_mae:.2f} mm')
         axes[1, 1].legend()
 
         # 7. Predicted vs Reference Defocus Distance
-        axes[1, 2].scatter(df['defocus_gt_mm'], df['defocus_pred_mm'], alpha=0.5, s=20, color='steelblue')
+        axes[1, 2].scatter(df['defocus_gt_mm'], df['defocus_pred_mm'],
+                           alpha=0.5, s=20, color='steelblue')
         max_defocus = max(df['defocus_gt_mm'].abs().max(), df['defocus_pred_mm'].abs().max())
         axes[1, 2].plot([0, max_defocus], [0, max_defocus], 'r--', label='Perfect')
         axes[1, 2].set_xlabel('Reference Defocus (mm)')
@@ -928,7 +967,8 @@ class ModelTester:
         axes[1, 2].grid(True, alpha=0.3)
 
         # 8. Error vs Reference Defocus Distance
-        axes[1, 3].scatter(df['defocus_gt_mm'], df['defocus_error_mm'], alpha=0.5, s=20, color='steelblue')
+        axes[1, 3].scatter(df['defocus_gt_mm'], df['defocus_error_mm'],
+                           alpha=0.5, s=20, color='steelblue')
         axes[1, 3].set_xlabel('Reference Defocus (mm)')
         axes[1, 3].set_ylabel('Defocus Error (mm)')
         axes[1, 3].set_title('Error vs Reference Defocus')
@@ -1018,7 +1058,9 @@ class ModelTester:
         bars = axes[1].bar(['Reference', 'Predicted'], [gt_blur, pred_blur],
                            color=['#3498db', pred_color], edgecolor='black', linewidth=1.5)
         axes[1].set_ylabel(f'{self.blur_term} (px)', fontsize=11)
-        axes[1].set_title(f'{self.blur_term} Estimation (relative to sharpest crops)\nError: {error:.2f} px ({error/gt_blur*100:.1f}%)', fontsize=11)
+        axes[1].set_title(
+            f'{self.blur_term} Estimation (relative to sharpest crops)\nError: {error:.2f} px ({error/gt_blur*100:.1f}%)',
+            fontsize=11)
         # Set y-axis with 20% headroom for labels
         max_val = max(gt_blur, pred_blur)
         y_max = max_val * 1.2
@@ -1048,7 +1090,9 @@ class ModelTester:
 
         title_unc = f" (cal. unc. ±{unc_mm:.2f})" if unc_mm > 0 else ""
         axes[2].set_ylabel('Defocus Distance (mm)', fontsize=11)
-        axes[2].set_title(f'Defocus Distance Estimation\nError: {defocus_error_mm:.2f} mm{title_unc}', fontsize=11)
+        axes[2].set_title(
+            f'Defocus Distance Estimation\nError: {defocus_error_mm:.2f} mm{title_unc}',
+            fontsize=11)
 
         # Set y-axis with 20% headroom for labels
         max_defocus = max(abs(gt_defocus_mm), abs(pred_defocus_mm)) + unc_mm
@@ -1100,7 +1144,8 @@ class ModelTester:
         # Calculate interval based on range and number of samples
         interval = blur_range / (num_grid_samples - 1) if num_grid_samples > 1 else 0
 
-        print(f"\nSelecting grid samples across {self.blur_term} range: {min_blur:.2f} to {max_blur:.2f} px")
+        print(
+            f"\nSelecting grid samples across {self.blur_term} range: {min_blur:.2f} to {max_blur:.2f} px")
         print(f"Using interval: {interval:.2f} px for {num_grid_samples} samples")
 
         # Create target blur values evenly distributed across the range
@@ -1130,7 +1175,8 @@ class ModelTester:
                 selected_rows.append(df.iloc[best_idx])
                 selected_indices.add(best_idx)
                 actual = df.iloc[best_idx][f'{self.blur_col}_gt_px']
-                print(f"  Target: {target_blur:.2f} px → Selected: {actual:.2f} px (diff: {best_diff:.2f} px)")
+                print(
+                    f"  Target: {target_blur:.2f} px → Selected: {actual:.2f} px (diff: {best_diff:.2f} px)")
 
         print(f"Selected {len(selected_rows)} samples for grid summary")
 
@@ -1171,8 +1217,9 @@ class ModelTester:
                 else:
                     color = '#e74c3c'
 
-                ax.set_title(f'Ref: {gt:.1f} → Pred: {pred:.1f} px\nErr: {err:.2f} px ({err_pct:.0f}%)',
-                             fontsize=9, color=color, fontweight='bold')
+                ax.set_title(
+                    f'Ref: {gt:.1f} → Pred: {pred:.1f} px\nErr: {err:.2f} px ({err_pct:.0f}%)',
+                    fontsize=9, color=color, fontweight='bold')
                 ax.axis('off')
 
             except Exception as e:
@@ -1185,7 +1232,9 @@ class ModelTester:
             grid_col = idx % ncols
             axes[grid_row, grid_col].axis('off')
 
-        plt.suptitle(f'DME Grid Summary: {num_grid_samples} Samples Evenly Distributed Across {self.blur_term} Range', fontsize=14, fontweight='bold')
+        plt.suptitle(
+            f'DME Grid Summary: {num_grid_samples} Samples Evenly Distributed Across {self.blur_term} Range',
+            fontsize=14, fontweight='bold')
         plt.tight_layout(rect=[0, 0, 1, 0.97])  # Add space at top for title
 
         plt.savefig(output_dir / 'dme_grid_summary.png', dpi=150, bbox_inches='tight')
@@ -1261,12 +1310,14 @@ def main():
         total_samples = len(list(blur_dir.glob('*.png')))
         print("\n" + "=" * 60)
         print(f"Found {total_samples} samples in dataset")
-        samples_input = input(f"Number of samples to test (press Enter for all {total_samples}): ").strip()
+        samples_input = input(
+            f"Number of samples to test (press Enter for all {total_samples}): ").strip()
         if samples_input:
             try:
                 requested = int(samples_input)
                 if requested > total_samples:
-                    print(f"Warning: Requested {requested} but only {total_samples} available. Using {total_samples}.")
+                    print(
+                        f"Warning: Requested {requested} but only {total_samples} available. Using {total_samples}.")
                     args.samples = total_samples
                 elif requested <= 0:
                     args.samples = total_samples

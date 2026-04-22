@@ -196,7 +196,8 @@ def run_focus_classification() -> None:
 
             all_data.append(df)
 
-            print(f"    Classified: {folder_sharp} sharp / {folder_medium} medium / {folder_blurry} blurry")
+            print(
+                f"    Classified: {folder_sharp} sharp / {folder_medium} medium / {folder_blurry} blurry")
 
         except Exception as e:
             print(f"  Error processing {csv_path.name}: {e}")
@@ -262,7 +263,8 @@ def run_focus_classification() -> None:
                       f"({100*cam_sharp/cam_total:.1f}%), mean ERF σ={cam_erf_mean:.2f}px")
 
     # Generate summary plot
-    _generate_summary_plot(combined_df, stats_df, focus_dir, total_sharp, total_medium, total_blurry)
+    _generate_summary_plot(combined_df, stats_df, focus_dir,
+                           total_sharp, total_medium, total_blurry)
 
 
 def _generate_summary_plot(
@@ -280,7 +282,8 @@ def _generate_summary_plot(
         # Left: classification breakdown
         ax1 = axes[0]
         counts = [total_sharp, total_medium, total_blurry]
-        labels = [f'Sharp\n({total_sharp})', f'Medium\n({total_medium})', f'Blurry\n({total_blurry})']
+        labels = [f'Sharp\n({total_sharp})', f'Medium\n({total_medium})',
+                            f'Blurry\n({total_blurry})']
         colors = ['#2ecc71', '#f39c12', '#e74c3c']
         ax1.pie(counts, labels=labels, colors=colors, autopct='%1.0f%%', startangle=90)
         ax1.set_title('Focus Classification (ERF sigma, Per-Folder+Camera)')
@@ -336,7 +339,10 @@ def _generate_summary_plot(
             plt.subplots_adjust(left=0.18)
         else:
             stats_df_sorted = stats_df.sort_values('n_sharp', ascending=True)
-            ax2.barh(range(len(stats_df_sorted)), stats_df_sorted['n_sharp'], color='#22c55e', alpha=0.7)
+            ax2.barh(
+                range(len(stats_df_sorted)),
+                stats_df_sorted['n_sharp'],
+                color='#22c55e', alpha=0.7)
             ax2.set_yticks(range(len(stats_df_sorted)))
             ax2.set_yticklabels(stats_df_sorted['folder'].tolist(), fontsize=6)
 

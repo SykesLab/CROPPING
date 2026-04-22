@@ -361,7 +361,8 @@ def generate_folder_outputs(
 
                         # Flatten crop with adaptive margin
                         scale = _get_scale_for_crop(path.stem, cam)
-                        crop = _flatten_and_convert(crop, scale, source_id=f"{droplet_id}/{cam}/{path.stem}")
+                        crop = _flatten_and_convert(
+                            crop, scale, source_id=f"{droplet_id}/{cam}/{path.stem}")
 
                         # Compute focus metrics
                         if FOCUS_METRICS_ENABLED:

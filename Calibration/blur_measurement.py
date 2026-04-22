@@ -196,7 +196,8 @@ def measure_blur_erf(
     edge_margin = max(80, int(radius * 0.3))  # Sample ± this many pixels from edge
 
     if verbose:
-        print(f"  Edge margin: {edge_margin} px, sampling r=[{radius-edge_margin}, {radius+edge_margin}]")
+        print(
+            f"  Edge margin: {edge_margin} px, sampling r=[{radius-edge_margin}, {radius+edge_margin}]")
 
     for i in range(num_rays):
         angle = 2 * np.pi * i / num_rays
