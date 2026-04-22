@@ -34,3 +34,6 @@ inference_results/
 # Preprocessing outputs
 OUTPUTNEW*/
 OUTPUT/
+
+# Calibration outputs
+calibration_output/
