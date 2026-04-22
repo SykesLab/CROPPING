@@ -228,6 +228,10 @@ class SharpCropsScanner:
                             continue
 
                     images = self._get_image_files(camera_folder)
+                    # Also check for crops/ subfolder (material/camera/crops/)
+                    crops_subfolder = camera_folder / "crops"
+                    if not images and crops_subfolder.is_dir():
+                        images = self._get_image_files(crops_subfolder)
                     if images:
                         # Use combined name: material/camera
                         folder_name = f"{material_folder.name}/{camera_folder.name}"
@@ -1859,7 +1863,7 @@ This gives the model examples with known ground truth to learn from."""
         row2 = ttk.Frame(paths_frame)
         row2.pack(fill='x', pady=2)
         ttk.Label(row2, text="Crops Directory:", width=18).pack(side='left')
-        self.inf_input_var = tk.StringVar(value=r"C:\Users\justi\Downloads\coursework\testing_4mm\Preprocessing\OUTPUT")
+        self.inf_input_var = tk.StringVar(value="")
         ttk.Entry(row2, textvariable=self.inf_input_var, width=60).pack(side='left', padx=5)
         ttk.Button(row2, text="Browse", command=self._browse_inference_input).pack(side='left')
         ttk.Button(row2, text="Scan", command=self._scan_inference_crops).pack(side='left', padx=5)
@@ -2741,7 +2745,17 @@ This gives the model examples with known ground truth to learn from."""
                     z_max = float(self.inf_z_max_var.get())
                     focus_offset = float(self.inf_folder_focus_var.get())
                 except ValueError:
-                    z_min, z_max, focus_offset = -12.0, 12.0, 0.0
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Invalid z-range",
+                        "z-min, z-max, and focus offset must be valid numbers."))
+                    self.root.after(0, lambda: self.inf_preproc_status_var.set(""))
+                    return
+                if z_min >= z_max:
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Invalid z-range",
+                        "z-min must be less than z-max."))
+                    self.root.after(0, lambda: self.inf_preproc_status_var.set(""))
+                    return
 
                 temp_pos = []
                 for i, img_path in enumerate(image_files):
@@ -5683,7 +5697,20 @@ This gives the model examples with known ground truth to learn from."""
                     summary += f"Defocus Distance Metrics:\n"
                     summary += f"  MAE:  {defocus_mae_mm:.2f} mm\n"
                     summary += f"  RMSE: {defocus_rmse_mm:.2f} mm\n"
-                    summary += f"\n✓ Results: {output_path}\n{'='*60}"
+
+                    # Show calibration uncertainty if available
+                    if 'defocus_uncertainty_mm' in df.columns:
+                        mean_unc = df['defocus_uncertainty_mm'].mean()
+                        if mean_unc > 0:
+                            summary += f"\nCalibration Uncertainty:\n"
+                            summary += f"  Mean: \u00b1{mean_unc:.3f} mm\n"
+                            # Compare model error to calibration uncertainty
+                            if defocus_mae_mm < mean_unc:
+                                summary += f"  Model error < calibration uncertainty (at floor)\n"
+                            else:
+                                summary += f"  Model error > calibration uncertainty (room to improve)\n"
+
+                    summary += f"\n\u2713 Results: {output_path}\n{'='*60}"
                     self.msg_queue.put(('val_results', summary))
                     self.msg_queue.put(('log', summary))
 

@@ -42,8 +42,14 @@ matplotlib.use('Agg')
 
 logger = logging.getLogger(__name__)
 
+import sys as _sys
+_repo_root = str(Path(__file__).resolve().parent.parent)
+if _repo_root not in _sys.path:
+    _sys.path.insert(0, _repo_root)
+
 from model import DefocusNet
 from synthetic_blur import BlurParams, BlurCalculator
+from physics import ScalingParams, invert_prediction, defocus_uncertainty
 
 
 class DiameterMeasurer:
@@ -172,8 +178,14 @@ class RealCropInference:
                     raise ValueError(f"Calibration file missing 'direct' section: {calibration_file}")
                 self.direct_slope = float(cal_data['direct']['rho_px_per_mm'])
                 self.direct_offset = float(cal_data['direct'].get('sigma_0', 0.0))
+                loo = cal_data['direct'].get('loo_cv', {})
+                self.rho_std = float(loo.get('rho_std', 0.0))
+                self.sigma_0_std = float(loo.get('sigma_0_std', 0.0))
                 logger.info(f"  Direct calibration (from file): rho={self.direct_slope} px/mm, "
                       f"sigma_0={self.direct_offset} px  |z| = (sigma - sigma_0) / rho")
+                if self.rho_std > 0:
+                    logger.info(f"  LOO-CV uncertainty: rho_std={self.rho_std:.4f}, "
+                          f"sigma_0_std={self.sigma_0_std:.4f}")
             else:
                 # Fall back to checkpoint config (rho_direct and sigma_0 saved during training)
                 training_cfg = self.config.get('training', {})
@@ -186,6 +198,8 @@ class RealCropInference:
                     )
                 self.direct_slope = float(rho)
                 self.direct_offset = float(sigma_0) if sigma_0 is not None else 0.0
+                self.rho_std = float(training_cfg.get('rho_std', 0.0))
+                self.sigma_0_std = float(training_cfg.get('sigma_0_std', 0.0))
                 logger.info(f"  Direct calibration (from checkpoint): rho={self.direct_slope} px/mm, "
                       f"sigma_0={self.direct_offset} px  |z| = (sigma - sigma_0) / rho")
 
@@ -454,39 +468,52 @@ class RealCropInference:
                 offset = self.defocus_calibration.get('offset', 0.0)
                 defocus_mm = slope * defocus_mm + offset
         elif self.training_mode == 'direct':
-            # Direct mode: invert sigma_model → defocus.
-            # The model predicts total blur σ = (ρ|z| + σ₀) × (s_c/s_calib) × (w_model/w_crop)
-            # at model scale. To invert:
-            #   sigma_native = sigma_model × (native_size / model_size)
-            #   sigma_native is at experiment-camera scale, so σ₀ must also be at that scale:
-            #   σ₀_native = σ₀ × (s_c / s_calib)  [same cross-camera correction as ρ]
-            #   |z| = (sigma_native - σ₀_native) / rho_eff
+            # Direct mode: use canonical physics module for inversion
             native_size = max(original_size[0], original_size[1])
-            sigma_native = blur_px_model * native_size / self.model_size
-            sigma_0_calib = self.direct_offset if self.direct_offset is not None else 0.0
-            # Scale σ₀ from calibration to inference camera scale (same factor as ρ→ρ_eff)
+            pred_val = pred_norm.squeeze().item()
+
+            # Build ScalingParams — direct_slope is already cross-camera corrected,
+            # so set s_inference == s_calib to avoid double-correction
+            sigma_0_raw = self.direct_offset if self.direct_offset is not None else 0.0
             training_cfg = self.config.get('training', {})
             scale_calib = training_cfg.get('scale_calib_px_per_mm')
-            if self.inference_camera_scale_px_per_mm is not None and scale_calib is not None and float(scale_calib) > 0:
-                sigma_0_native = sigma_0_calib * (self.inference_camera_scale_px_per_mm / float(scale_calib))
-            else:
-                sigma_0_native = sigma_0_calib
-            defocus_mm = max(0.0, (sigma_native - sigma_0_native) / self.direct_slope)
+            s_inf = self.inference_camera_scale_px_per_mm or 1.0
+            s_cal = float(scale_calib) if scale_calib and float(scale_calib) > 0 else s_inf
+
+            # Use raw (uncorrected) rho — physics module applies cross-camera itself
+            rho_raw = self.direct_slope / (s_inf / s_cal) if s_cal > 0 else self.direct_slope
+
+            params = ScalingParams(
+                rho=rho_raw, sigma_0=sigma_0_raw,
+                s_calib=s_cal, s_inference=s_inf,
+                max_blur=self.max_blur, model_size=self.model_size,
+            )
+            inv = invert_prediction(pred_val, params, native_size)
+            defocus_mm = inv.defocus_mm
 
             # Log full inversion chain for the first crop
             if not self._first_crop_logged:
                 self._first_crop_logged = True
                 logger.debug(f"--- First crop inversion trace ({img_path.name}) ---")
-                logger.debug(f"  Input size: {original_size[1]}×{original_size[0]} → native_size = {native_size}")
-                logger.debug(f"  Model output (normalized): {pred_norm.squeeze().item():.4f}")
-                logger.debug(f"  sigma_model (denormalized): {blur_px_model:.4f} px")
-                logger.debug(f"  sigma_native = {blur_px_model:.4f} × {native_size}/{self.model_size} = {sigma_native:.4f} px")
-                logger.debug(f"  sigma_0_native = {sigma_0_calib:.4f} × scale_correction = {sigma_0_native:.4f} px")
-                logger.debug(f"  |z| = ({sigma_native:.4f} - {sigma_0_native:.4f}) / {self.direct_slope:.4f}"
-                       f" = {defocus_mm:.4f} mm")
+                logger.debug(f"  Input size: {original_size[1]}x{original_size[0]} -> native_size = {native_size}")
+                logger.debug(f"  pred_norm={inv.pred_norm:.4f}, sigma_model={inv.sigma_model:.4f} px")
+                logger.debug(f"  sigma_native={inv.sigma_native:.4f} px, defocus={inv.defocus_mm:.4f} mm")
+                logger.debug(f"  rho_eff={params.rho_eff:.4f}, sigma_0_eff={params.sigma_0_eff:.4f}")
+                logger.debug(f"  clamped={inv.clamped}, saturated={inv.saturated}")
                 logger.debug(f"-----------------------------------------------")
         else:
             raise ValueError(f"Unknown training_mode: {self.training_mode}")
+
+        # Compute calibration uncertainty if available
+        unc_mm = 0.0
+        rho_std = getattr(self, 'rho_std', 0.0)
+        sigma_0_std = getattr(self, 'sigma_0_std', 0.0)
+        if rho_std > 0 and self.training_mode == 'direct' and self.direct_slope > 0:
+            unc_mm = defocus_uncertainty(
+                blur_px, self.direct_slope,
+                self.direct_offset if self.direct_offset else 0.0,
+                rho_std, sigma_0_std,
+            )
 
         # Measure diameter from original image
         diameter_original, _, _ = self.diameter_measurer.measure_diameter(original_img / 255.0)
@@ -497,6 +524,7 @@ class RealCropInference:
             'filename': img_path.name,
             blur_col: blur_px,
             'defocus_mm': defocus_mm,
+            'defocus_uncertainty_mm': unc_mm,
             'focus_status': focus_status,
             'diameter_original_px': diameter_original,
             'original_size': original_size
@@ -513,7 +541,8 @@ class RealCropInference:
                 defocus_mm,
                 diameter_original,
                 img_path.stem,
-                viz_dir
+                viz_dir,
+                defocus_uncertainty_mm=unc_mm,
             )
 
         return results
@@ -525,14 +554,16 @@ class RealCropInference:
         defocus_mm: float,
         diameter_original: float,
         name: str,
-        output_dir: Path
+        output_dir: Path,
+        defocus_uncertainty_mm: float = 0.0,
     ):
         """Create visualization showing the original image with blur/defocus annotations."""
 
         fig, ax = plt.subplots(1, 1, figsize=(7, 6))
 
+        unc_str = f" \u00b1 {defocus_uncertainty_mm:.2f}" if defocus_uncertainty_mm > 0 else ""
         ax.imshow(original, cmap='gray', vmin=0, vmax=255)
-        ax.set_title(f'{name}\n{self.blur_term}: {blur_px:.2f} px | Defocus: {defocus_mm:.2f} mm',
+        ax.set_title(f'{name}\n{self.blur_term}: {blur_px:.2f} px | Defocus: {defocus_mm:.2f}{unc_str} mm',
                      fontsize=12, fontweight='bold')
         ax.axis('off')
         self._add_diameter_arrow(ax, original / 255.0)
@@ -1108,7 +1139,7 @@ def main():
     parser.add_argument(
         '--input', '-i',
         type=str,
-        default=r'C:\Users\justi\Downloads\coursework\testing_4mm\Preprocessing\OUTPUT',
+        default='',
         help='Input directory containing material subfolders with crops'
     )
     parser.add_argument(

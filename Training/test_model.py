@@ -24,8 +24,14 @@ matplotlib.use('Agg')  # Non-interactive backend
 from PIL import Image
 from datetime import datetime
 
+import sys as _sys
+_repo_root = str(Path(__file__).resolve().parent.parent)
+if _repo_root not in _sys.path:
+    _sys.path.insert(0, _repo_root)
+
 from model import DefocusNet
 from synthetic_blur import BlurParams, BlurCalculator
+from physics import defocus_uncertainty
 
 
 class TestDataset(Dataset):
@@ -170,6 +176,16 @@ class ModelTester:
             print(f"⚠ max_blur not found in checkpoint, using config default: {self.max_blur:.2f} px")
 
         print(f"Device: {self.device}")
+
+        # LOO-CV calibration uncertainties (loaded from config if available)
+        training_cfg = self.config.get('training', {})
+        self.rho_std = float(training_cfg.get('rho_std', 0.0))
+        self.sigma_0_std = float(training_cfg.get('sigma_0_std', 0.0))
+        # Also try direct calibration params for defocus uncertainty
+        self.rho_direct = float(training_cfg.get('rho_direct', 0.0))
+        self.sigma_0_direct = float(training_cfg.get('sigma_0', 0.0))
+        if self.rho_std > 0:
+            print(f"Calibration uncertainty: rho_std={self.rho_std:.4f}, sigma_0_std={self.sigma_0_std:.4f}")
 
         # Calculate bin weights from beta distribution
         self.bin_weights = self._calculate_bin_weights_from_beta()
@@ -508,6 +524,14 @@ class ModelTester:
                     defocus_error_mm = abs(defocus_pred_mm - defocus_gt_mm)
                     defocus_error_pct = (defocus_error_mm / abs(defocus_gt_mm) * 100) if defocus_gt_mm != 0 else 0
 
+                    # Compute calibration uncertainty for this prediction
+                    unc_mm = 0.0
+                    if self.rho_std > 0 and self.rho_direct > 0:
+                        unc_mm = defocus_uncertainty(
+                            pred_blur_px, self.rho_direct, self.sigma_0_direct,
+                            self.rho_std, self.sigma_0_std,
+                        )
+
                     results.append({
                         'sample': sample_name,
                         f'{self.blur_col}_gt_px': blur_value_gt,
@@ -517,7 +541,8 @@ class ModelTester:
                         'defocus_gt_mm': defocus_gt_mm,
                         'defocus_pred_mm': defocus_pred_mm,
                         'defocus_error_mm': defocus_error_mm,
-                        'defocus_error_pct': defocus_error_pct
+                        'defocus_error_pct': defocus_error_pct,
+                        'defocus_uncertainty_mm': unc_mm,
                     })
 
                     # Debug: Print first 3 predictions to verify model is running
@@ -533,7 +558,8 @@ class ModelTester:
                             'pred_blur_map': pred_blur_map.cpu(),
                             'blur_value_gt': blur_value_gt,
                             'pred_blur_px': pred_blur_px,
-                            'error': error
+                            'error': error,
+                            'defocus_uncertainty_mm': unc_mm,
                         })
 
                     global_idx += 1
@@ -1144,21 +1170,35 @@ class ModelTester:
         axes[1].grid(axis='y', alpha=0.3)
 
         # 3. Defocus Distance Bar chart comparison (same color coding)
+        unc_mm = sample_data.get('defocus_uncertainty_mm', 0.0)
         bars_defocus = axes[2].bar(['Reference', 'Predicted'], [gt_defocus_mm, pred_defocus_mm],
                                    color=['#3498db', pred_color], edgecolor='black', linewidth=1.5)
+
+        # Add uncertainty error bar on predicted bar
+        if unc_mm > 0:
+            pred_bar = bars_defocus[1]
+            axes[2].errorbar(
+                pred_bar.get_x() + pred_bar.get_width() / 2, pred_defocus_mm,
+                yerr=unc_mm, fmt='none', ecolor='black', capsize=5, linewidth=2,
+            )
+
+        title_unc = f" (cal. unc. ±{unc_mm:.2f})" if unc_mm > 0 else ""
         axes[2].set_ylabel('Defocus Distance (mm)', fontsize=11)
-        axes[2].set_title(f'Defocus Distance Estimation\nError: {defocus_error_mm:.2f} mm', fontsize=11)
+        axes[2].set_title(f'Defocus Distance Estimation\nError: {defocus_error_mm:.2f} mm{title_unc}', fontsize=11)
 
         # Set y-axis with 20% headroom for labels
-        max_defocus = max(abs(gt_defocus_mm), abs(pred_defocus_mm))
+        max_defocus = max(abs(gt_defocus_mm), abs(pred_defocus_mm)) + unc_mm
         y_max_defocus = max(max_defocus * 1.2, 0.1)
         axes[2].set_ylim(0, y_max_defocus)
 
         # Add value labels on bars
         for bar, val in zip(bars_defocus, [gt_defocus_mm, pred_defocus_mm]):
             label_y = bar.get_height() + (y_max_defocus - bar.get_height()) * 0.25
+            label_text = f'{val:.2f} mm'
+            if bar == bars_defocus[1] and unc_mm > 0:
+                label_text = f'{val:.2f} ± {unc_mm:.2f} mm'
             axes[2].text(bar.get_x() + bar.get_width()/2, label_y,
-                        f'{val:.2f} mm', ha='center', va='center', fontsize=12, fontweight='bold')
+                        label_text, ha='center', va='center', fontsize=11, fontweight='bold')
 
         axes[2].grid(axis='y', alpha=0.3)
 
