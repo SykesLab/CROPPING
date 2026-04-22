@@ -116,7 +116,7 @@ def diag_calibration_fit(inputs: Dict) -> Tuple[Figure, str]:
 
     bars = axes[1].barh(params, values, color=colours, edgecolor="black")
     for bar, val in zip(bars, values):
-        axes[1].text(bar.get_width() + 0.02 * max(values), bar.get_y() + bar.get_height() /2,
+        axes[1].text(bar.get_width() + 0.02 * max(values), bar.get_y() + bar.get_height() / 2,
                      f"{val:.4f}" if isinstance(val, float) else str(val),
                      va="center", fontsize=9)
     axes[1].set_title("Parameter Plausibility")
@@ -127,7 +127,7 @@ def diag_calibration_fit(inputs: Dict) -> Tuple[Figure, str]:
         labels = ["rho", "sigma_0"]
         means = [rho, sigma_0]
         stds = [loo["rho_std"], loo["sigma_0_std"]]
-        cvs = [s /m *100 if m > 0 else 0 for s, m in zip(stds, means)]
+        cvs = [s / m * 100 if m > 0 else 0 for s, m in zip(stds, means)]
         axes[2].bar(labels, cvs, color="steelblue", edgecolor="black")
         for i, (cv, std, mean) in enumerate(zip(cvs, stds, means)):
             axes[2].text(i, cv + 0.5, f"{mean:.4f} +/- {std:.4f}\n(CV={cv:.1f}%)",

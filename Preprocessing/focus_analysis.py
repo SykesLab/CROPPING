@@ -204,7 +204,7 @@ def plot_metric_comparison(
         return
 
     n = len(metrics)
-    fig, axes = plt.subplots(n -1, n -1, figsize=(3 *(n -1), 3 *(n -1)))
+    fig, axes = plt.subplots(n - 1, n - 1, figsize=(3 * (n - 1), 3 * (n - 1)))
 
     if n == 2:
         axes = np.array([[axes]])
