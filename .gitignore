@@ -1,0 +1,36 @@
+# Virtual environments
+venv/
+phantom_env/
+.venv/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+nul
+
+# Pytest
+.pytest_cache/
+
+# Large data / outputs (generated, not tracked)
+*.cine
+*.pth
+training_output/
+test_results/
+synthetic_data/
+inference_results/
+
+# Preprocessing outputs
+OUTPUTNEW*/
+OUTPUT/
