@@ -829,8 +829,9 @@ class TrainingGUI:
         self.load_calib_btn = ttk.Button(
             self.config_btn_frame, text="Load from Calibration", command=self._load_from_calibration)
         self.load_calib_btn.pack(side='left', padx=5)
-        ttk.Button(self.config_btn_frame, text="Calculate",
-                   command=self._update_calculated).pack(side='left', padx=5)
+        self.calculate_btn = ttk.Button(self.config_btn_frame, text="Calculate",
+                                         command=self._update_calculated)
+        self.calculate_btn.pack(side='left', padx=5)
 
         # Save button - text changes based on mode
         self.save_config_btn = ttk.Button(
@@ -4156,6 +4157,8 @@ This gives the model examples with known ground truth to learn from."""
             self.rho_row.pack(fill='x', pady=2)
             # Show "Load from Calibration" button
             self.load_calib_btn.pack(side='left', padx=5)
+            # Show Calculate button (optical-only)
+            self.calculate_btn.pack(side='left', padx=5)
             # Show calculated values (optical-only: aperture, imaging distance, magnification)
             self.calc_values_frame.pack(fill='x', pady=5)
             # Clear direct params to prevent stale data (USER CONSTRAINT: clear on mode switch)
@@ -4185,6 +4188,8 @@ This gives the model examples with known ground truth to learn from."""
             self.rho_row.pack_forget()
             # Hide "Load from Calibration" button
             self.load_calib_btn.pack_forget()
+            # Hide Calculate button (optical-only)
+            self.calculate_btn.pack_forget()
             # Hide calculated values (optical-only)
             self.calc_values_frame.pack_forget()
             # Update description
