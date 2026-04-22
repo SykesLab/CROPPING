@@ -28,7 +28,6 @@ import yaml
 import argparse
 from datetime import datetime
 from tqdm import tqdm
-import shutil
 from typing import Dict, Any, Optional, Tuple, List
 
 from model import DefocusNet, model_summary
@@ -277,74 +276,8 @@ class Trainer:
         return self.stop_flag()
 
     def _calculate_bin_weights_from_beta(self) -> list:
-        """Calculate bin weights from beta distribution parameters.
-
-        Returns:
-            List of 4 weights that sum to 1.0, representing the distribution
-            of samples across equal-width blur bins.
-        """
-        data_cfg = self.config.get('data', {})
-        blur_distribution = data_cfg.get('blur_distribution', data_cfg.get('coc_distribution'))
-        beta_alpha = data_cfg.get('beta_alpha')
-        beta_beta = data_cfg.get('beta_beta')
-
-        # If no distribution type specified, infer from presence of beta parameters
-        if blur_distribution is None:
-            if beta_alpha is not None and beta_beta is not None:
-                blur_distribution = 'weighted'
-            else:
-                # No distribution type and no beta params -> assume uniform
-                logger.info("ℹ️  No distribution type or beta parameters found in config")
-                logger.info("   Defaulting to uniform distribution: equal bin weights [0.25, 0.25, 0.25, 0.25]")
-                return [0.25, 0.25, 0.25, 0.25]
-
-        # If uniform distribution, use equal weights
-        if blur_distribution == 'uniform':
-            logger.info("ℹ️  Using uniform distribution: equal bin weights [0.25, 0.25, 0.25, 0.25]")
-            return [0.25, 0.25, 0.25, 0.25]
-
-        # For weighted distribution, calculate from beta parameters
-        if beta_alpha is None or beta_beta is None:
-            logger.warning("⚠️  Weighted distribution specified but beta parameters not found!")
-            logger.warning("   Falling back to uniform weights [0.25, 0.25, 0.25, 0.25]")
-            logger.warning("   To fix: Re-generate data with 'weighted' distribution and beta parameters")
-            return [0.25, 0.25, 0.25, 0.25]
-
-        try:
-            from scipy import stats
-
-            # Sample from beta distribution
-            num_samples = 100000
-            beta_samples = stats.beta.rvs(beta_alpha, beta_beta, size=num_samples)
-
-            # Calculate distribution across 4 equal-width bins [0, 0.25), [0.25, 0.5), [0.5, 0.75), [0.75, 1.0]
-            bin_edges = [0.0, 0.25, 0.5, 0.75, 1.0]
-            weights = []
-
-            for i in range(4):
-                count = np.sum((beta_samples >= bin_edges[i]) & (beta_samples < bin_edges[i+1]))
-                weight = count / num_samples
-                weights.append(weight)
-
-            # Normalize to ensure they sum to exactly 1.0
-            total = sum(weights)
-            weights = [w / total for w in weights]
-
-            logger.info(f"ℹ️  Calculated bin weights from β({beta_alpha:.3f}, {beta_beta:.3f}):")
-            logger.info(f"   Bin 1 (0-25%):   {weights[0]:.1%}")
-            logger.info(f"   Bin 2 (25-50%):  {weights[1]:.1%}")
-            logger.info(f"   Bin 3 (50-75%):  {weights[2]:.1%}")
-            logger.info(f"   Bin 4 (75-100%): {weights[3]:.1%}")
-
-            return weights
-
-        except ImportError:
-            logger.warning("⚠️  scipy not available, using default weights [0.40, 0.30, 0.20, 0.10]")
-            return [0.40, 0.30, 0.20, 0.10]
-        except Exception as e:
-            logger.warning(f"⚠️  Error calculating bin weights: {e}")
-            logger.warning("   Using default weights [0.40, 0.30, 0.20, 0.10]")
-            return [0.40, 0.30, 0.20, 0.10]
+        from utils import calculate_bin_weights_from_beta
+        return calculate_bin_weights_from_beta(self.config)
 
     def _update_lr(self, optimizer: optim.Optimizer, epoch: int, base_lr: float):
         """Update optimiser learning rate."""
