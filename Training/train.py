@@ -840,16 +840,16 @@ class Trainer:
 
         # Use explicit checkpoint if provided, otherwise auto-detect
         if force_fresh_start:
-            logger.info("ℹ Training from scratch (no checkpoint loaded)")
+            logger.info("Training from scratch (no checkpoint loaded)")
             resume_checkpoint = None
         elif explicit_checkpoint:
             checkpoint_path = Path(explicit_checkpoint)
             if checkpoint_path.exists():
-                logger.info(f"ℹ Using specified checkpoint: {checkpoint_path.name}")
+                logger.info(f"Using specified checkpoint: {checkpoint_path.name}")
                 resume_checkpoint = str(checkpoint_path)
             else:
                 logger.warning(f"WARNING:Specified checkpoint not found: {explicit_checkpoint}")
-                logger.info("ℹ Falling back to auto-detection")
+                logger.info("Falling back to auto-detection")
                 resume_checkpoint = self._find_latest_checkpoint('dme', preference=checkpoint_preference)
         else:
             # Auto-detect based on preference
@@ -876,7 +876,7 @@ class Trainer:
         """
         # Handle fresh start request
         if preference == 'fresh':
-            logger.info("ℹ Starting fresh training (no checkpoint loaded)")
+            logger.info("Starting fresh training (no checkpoint loaded)")
             return None
 
         # Determine checkpoint paths
@@ -897,17 +897,17 @@ class Trainer:
                     except (ValueError, IndexError):
                         return 0
                 checkpoint_to_use = max(epoch_checkpoints, key=get_epoch_num)
-                logger.info(f"ℹ Resuming from latest epoch checkpoint: {checkpoint_to_use.name}")
+                logger.info(f"Resuming from latest epoch checkpoint: {checkpoint_to_use.name}")
             elif best_checkpoint.exists():
                 checkpoint_to_use = best_checkpoint
-                logger.info(f"ℹ No epoch checkpoints found, using best checkpoint: {checkpoint_to_use.name}")
+                logger.info(f"No epoch checkpoints found, using best checkpoint: {checkpoint_to_use.name}")
             else:
-                logger.info(f"ℹ No checkpoints found, starting fresh")
+                logger.info(f"No checkpoints found, starting fresh")
                 return None
         else:  # preference == 'best'
             if best_checkpoint.exists():
                 checkpoint_to_use = best_checkpoint
-                logger.info(f"ℹ Resuming from best checkpoint: {checkpoint_to_use.name}")
+                logger.info(f"Resuming from best checkpoint: {checkpoint_to_use.name}")
             else:
                 backup_patterns = ['dme_best_old.pth', 'dme_best_backup.pth', 'dme_best_v*.pth']
                 for pattern in backup_patterns:
@@ -917,7 +917,7 @@ class Trainer:
                         break
 
                 if checkpoint_to_use:
-                    logger.info(f"ℹ Using backup checkpoint: {checkpoint_to_use.name}")
+                    logger.info(f"Using backup checkpoint: {checkpoint_to_use.name}")
 
         if checkpoint_to_use:
             # Load and display checkpoint info
@@ -937,7 +937,7 @@ class Trainer:
         stage_checkpoints = list(self.output_dir.glob(epoch_pattern))
         if stage_checkpoints:
             latest = max(stage_checkpoints, key=lambda p: p.stat().st_mtime)
-            logger.info(f"ℹ No best checkpoint, using latest: {latest.name}")
+            logger.info(f"No best checkpoint, using latest: {latest.name}")
             return str(latest)
 
         return None
