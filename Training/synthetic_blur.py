@@ -961,6 +961,15 @@ class SyntheticBlurGenerator:
 
         return blurred, coc_map
 
+    def _sample_in_range(self, lo: float, hi: float) -> float:
+        """Sample a value in [lo, hi] using weighted (beta) or uniform distribution."""
+        if hi <= lo:
+            return 0.0
+        if self.blur_distribution == "weighted":
+            beta_sample = np.random.beta(a=self.beta_alpha, b=self.beta_beta)
+            return lo + beta_sample * (hi - lo)
+        return random.uniform(lo, hi)
+
     def generate_sample(
         self,
         sharp_image: Optional[np.ndarray] = None,
@@ -1041,14 +1050,7 @@ class SyntheticBlurGenerator:
                 min_model = self.min_sigma_model
                 max_model = self.max_sigma
 
-                if max_model > min_model:
-                    if self.blur_distribution == "weighted":
-                        beta_sample = np.random.beta(a=self.beta_alpha, b=self.beta_beta)
-                        sigma_model = min_model + beta_sample * (max_model - min_model)
-                    else:
-                        sigma_model = random.uniform(min_model, max_model)
-                else:
-                    sigma_model = 0.0
+                sigma_model = self._sample_in_range(min_model, max_model)
 
                 # Back-compute calibration-space sigma and physical defocus
                 sigma_calib = sigma_model / (cc_factor * self.native_to_model_scale)
@@ -1062,15 +1064,7 @@ class SyntheticBlurGenerator:
                 if self.min_blur_px is not None and self.min_blur_px > min_sigma_calib:
                     min_sigma_calib = self.min_blur_px
 
-                if max_sigma_calib > min_sigma_calib:
-                    if self.blur_distribution == "weighted":
-                        beta_sample = np.random.beta(a=self.beta_alpha, b=self.beta_beta)
-                        sigma_defocus = min_sigma_calib + beta_sample * \
-                            (max_sigma_calib - min_sigma_calib)
-                    else:
-                        sigma_defocus = random.uniform(min_sigma_calib, max_sigma_calib)
-                else:
-                    sigma_defocus = 0.0
+                sigma_defocus = self._sample_in_range(min_sigma_calib, max_sigma_calib)
                 abs_defocus = (sigma_defocus - sigma_0) / rho if rho and rho > 0 else 0.0
                 sigma_defocus *= cc_factor
                 sigma_model = sigma_defocus * self.native_to_model_scale
@@ -1112,12 +1106,7 @@ class SyntheticBlurGenerator:
         else:
             # Optical mode: existing CoC-based workflow
             if coc_px is None:
-                if self.blur_distribution == "weighted":
-                    beta_sample = np.random.beta(a=self.beta_alpha, b=self.beta_beta)
-                    coc_px = self.coc_range[0] + beta_sample * \
-                        (self.coc_range[1] - self.coc_range[0])
-                else:
-                    coc_px = random.uniform(self.coc_range[0], self.coc_range[1])
+                coc_px = self._sample_in_range(self.coc_range[0], self.coc_range[1])
 
             # Apply blur
             blurred, coc_map = self.blur_image(sharp_image, coc_px)
