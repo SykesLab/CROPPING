@@ -226,10 +226,13 @@ class CalibrationGUI:
         source_type_frame.pack(fill='x', pady=5)
 
         self.source_type_var = tk.StringVar(value="folder")
-        ttk.Radiobutton(source_type_frame, text="Image Folder", variable=self.source_type_var,
-                        value="folder", command=self._on_source_type_change).pack(side='left', padx=5)
-        cine_rb = ttk.Radiobutton(source_type_frame, text=".cine File", variable=self.source_type_var,
-                                  value="cine", command=self._on_source_type_change)
+        ttk.Radiobutton(
+            source_type_frame, text="Image Folder", variable=self.source_type_var, value="folder",
+            command=self._on_source_type_change).pack(
+            side='left', padx=5)
+        cine_rb = ttk.Radiobutton(source_type_frame, text=".cine File",
+                                  variable=self.source_type_var, value="cine",
+                                  command=self._on_source_type_change)
         cine_rb.pack(side='left', padx=5)
 
         # Show pyphantom status
@@ -243,7 +246,8 @@ class CalibrationGUI:
         self.source_container.pack(fill='x', pady=0)
 
         # === Image Folder Source ===
-        self.folder_source_frame = ttk.LabelFrame(self.source_container, text="Image Folder Source", padding=10)
+        self.folder_source_frame = ttk.LabelFrame(
+            self.source_container, text="Image Folder Source", padding=10)
         self.folder_source_frame.pack(fill='x', pady=5)
 
         row1 = ttk.Frame(self.folder_source_frame)
@@ -276,7 +280,9 @@ class CalibrationGUI:
         self.folder_focus_var = tk.StringVar(value="0")
         ttk.Entry(row3, textvariable=self.folder_focus_var, width=6).pack(side='left', padx=2)
         ttk.Label(row3, text="mm", font=('', 8)).pack(side='left', padx=2)
-        ttk.Button(row3, text="Find Focus", command=self._find_focus_from_images).pack(side='left', padx=10)
+        ttk.Button(
+            row3, text="Find Focus", command=self._find_focus_from_images).pack(
+            side='left', padx=10)
 
         # Generate positions (inside folder source frame)
         gen_frame = ttk.Frame(self.folder_source_frame)
@@ -296,12 +302,16 @@ class CalibrationGUI:
         ttk.Entry(range_row, textvariable=self.z_step_var, width=6).pack(side='left', padx=(0, 5))
         ttk.Label(range_row, text="mm", font=('', 8)).pack(side='left')
 
-        ttk.Button(gen_frame, text="Generate", command=self._generate_positions).pack(anchor='w', pady=2)
+        ttk.Button(
+            gen_frame, text="Generate", command=self._generate_positions).pack(
+            anchor='w', pady=2)
         self.positions_info_var = tk.StringVar(value="")
-        ttk.Label(gen_frame, textvariable=self.positions_info_var, foreground='gray', font=('', 8)).pack(anchor='w')
+        ttk.Label(gen_frame, textvariable=self.positions_info_var,
+                  foreground='gray', font=('', 8)).pack(anchor='w')
 
         # === .cine Folder Source ===
-        self.cine_source_frame = ttk.LabelFrame(self.source_container, text=".cine Folder Source", padding=10)
+        self.cine_source_frame = ttk.LabelFrame(
+            self.source_container, text=".cine Folder Source", padding=10)
         # Not packed initially - shown when source type changes to "cine"
 
         cine_row1 = ttk.Frame(self.cine_source_frame)
@@ -316,11 +326,18 @@ class CalibrationGUI:
         cine_row1b.pack(fill='x', pady=2)
         ttk.Label(cine_row1b, text="Positions CSV:", width=14).pack(side='left')
         self.cine_positions_csv_var = tk.StringVar()
-        ttk.Entry(cine_row1b, textvariable=self.cine_positions_csv_var, width=35).pack(side='left', padx=5)
-        ttk.Button(cine_row1b, text="Browse", command=self._browse_cine_positions_csv).pack(side='left')
+        ttk.Entry(
+            cine_row1b, textvariable=self.cine_positions_csv_var, width=35).pack(
+            side='left', padx=5)
+        ttk.Button(
+            cine_row1b, text="Browse", command=self._browse_cine_positions_csv).pack(
+            side='left')
 
-        ttk.Label(self.cine_source_frame, text="(optional: CSV with filename, stage_position_mm columns)",
-                  font=('', 8), foreground='gray').pack(anchor='w', padx=14)
+        ttk.Label(
+            self.cine_source_frame, text="(optional: CSV with filename, stage_position_mm columns)",
+            font=('', 8),
+            foreground='gray').pack(
+            anchor='w', padx=14)
 
         # Stage position mapping (fallback when no CSV)
         cine_row2 = ttk.Frame(self.cine_source_frame)
@@ -332,7 +349,10 @@ class CalibrationGUI:
         ttk.Label(cine_row2, text="End:", width=4).pack(side='left')
         self.stage_end_var = tk.StringVar(value="12")
         ttk.Entry(cine_row2, textvariable=self.stage_end_var, width=6).pack(side='left', padx=2)
-        ttk.Label(cine_row2, text="mm (used if no CSV)", font=('', 8), foreground='gray').pack(side='left', padx=5)
+        ttk.Label(
+            cine_row2, text="mm (used if no CSV)", font=('', 8),
+            foreground='gray').pack(
+            side='left', padx=5)
 
         # Defocus offset (stage position where defocus = 0)
         cine_row3 = ttk.Frame(self.cine_source_frame)
@@ -341,18 +361,26 @@ class CalibrationGUI:
         self.stage_focus_var = tk.StringVar(value="6")
         ttk.Entry(cine_row3, textvariable=self.stage_focus_var, width=6).pack(side='left', padx=2)
         ttk.Label(cine_row3, text="mm", font=('', 8)).pack(side='left', padx=2)
-        ttk.Button(cine_row3, text="Find Focus", command=self._find_focus_position).pack(side='left', padx=10)
+        ttk.Button(
+            cine_row3, text="Find Focus", command=self._find_focus_position).pack(
+            side='left', padx=10)
 
         # Frame selection (which frame to extract from each .cine file)
         cine_row4 = ttk.Frame(self.cine_source_frame)
         cine_row4.pack(fill='x', pady=2)
         ttk.Label(cine_row4, text="Frame index:", width=14).pack(side='left')
         self.cine_frame_idx_var = tk.StringVar(value="0")
-        ttk.Entry(cine_row4, textvariable=self.cine_frame_idx_var, width=6).pack(side='left', padx=2)
-        ttk.Label(cine_row4, text="(which frame from each .cine)", font=('', 8), foreground='gray').pack(side='left', padx=5)
+        ttk.Entry(
+            cine_row4, textvariable=self.cine_frame_idx_var, width=6).pack(
+            side='left', padx=2)
+        ttk.Label(
+            cine_row4, text="(which frame from each .cine)", font=('', 8),
+            foreground='gray').pack(
+            side='left', padx=5)
 
         self.cine_info_var = tk.StringVar(value="")
-        ttk.Label(self.cine_source_frame, textvariable=self.cine_info_var, font=('', 8), foreground='blue').pack(anchor='w', pady=2)
+        ttk.Label(self.cine_source_frame, textvariable=self.cine_info_var,
+                  font=('', 8), foreground='blue').pack(anchor='w', pady=2)
 
         # Metadata
         meta_frame = ttk.LabelFrame(left_panel, text="Calibration Metadata", padding=10)
@@ -362,9 +390,13 @@ class CalibrationGUI:
         meta_row1.pack(fill='x', pady=2)
         ttk.Label(meta_row1, text="Camera:", width=12).pack(side='left')
         self.camera_var = tk.StringVar(value="g")
-        camera_combo = ttk.Combobox(meta_row1, textvariable=self.camera_var, values=["g", "m", "v", "custom"], width=12)
+        camera_combo = ttk.Combobox(meta_row1, textvariable=self.camera_var, values=[
+                                    "g", "m", "v", "custom"], width=12)
         camera_combo.pack(side='left')
-        ttk.Label(meta_row1, text="(g=green, m=mono, v=violet)", font=('', 8), foreground='gray').pack(side='left', padx=5)
+        ttk.Label(
+            meta_row1, text="(g=green, m=mono, v=violet)", font=('', 8),
+            foreground='gray').pack(
+            side='left', padx=5)
 
         self.aperture_var = tk.StringVar(value="unknown")
 
@@ -372,7 +404,8 @@ class CalibrationGUI:
         load_btn_frame = ttk.Frame(left_panel)
         load_btn_frame.pack(fill='x', pady=10)
 
-        self.load_btn = ttk.Button(load_btn_frame, text="Load Z-Stack Images", command=self._load_zstack)
+        self.load_btn = ttk.Button(
+            load_btn_frame, text="Load Z-Stack Images", command=self._load_zstack)
         self.load_btn.pack(side='left', padx=5)
 
         # Sphere processing section
@@ -389,20 +422,31 @@ class CalibrationGUI:
         crop_row1d = ttk.Frame(crop_frame)
         crop_row1d.pack(fill='x', pady=2)
         ttk.Label(crop_row1d, text="Sphere diameter (mm):").pack(side='left')
-        ttk.Entry(crop_row1d, textvariable=self.sphere_diameter_mm_var, width=6).pack(side='left', padx=5)
+        ttk.Entry(
+            crop_row1d, textvariable=self.sphere_diameter_mm_var, width=6).pack(
+            side='left', padx=5)
         ttk.Label(crop_row1d, text="(physical size of calibration sphere)",
                   foreground='gray', font=('', 8)).pack(side='left')
 
         crop_row2 = ttk.Frame(crop_frame)
         crop_row2.pack(fill='x', pady=2)
-        ttk.Button(crop_row2, text="Process Spheres", command=self._process_spheres).pack(side='left', padx=2)
-        ttk.Button(crop_row2, text="Save Processed", command=self._save_cropped_images).pack(side='left', padx=2)
+        ttk.Button(
+            crop_row2, text="Process Spheres", command=self._process_spheres).pack(
+            side='left', padx=2)
+        ttk.Button(
+            crop_row2, text="Save Processed", command=self._save_cropped_images).pack(
+            side='left', padx=2)
         self.crop_status_var = tk.StringVar(value="")
-        ttk.Label(crop_row2, textvariable=self.crop_status_var, font=('', 8), foreground='blue').pack(side='left', padx=5)
+        ttk.Label(
+            crop_row2, textvariable=self.crop_status_var, font=('', 8),
+            foreground='blue').pack(
+            side='left', padx=5)
 
         # Loading progress
         self.load_progress_var = tk.DoubleVar(value=0)
-        ttk.Progressbar(left_panel, variable=self.load_progress_var, maximum=100).pack(fill='x', pady=5)
+        ttk.Progressbar(
+            left_panel, variable=self.load_progress_var, maximum=100).pack(
+            fill='x', pady=5)
 
         # Status
         self.load_status_var = tk.StringVar(value="No images loaded")
@@ -412,7 +456,8 @@ class CalibrationGUI:
         stats_frame = ttk.LabelFrame(left_panel, text="Z-Stack Statistics", padding=10)
         stats_frame.pack(fill='x', pady=5)
 
-        self.zstack_stats_text = tk.Text(stats_frame, height=8, width=45, state='disabled', font=('Courier', 9))
+        self.zstack_stats_text = tk.Text(
+            stats_frame, height=8, width=45, state='disabled', font=('Courier', 9))
         self.zstack_stats_text.pack(fill='x')
 
         # === RIGHT PANEL ===
@@ -429,7 +474,8 @@ class CalibrationGUI:
         style = ttk.Style()
         bg_color = style.lookup('TFrame', 'background') or self.root.cget('bg')
 
-        self.preview_canvas = tk.Canvas(canvas_container, width=450, height=450, bg=bg_color, highlightthickness=0, bd=0)
+        self.preview_canvas = tk.Canvas(canvas_container, width=450,
+                                        height=450, bg=bg_color, highlightthickness=0, bd=0)
         self.preview_canvas.pack(pady=5)
 
         # Position slider
@@ -450,14 +496,21 @@ class CalibrationGUI:
         focal_frame = ttk.Frame(preview_frame)
         focal_frame.pack(fill='x', pady=5)
 
-        ttk.Button(focal_frame, text="Detect Sphere", command=self._detect_sphere_in_preview).pack(side='left', padx=5)
+        ttk.Button(
+            focal_frame, text="Detect Sphere", command=self._detect_sphere_in_preview).pack(
+            side='left', padx=5)
         ttk.Label(focal_frame, text="|", foreground='gray').pack(side='left', padx=5)
-        ttk.Button(focal_frame, text="Verify", command=self._auto_detect_focal, width=6).pack(side='left')
-        ttk.Button(focal_frame, text="Re-zero", command=self._re_zero_stack, width=7).pack(side='left', padx=5)
-        ttk.Label(focal_frame, text="(re-zero z around sharpest frame)", foreground='gray', font=('', 8)).pack(side='left', padx=5)
+        ttk.Button(
+            focal_frame, text="Verify", command=self._auto_detect_focal, width=6).pack(
+            side='left')
+        ttk.Button(focal_frame, text="Re-zero", command=self._re_zero_stack,
+                   width=7).pack(side='left', padx=5)
+        ttk.Label(focal_frame, text="(re-zero z around sharpest frame)",
+                  foreground='gray', font=('', 8)).pack(side='left', padx=5)
 
         self.focal_info_var = tk.StringVar(value="")
-        ttk.Label(focal_frame, textvariable=self.focal_info_var, foreground='blue', font=('', 9)).pack(side='left', padx=10)
+        ttk.Label(focal_frame, textvariable=self.focal_info_var,
+                  foreground='blue', font=('', 9)).pack(side='left', padx=10)
 
     # =========================================================================
     # Tab 2: Calibrate (Measure + Fit ρ combined)
@@ -483,7 +536,8 @@ class CalibrationGUI:
         results_col.pack(side='left', fill='both', expand=True, padx=(5, 0))
 
         # === COLUMN 1: MEASUREMENT ===
-        measure_header = ttk.Label(measure_col, text="Step 1: Measure Blur", font=('TkDefaultFont', 10, 'bold'))
+        measure_header = ttk.Label(measure_col, text="Step 1: Measure Blur",
+                                   font=('TkDefaultFont', 10, 'bold'))
         measure_header.pack(anchor='w', pady=(0, 5))
 
         # Blur measurement method (erf edge fitting)
@@ -494,7 +548,10 @@ class CalibrationGUI:
         sphere_frame.pack(fill='x', pady=2)
 
         self.auto_detect_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(sphere_frame, text="Auto-detect", variable=self.auto_detect_var, command=self._on_auto_detect_toggle).pack(anchor='w')
+        ttk.Checkbutton(
+            sphere_frame, text="Auto-detect", variable=self.auto_detect_var,
+            command=self._on_auto_detect_toggle).pack(
+            anchor='w')
 
         coord_row = ttk.Frame(sphere_frame)
         coord_row.pack(fill='x', pady=2)
@@ -519,18 +576,22 @@ class CalibrationGUI:
 
         # Progress
         self.measure_progress_var = tk.DoubleVar(value=0)
-        ttk.Progressbar(measure_col, variable=self.measure_progress_var, maximum=100).pack(fill='x', pady=2)
+        ttk.Progressbar(
+            measure_col, variable=self.measure_progress_var, maximum=100).pack(
+            fill='x', pady=2)
         self.measure_status_var = tk.StringVar(value="Ready")
         ttk.Label(measure_col, textvariable=self.measure_status_var, font=('', 8)).pack(anchor='w')
 
         # Summary
         summary_frame = ttk.LabelFrame(measure_col, text="Summary", padding=5)
         summary_frame.pack(fill='x', pady=5)
-        self.measure_summary_text = tk.Text(summary_frame, height=5, width=30, state='disabled', font=('Courier', 8))
+        self.measure_summary_text = tk.Text(
+            summary_frame, height=5, width=30, state='disabled', font=('Courier', 8))
         self.measure_summary_text.pack(fill='x')
 
         # === COLUMN 2: CALIBRATION ===
-        calib_header = ttk.Label(calib_col, text="Step 2: Fit ρ", font=('TkDefaultFont', 10, 'bold'))
+        calib_header = ttk.Label(calib_col, text="Step 2: Fit ρ",
+                                 font=('TkDefaultFont', 10, 'bold'))
         calib_header.pack(anchor='w', pady=(0, 5))
 
         # Calibration Mode selection (NEW - before approach)
@@ -587,7 +648,9 @@ class CalibrationGUI:
             ttk.Entry(row, textvariable=var, width=10).pack(side='left')
             # Add [?] info button for pixel_size to help lookup camera datasheet
             if key == 'pixel_size':
-                ttk.Button(row, text="?", width=2, command=self._lookup_pixel_size).pack(side='left', padx=2)
+                ttk.Button(
+                    row, text="?", width=2, command=self._lookup_pixel_size).pack(
+                    side='left', padx=2)
 
         # Reference defocus (only for Estimated Optics)
         self.ref_row = ttk.Frame(self.optical_frame)
@@ -598,13 +661,15 @@ class CalibrationGUI:
         ttk.Label(self.ref_row, text="mm", font=('', 7)).pack(side='left')
 
         # Calibrate button
-        self.calibrate_btn = ttk.Button(calib_col, text="▶ Calibrate ρ", command=self._run_calibration)
+        self.calibrate_btn = ttk.Button(
+            calib_col, text="▶ Calibrate ρ", command=self._run_calibration)
         self.calibrate_btn.pack(fill='x', pady=5)
 
         # Fit quality summary
         quality_frame = ttk.LabelFrame(calib_col, text="Fit Quality", padding=5)
         quality_frame.pack(fill='x', pady=2)
-        self.fit_quality_text = tk.Text(quality_frame, height=4, width=30, state='disabled', font=('Courier', 8))
+        self.fit_quality_text = tk.Text(quality_frame, height=4,
+                                        width=30, state='disabled', font=('Courier', 8))
         self.fit_quality_text.pack(fill='x')
 
         # === COLUMN 3: RESULTS ===
@@ -612,7 +677,8 @@ class CalibrationGUI:
         results_header.pack(anchor='w', pady=(0, 5))
 
         # Results text
-        self.results_text = scrolledtext.ScrolledText(results_col, height=10, state='disabled', font=('Courier', 9))
+        self.results_text = scrolledtext.ScrolledText(
+            results_col, height=10, state='disabled', font=('Courier', 9))
         self.results_text.pack(fill='x', pady=2)
 
         # Plot
@@ -653,11 +719,13 @@ class CalibrationGUI:
         main_frame.pack(fill='both', expand=True)
 
         # Header
-        header = ttk.Label(main_frame, text="Multi-Camera Sign Resolution", font=('TkDefaultFont', 11, 'bold'))
+        header = ttk.Label(main_frame, text="Multi-Camera Sign Resolution",
+                           font=('TkDefaultFont', 11, 'bold'))
         header.pack(anchor='w', pady=(0, 10))
 
         info_text = "With two cameras at different focal planes, compare blur to determine depth sign (front vs behind)."
-        ttk.Label(main_frame, text=info_text, foreground='gray', wraplength=500).pack(anchor='w', pady=(0, 10))
+        ttk.Label(main_frame, text=info_text, foreground='gray',
+                  wraplength=500).pack(anchor='w', pady=(0, 10))
 
         # Two-column content
         content = ttk.Frame(main_frame)
@@ -693,8 +761,11 @@ class CalibrationGUI:
 
         btn_frame = ttk.Frame(cam_frame)
         btn_frame.pack(fill='x', pady=5)
-        ttk.Button(btn_frame, text="Add Current Calibration", command=self._add_camera_calibration).pack(side='left', padx=2)
-        ttk.Button(btn_frame, text="Remove Selected", command=self._remove_camera_calibration).pack(side='left', padx=2)
+        ttk.Button(btn_frame, text="Add Current Calibration",
+                   command=self._add_camera_calibration).pack(side='left', padx=2)
+        ttk.Button(
+            btn_frame, text="Remove Selected", command=self._remove_camera_calibration).pack(
+            side='left', padx=2)
 
         ttk.Label(cam_frame, text="First camera added becomes reference (offset = 0)",
                   font=('', 8), foreground='gray').pack(anchor='w')
@@ -703,7 +774,9 @@ class CalibrationGUI:
         test_frame = ttk.LabelFrame(right_col, text="Test Sign Resolution", padding=10)
         test_frame.pack(fill='x')
 
-        ttk.Label(test_frame, text="Enter blur from two cameras for same droplet:").pack(anchor='w', pady=(0, 10))
+        ttk.Label(
+            test_frame, text="Enter blur from two cameras for same droplet:").pack(
+            anchor='w', pady=(0, 10))
 
         row1 = ttk.Frame(test_frame)
         row1.pack(fill='x', pady=2)
@@ -717,14 +790,17 @@ class CalibrationGUI:
         self.test_sigma2_var = tk.StringVar(value="7.2")
         ttk.Entry(row2, textvariable=self.test_sigma2_var, width=10).pack(side='left')
 
-        ttk.Button(test_frame, text="Calculate Signed Depth", command=self._test_sign_resolution).pack(pady=10)
+        ttk.Button(test_frame, text="Calculate Signed Depth",
+                   command=self._test_sign_resolution).pack(pady=10)
 
         # Result
         self.sign_result_var = tk.StringVar(value="")
-        ttk.Label(test_frame, textvariable=self.sign_result_var, font=('TkDefaultFont', 14, 'bold')).pack()
+        ttk.Label(test_frame, textvariable=self.sign_result_var,
+                  font=('TkDefaultFont', 14, 'bold')).pack()
 
         self.sign_explanation_var = tk.StringVar(value="")
-        ttk.Label(test_frame, textvariable=self.sign_explanation_var, foreground='gray', wraplength=300).pack(pady=5)
+        ttk.Label(test_frame, textvariable=self.sign_explanation_var,
+                  foreground='gray', wraplength=300).pack(pady=5)
 
         # Example
         example_frame = ttk.LabelFrame(right_col, text="How It Works", padding=10)
@@ -738,7 +814,8 @@ Droplet at z = +5 mm:
   • m sees 2mm offset → less blur (σ = 7px)
   • m is sharper → droplet is BEHIND g's focal plane
   • Signed depth = +5 mm"""
-        ttk.Label(example_frame, text=example_text, justify='left', font=('Courier', 9)).pack(anchor='w')
+        ttk.Label(example_frame, text=example_text, justify='left',
+                  font=('Courier', 9)).pack(anchor='w')
 
     # =========================================================================
     # Tab 4: Export
@@ -759,16 +836,24 @@ Droplet at z = +5 mm:
         options_frame.pack(fill='x', pady=5)
 
         self.export_yaml_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="YAML config (for Training GUI)", variable=self.export_yaml_var).pack(anchor='w')
-        ttk.Label(options_frame, text="    calibration_results.yaml", font=('', 8), foreground='gray').pack(anchor='w')
+        ttk.Checkbutton(options_frame, text="YAML config (for Training GUI)",
+                        variable=self.export_yaml_var).pack(anchor='w')
+        ttk.Label(options_frame, text="    calibration_results.yaml",
+                  font=('', 8), foreground='gray').pack(anchor='w')
 
         self.export_csv_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="CSV measurements", variable=self.export_csv_var).pack(anchor='w', pady=(5, 0))
-        ttk.Label(options_frame, text="    measurements.csv (z, σ pairs)", font=('', 8), foreground='gray').pack(anchor='w')
+        ttk.Checkbutton(
+            options_frame, text="CSV measurements", variable=self.export_csv_var).pack(
+            anchor='w', pady=(5, 0))
+        ttk.Label(options_frame, text="    measurements.csv (z, σ pairs)",
+                  font=('', 8), foreground='gray').pack(anchor='w')
 
         self.export_plots_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(options_frame, text="Plots (PNG)", variable=self.export_plots_var).pack(anchor='w', pady=(5, 0))
-        ttk.Label(options_frame, text="    calibration_curve.png", font=('', 8), foreground='gray').pack(anchor='w')
+        ttk.Checkbutton(
+            options_frame, text="Plots (PNG)", variable=self.export_plots_var).pack(
+            anchor='w', pady=(5, 0))
+        ttk.Label(options_frame, text="    calibration_curve.png",
+                  font=('', 8), foreground='gray').pack(anchor='w')
 
         # Output folder
         folder_frame = ttk.LabelFrame(left_col, text="Output Location", padding=10)
@@ -776,21 +861,26 @@ Droplet at z = +5 mm:
 
         folder_row = ttk.Frame(folder_frame)
         folder_row.pack(fill='x', pady=2)
-        self.export_folder_var = tk.StringVar(value=str(Path(__file__).parent / "calibration_output"))
-        ttk.Entry(folder_row, textvariable=self.export_folder_var, width=40).pack(side='left', padx=(0, 5))
+        self.export_folder_var = tk.StringVar(
+            value=str(Path(__file__).parent / "calibration_output"))
+        ttk.Entry(folder_row, textvariable=self.export_folder_var,
+                  width=40).pack(side='left', padx=(0, 5))
         ttk.Button(folder_row, text="Browse", command=self._browse_export_folder).pack(side='left')
 
         # Export button
         export_btn_frame = ttk.Frame(left_col)
         export_btn_frame.pack(fill='x', pady=10)
 
-        self.export_btn = ttk.Button(export_btn_frame, text="Export Calibration", command=self._export_calibration)
+        self.export_btn = ttk.Button(
+            export_btn_frame, text="Export Calibration", command=self._export_calibration)
         self.export_btn.pack(side='left', padx=5)
 
-        ttk.Button(export_btn_frame, text="Copy ρ to Clipboard", command=self._copy_rho).pack(side='left')
+        ttk.Button(export_btn_frame, text="Copy ρ to Clipboard",
+                   command=self._copy_rho).pack(side='left')
 
         self.export_status_var = tk.StringVar(value="")
-        ttk.Label(left_col, textvariable=self.export_status_var, foreground='green').pack(anchor='w', pady=5)
+        ttk.Label(left_col, textvariable=self.export_status_var,
+                  foreground='green').pack(anchor='w', pady=5)
 
         # Next steps
         next_frame = ttk.LabelFrame(left_col, text="Next Steps", padding=10)
@@ -806,7 +896,8 @@ Droplet at z = +5 mm:
 
 The synthetic blur will match your camera!"""
 
-        ttk.Label(next_frame, text=next_text, justify='left', font=('TkDefaultFont', 9)).pack(anchor='w')
+        ttk.Label(next_frame, text=next_text, justify='left',
+                  font=('TkDefaultFont', 9)).pack(anchor='w')
 
         # === RIGHT COLUMN ===
 
@@ -814,10 +905,12 @@ The synthetic blur will match your camera!"""
         preview_frame = ttk.LabelFrame(right_col, text="YAML Preview", padding=10)
         preview_frame.pack(fill='both', expand=True, pady=5)
 
-        self.export_preview = scrolledtext.ScrolledText(preview_frame, height=25, state='disabled', font=('Courier', 9))
+        self.export_preview = scrolledtext.ScrolledText(
+            preview_frame, height=25, state='disabled', font=('Courier', 9))
         self.export_preview.pack(fill='both', expand=True)
 
-        ttk.Button(preview_frame, text="Refresh Preview", command=self._update_export_preview).pack(pady=5)
+        ttk.Button(preview_frame, text="Refresh Preview",
+                   command=self._update_export_preview).pack(pady=5)
 
     # =========================================================================
     # Event Handlers - Tab 1
@@ -836,10 +929,11 @@ The synthetic blur will match your camera!"""
             self.cine_source_frame.pack(in_=self.source_container, fill='x', pady=5)
 
             if not PYPHANTOM_AVAILABLE:
-                messagebox.showwarning("pyphantom Not Available",
-                                       "The pyphantom library is not installed.\n\n"
-                                       "To load .cine files, install the Phantom SDK and pyphantom package.\n\n"
-                                       "Alternatively, export your z-stack as individual images.")
+                messagebox.showwarning(
+                    "pyphantom Not Available",
+                    "The pyphantom library is not installed.\n\n"
+                    "To load .cine files, install the Phantom SDK and pyphantom package.\n\n"
+                    "Alternatively, export your z-stack as individual images.")
 
     def _browse_cine_folder(self):
         """Browse for folder containing .cine files."""
@@ -896,7 +990,8 @@ The synthetic blur will match your camera!"""
                 pos_col = 'position'
 
             if pos_col is None:
-                self.cine_info_var.set("CSV missing position column (stage_position_mm or z_position_mm)")
+                self.cine_info_var.set(
+                    "CSV missing position column (stage_position_mm or z_position_mm)")
                 return
 
             positions = df[pos_col].values
@@ -973,7 +1068,9 @@ The synthetic blur will match your camera!"""
         # Measure sharpness (Laplacian variance) for each frame
         sharpness_values = []
         for img in images:
-            img_u8 = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) if img.dtype != np.uint8 else img
+            img_u8 = cv2.normalize(
+                img, None, 0, 255, cv2.NORM_MINMAX).astype(
+                np.uint8) if img.dtype !=np.uint8 else img
             laplacian = cv2.Laplacian(img_u8, cv2.CV_64F)
             sharpness = laplacian.var()
             sharpness_values.append(sharpness)
@@ -997,7 +1094,8 @@ The synthetic blur will match your camera!"""
         self._append_stats_text(f"\n\n(Focus position has been auto-filled)")
 
         # Show sharpness curve summary
-        self._append_stats_text(f"\n\nSharpness range: {min(sharpness_values):.1f} to {max(sharpness_values):.1f}")
+        self._append_stats_text(
+            f"\n\nSharpness range: {min(sharpness_values):.1f} to {max(sharpness_values):.1f}")
 
         self.load_status_var.set(f"Focus found at stage {focus_stage:.2f} mm")
         self.load_progress_var.set(100)
@@ -1164,7 +1262,8 @@ The synthetic blur will match your camera!"""
             positions = list(np.arange(z_min, z_max + z_step / 2, z_step))
             self.zstack_positions = positions
 
-            self.positions_info_var.set(f"Generated {len(positions)} positions: {z_min} to {z_max} mm, step {z_step}")
+            self.positions_info_var.set(
+                f"Generated {len(positions)} positions: {z_min} to {z_max} mm, step {z_step}")
 
         except ValueError as e:
             messagebox.showerror("Error", f"Invalid range values: {e}")
@@ -1280,7 +1379,8 @@ The synthetic blur will match your camera!"""
         self._append_stats_text(f"\nSize: {w} × {h} px")
         self._append_stats_text(f"\nPositions from: {position_source}")
         self._append_stats_text(f"\nFocus at stage: {stage_focus} mm")
-        self._append_stats_text(f"\nDefocus range: {self.zstack_stats.z_min:.1f} to {self.zstack_stats.z_max:.1f} mm")
+        self._append_stats_text(
+            f"\nDefocus range: {self.zstack_stats.z_min:.1f} to {self.zstack_stats.z_max:.1f} mm")
         self._append_stats_text(f"\nZ step: {z_step:.3f} mm")
 
         self.load_status_var.set(f"Loaded {len(self.zstack_images)} frames from .cine folder")
@@ -1327,7 +1427,8 @@ The synthetic blur will match your camera!"""
                     pos_dict[fn] = pos
                     # Also store without extension for flexible matching
                     pos_dict[Path(fn).stem] = pos
-                self._append_stats_text(f"\nLoaded {len(df)} positions from: {Path(positions_file).name}")
+                self._append_stats_text(
+                    f"\nLoaded {len(df)} positions from: {Path(positions_file).name}")
             except Exception as e:
                 self._append_stats_text(f"\n⚠️  Error loading CSV: {e}")
 
@@ -1408,7 +1509,8 @@ The synthetic blur will match your camera!"""
             self._append_stats_text(f"\nSize: {w} × {h} px")
             if focus_offset != 0:
                 self._append_stats_text(f"\nFocus at position: {focus_offset:.2f} mm")
-            self._append_stats_text(f"\nDefocus range: {self.zstack_stats.z_min:.1f} to {self.zstack_stats.z_max:.1f} mm")
+            self._append_stats_text(
+                f"\nDefocus range: {self.zstack_stats.z_min:.1f} to {self.zstack_stats.z_max:.1f} mm")
             self._append_stats_text(f"\nZ step: {self.zstack_stats.z_step:.2f} mm")
 
         self.load_status_var.set(f"Loaded {len(self.zstack_images)} images")
@@ -1452,7 +1554,9 @@ The synthetic blur will match your camera!"""
 
         sharpness = []
         for img in self.zstack_images:
-            img_u8 = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) if img.dtype != np.uint8 else img
+            img_u8 = cv2.normalize(
+                img, None, 0, 255, cv2.NORM_MINMAX).astype(
+                np.uint8) if img.dtype !=np.uint8 else img
             lap = cv2.Laplacian(img_u8, cv2.CV_64F)
             mask = img_u8 > 5
             if mask.any():
@@ -1485,7 +1589,9 @@ The synthetic blur will match your camera!"""
 
         sharpness = []
         for img in self.zstack_images:
-            img_u8 = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) if img.dtype != np.uint8 else img
+            img_u8 = cv2.normalize(
+                img, None, 0, 255, cv2.NORM_MINMAX).astype(
+                np.uint8) if img.dtype !=np.uint8 else img
             lap = cv2.Laplacian(img_u8, cv2.CV_64F)
             mask = img_u8 > 5
             if mask.any():
@@ -1546,7 +1652,9 @@ The synthetic blur will match your camera!"""
         # Mask out zeros to handle blackened sphere interiors
         sharpness = []
         for img in self.zstack_images:
-            img_u8 = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8) if img.dtype != np.uint8 else img
+            img_u8 = cv2.normalize(
+                img, None, 0, 255, cv2.NORM_MINMAX).astype(
+                np.uint8) if img.dtype !=np.uint8 else img
             lap = cv2.Laplacian(img_u8, cv2.CV_64F)
             mask = img_u8 > 5
             sharpness.append(lap[mask].var() if mask.any() else 0.0)
@@ -1612,7 +1720,9 @@ The synthetic blur will match your camera!"""
         self.crop_status_var.set(f"Cropped to {final_size}x{final_size}")
         self.load_progress_var.set(0)
 
-        messagebox.showinfo("Auto-Crop", f"Cropped {len(self.zstack_images)} images to {final_size}x{final_size} pixels\nCentered on sphere at ({cx}, {cy})")
+        messagebox.showinfo(
+            "Auto-Crop",
+            f"Cropped {len(self.zstack_images)} images to {final_size}x{final_size} pixels\nCentered on sphere at ({cx}, {cy})")
 
     def _process_spheres(self):
         """Process loaded images: detect sphere, mirror, crop."""
@@ -1706,7 +1816,8 @@ The synthetic blur will match your camera!"""
 
         self.load_progress_var.set(0)
         self.crop_status_var.set(f"Saved to Cropped Z-Stack/")
-        messagebox.showinfo("Save Complete", f"Saved {len(self.zstack_images)} images to:\n{output_path}")
+        messagebox.showinfo(
+            "Save Complete", f"Saved {len(self.zstack_images)} images to:\n{output_path}")
 
     def _detect_sphere_in_preview(self):
         """Detect sphere in current preview image."""
@@ -1817,7 +1928,8 @@ The synthetic blur will match your camera!"""
                 z = self.zstack_positions[i] if i < len(self.zstack_positions) else 0
                 print(f"\n[{i+1}/{n}] Measuring image at z = {z:.2f} mm")
                 measurement = measure_blur_auto(img, center, radius, method, verbose=False)
-                print(f"  => σ = {measurement.sigma:.3f} px, confidence = {measurement.confidence:.3f}")
+                print(
+                    f"  => σ = {measurement.sigma:.3f} px, confidence = {measurement.confidence:.3f}")
                 self.sigma_values.append(measurement.sigma)
                 self.blur_measurements.append(measurement)
 
@@ -1847,7 +1959,9 @@ The synthetic blur will match your camera!"""
 
             z = self.zstack_positions[idx] if idx < len(self.zstack_positions) else 0
             print(f"\n[Single] Measuring image #{idx+1} at z = {z:.2f} mm")
-            measurement = measure_blur_auto(self.zstack_images[idx], center, radius, method, verbose=True)
+            measurement = measure_blur_auto(
+                self.zstack_images[idx],
+                center, radius, method, verbose=True)
             print(f"  => σ = {measurement.sigma:.3f} px, confidence = {measurement.confidence:.3f}")
 
             messagebox.showinfo(
@@ -1950,7 +2064,9 @@ The synthetic blur will match your camera!"""
             self._append_stats_text(f"\n\nFiltered out {n_filtered} failed measurements (σ = 0)")
 
         if len(filtered_sigmas) < 5:
-            messagebox.showerror("Error", f"Only {len(filtered_sigmas)} valid measurements after filtering. Need at least 5.")
+            messagebox.showerror(
+                "Error",
+                f"Only {len(filtered_sigmas)} valid measurements after filtering. Need at least 5.")
             return
 
         # Store filtered data for plotting
@@ -1979,7 +2095,8 @@ The synthetic blur will match your camera!"""
                     focus_distance_mm=float(self.optical_vars['focus_distance'].get()),
                     pixel_size_mm=float(self.optical_vars['pixel_size'].get())
                 )
-                self.calibration_b = calibrate_approach_b(filtered_positions, filtered_sigmas, optical)
+                self.calibration_b = calibrate_approach_b(
+                    filtered_positions, filtered_sigmas, optical)
                 self._display_results_b()
 
             else:  # hybrid (optical mode)
@@ -1990,7 +2107,8 @@ The synthetic blur will match your camera!"""
                     pixel_size_mm=float(self.optical_vars['pixel_size'].get())
                 )
                 ref_d = float(self.ref_defocus_var.get())
-                self.calibration_hybrid = calibrate_hybrid(filtered_positions, filtered_sigmas, optical, ref_d)
+                self.calibration_hybrid = calibrate_hybrid(
+                    filtered_positions, filtered_sigmas, optical, ref_d)
                 self._display_results_hybrid()
 
             self._update_calibration_plot()
@@ -2163,7 +2281,10 @@ FOR TRAINING GUI:
             sigma_all = np.array(self.sigma_values)
             mask = sigma_all <= 0
             if np.any(mask):
-                self.calib_ax.scatter(z_all[mask], sigma_all[mask], c='lightgray', alpha=0.5, s=20, label='Failed')
+                self.calib_ax.scatter(
+                    z_all[mask],
+                    sigma_all[mask],
+                    c='lightgray', alpha=0.5, s=20, label='Failed')
         else:
             z = np.array(self.zstack_positions)
             sigma = np.array(self.sigma_values)
@@ -2179,12 +2300,16 @@ FOR TRAINING GUI:
             a = self.calibration_direct
             z_fit = np.linspace(z_valid.min(), z_valid.max(), 100)
             sigma_fit = a.rho_px_per_mm * np.abs(z_fit) + a.sigma_0
-            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Direct: ρ = {a.rho_px_per_mm:.3f} px/mm', linewidth=2)
+            self.calib_ax.plot(
+                z_fit, sigma_fit, 'r-', label=f'Direct: ρ = {a.rho_px_per_mm:.3f} px/mm',
+                linewidth=2)
         elif self.calibration_hybrid:
             a = self.calibration_hybrid.direct_result
             z_fit = np.linspace(z_valid.min(), z_valid.max(), 100)
             sigma_fit = a.rho_px_per_mm * np.abs(z_fit) + a.sigma_0
-            self.calib_ax.plot(z_fit, sigma_fit, 'r-', label=f'Estimated: ρ = {a.rho_px_per_mm:.3f} px/mm', linewidth=2)
+            self.calib_ax.plot(
+                z_fit, sigma_fit, 'r-', label=f'Estimated: ρ = {a.rho_px_per_mm:.3f} px/mm',
+                linewidth=2)
         elif self.calibration_b:
             b = self.calibration_b
             z_fit = np.linspace(z_valid.min(), z_valid.max(), 100)
@@ -2351,7 +2476,8 @@ FOR TRAINING GUI:
         # Get reference resolution from loaded images
         reference_resolution = None
         if self.zstack_stats:
-            reference_resolution = max(self.zstack_stats.image_width, self.zstack_stats.image_height)
+            reference_resolution = max(self.zstack_stats.image_width,
+                                       self.zstack_stats.image_height)
 
         if self.calibration_direct:
             # Direct mode: export without optical params
@@ -2371,15 +2497,13 @@ FOR TRAINING GUI:
             )
         else:
             yaml_dict = export_calibration_yaml(
-                self.calibration_hybrid,
-                camera=self.camera_var.get(),
+                self.calibration_hybrid, camera=self.camera_var.get(),
                 aperture_setting=self.aperture_var.get(),
-                focal_plane_offset_mm=float(self.focal_offset_var.get()) if self.focal_offset_var.get() else 0.0,
-                defocus_range_mm=defocus_range,
+                focal_plane_offset_mm=float(self.focal_offset_var.get())
+                if self.focal_offset_var.get() else 0.0, defocus_range_mm=defocus_range,
                 reference_resolution=reference_resolution,
                 calibration_mode=self.calibration_mode_var.get(),
-                scale_calib_px_per_mm=self.scale_calib_px_per_mm,
-            )
+                scale_calib_px_per_mm=self.scale_calib_px_per_mm,)
 
         yaml_str = yaml.dump(yaml_dict, default_flow_style=False, sort_keys=False)
 
@@ -2423,7 +2547,8 @@ FOR TRAINING GUI:
             # Get reference resolution from loaded images
             reference_resolution = None
             if self.zstack_stats:
-                reference_resolution = max(self.zstack_stats.image_width, self.zstack_stats.image_height)
+                reference_resolution = max(self.zstack_stats.image_width,
+                                           self.zstack_stats.image_height)
 
             if self.calibration_direct:
                 pixel_size = None
@@ -2450,15 +2575,13 @@ FOR TRAINING GUI:
                     }
             else:
                 yaml_dict = export_calibration_yaml(
-                    self.calibration_hybrid,
-                    camera=self.camera_var.get(),
+                    self.calibration_hybrid, camera=self.camera_var.get(),
                     aperture_setting=self.aperture_var.get(),
-                    focal_plane_offset_mm=float(self.focal_offset_var.get()) if self.focal_offset_var.get() else 0.0,
-                    defocus_range_mm=defocus_range,
+                    focal_plane_offset_mm=float(self.focal_offset_var.get())
+                    if self.focal_offset_var.get() else 0.0, defocus_range_mm=defocus_range,
                     reference_resolution=reference_resolution,
                     calibration_mode=self.calibration_mode_var.get(),
-                    scale_calib_px_per_mm=self.scale_calib_px_per_mm,
-                )
+                    scale_calib_px_per_mm=self.scale_calib_px_per_mm,)
             yaml_path = output_dir / "calibration_results.yaml"
             with open(yaml_path, 'w') as f:
                 yaml.dump(yaml_dict, f, default_flow_style=False, sort_keys=False)
@@ -2496,7 +2619,8 @@ FOR TRAINING GUI:
             exported.append("calibration_report.png")
 
         self.export_status_var.set(f"✓ Exported to {output_dir.name}/")
-        messagebox.showinfo("Export Complete", f"Calibration exported to:\n{output_dir}\n\nFiles:\n" + "\n".join(exported))
+        messagebox.showinfo(
+            "Export Complete", f"Calibration exported to:\n{output_dir}\n\nFiles:\n" + "\n".join(exported))
 
     def _copy_rho(self):
         """Copy ρ value to clipboard."""
@@ -2509,7 +2633,9 @@ FOR TRAINING GUI:
             rho = self.calibration_hybrid.formula_result.rho
             self.root.clipboard_clear()
             self.root.clipboard_append(f"{rho:.4f}")
-            messagebox.showinfo("Copied", f"ρ = {rho:.4f} copied to clipboard\n\nPaste this in Training GUI's 'ρ (blur constant)' field")
+            messagebox.showinfo(
+                "Copied",
+                f"ρ = {rho:.4f} copied to clipboard\n\nPaste this in Training GUI's 'ρ (blur constant)' field")
         else:
             messagebox.showerror("Error", "Run calibration first")
 

@@ -112,7 +112,8 @@ def boundary_normalise(
     mask_outer = (signed_dist < 0) & (signed_dist >= -fw)
     if np.any(mask_outer):
         t = np.clip(-signed_dist[mask_outer] / fw, 0, 1)
-        out[mask_outer] = img_f[mask_outer] + 0.5 * (1 - np.cos(np.pi * t)) * (1.0 - img_f[mask_outer])
+        out[mask_outer] = img_f[mask_outer] + 0.5 * (1 - np.cos(np.pi * t)
+                                                     ) * (1.0 - img_f[mask_outer])
 
     # Deep exterior → 1 (white / background)
     out[signed_dist < -fw] = 1.0

@@ -839,7 +839,8 @@ def generate_quality_report(
     ]
     if loo_result and loo_result.rho_std > 0:
         lines.append(f"\u03c1 (LOO-CV) = {loo_result.rho_mean:.4f} \u00b1 {loo_result.rho_std:.4f}")
-        lines.append(f"\u03c3\u2080 (LOO-CV) = {loo_result.sigma_0_mean:.3f} \u00b1 {loo_result.sigma_0_std:.3f}")
+        lines.append(
+            f"\u03c3\u2080 (LOO-CV) = {loo_result.sigma_0_mean:.3f} \u00b1 {loo_result.sigma_0_std:.3f}")
         lines.append(f"LOO MAE = {loo_result.loo_mae:.3f} px")
     lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 

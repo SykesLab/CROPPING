@@ -266,7 +266,8 @@ def validate_training_config(config: Dict, training_mode: str = "direct") -> Lis
 
         scale_calib = training_cfg.get("scale_calib_px_per_mm")
         if scale_calib is None:
-            warnings.append("training.scale_calib_px_per_mm missing — cross-camera correction disabled")
+            warnings.append(
+                "training.scale_calib_px_per_mm missing — cross-camera correction disabled")
         elif scale_calib <= 0:
             errors.append(f"training.scale_calib_px_per_mm must be positive, got {scale_calib}")
 
