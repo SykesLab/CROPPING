@@ -11,10 +11,10 @@ Uses existing repository classes wherever possible:
 Inference inversion is verified at the maths level only (no model required).
 
 Run from repo root:
-  C:\\Users\\justi\\phantom_env\\Scripts\\python verify_full_blur_pipeline.py
+  python verify_full_blur_pipeline.py
 
 Or with PYTHONUTF8=1 to avoid Windows cp1252 issues with arrow chars in logs:
-  set PYTHONUTF8=1 && C:\\Users\\justi\\phantom_env\\Scripts\\python verify_full_blur_pipeline.py
+  set PYTHONUTF8=1 && python verify_full_blur_pipeline.py
 """
 
 import sys, csv, os, random, warnings

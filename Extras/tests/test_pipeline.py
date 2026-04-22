@@ -17,7 +17,7 @@ import pytest
 # ---------------------------------------------------------------------------
 # Path setup — use package imports with sys.path fallback
 # ---------------------------------------------------------------------------
-_REPO_ROOT = Path(__file__).resolve().parent.parent
+_REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 for _module in ("Calibration", "Training", "Preprocessing", "Inference"):
     _p = str(_REPO_ROOT / _module)
@@ -263,3 +263,102 @@ class TestLabelNormalisationClamp:
         sigma_model = 0.0
         normalized = min(sigma_model / max_sigma, 1.0) if max_sigma > 0 else 0.0
         assert normalized >= 0.0, f"Normalised label {normalized} is negative"
+
+
+# ===========================================================================
+# Test 9 — Physics module: forward-inverse round-trip via unified module
+# ===========================================================================
+class TestPhysicsModuleRoundTrip:
+    def test_same_camera_round_trip(self):
+        """Forward then inverse through physics module recovers defocus exactly."""
+        from physics import ScalingParams, defocus_to_label, label_to_defocus
+
+        params = ScalingParams(
+            rho=2.0, sigma_0=0.5, s_calib=100.0, s_inference=100.0,
+            max_blur=25.0, model_size=256,
+        )
+        native_size = 299
+        defocus_true = 5.0
+
+        label = defocus_to_label(defocus_true, params, native_size)
+        defocus_recovered, clamped, saturated = label_to_defocus(label, params, native_size)
+
+        assert abs(defocus_recovered - defocus_true) < 1e-10, (
+            f"Physics module round-trip failed: {defocus_recovered:.6f} != {defocus_true}"
+        )
+        assert not clamped
+        assert not saturated
+
+    def test_cross_camera_round_trip(self):
+        """Forward then inverse with different cameras recovers defocus."""
+        from physics import ScalingParams, defocus_to_label, label_to_defocus
+
+        params = ScalingParams(
+            rho=1.548, sigma_0=0.125, s_calib=102.57, s_inference=120.0,
+            max_blur=13.72, model_size=256,
+        )
+        native_size = 299
+        defocus_true = 4.0
+
+        label = defocus_to_label(defocus_true, params, native_size)
+        defocus_recovered, clamped, saturated = label_to_defocus(label, params, native_size)
+
+        assert abs(defocus_recovered - defocus_true) < 1e-10, (
+            f"Cross-camera round-trip failed: {defocus_recovered:.6f} != {defocus_true}"
+        )
+
+    def test_clamping_flagged(self):
+        """Negative defocus is clamped to 0 and flagged."""
+        from physics import ScalingParams, label_to_defocus
+
+        params = ScalingParams(
+            rho=2.0, sigma_0=5.0, s_calib=100.0, s_inference=100.0,
+            max_blur=25.0, model_size=256,
+        )
+        # Very small label → sigma_native < sigma_0 → negative defocus
+        defocus, clamped, saturated = label_to_defocus(0.005, params, 256)
+        assert defocus == 0.0
+        assert clamped
+
+    def test_saturation_flagged(self):
+        """Labels at sigmoid extremes are flagged as saturated."""
+        from physics import ScalingParams, label_to_defocus
+
+        params = ScalingParams(rho=2.0, sigma_0=0.0, max_blur=20.0, model_size=256)
+        _, _, sat_low = label_to_defocus(0.005, params, 256)
+        _, _, sat_high = label_to_defocus(0.995, params, 256)
+        _, _, sat_mid = label_to_defocus(0.5, params, 256)
+        assert sat_low
+        assert sat_high
+        assert not sat_mid
+
+    def test_consistency_with_inline_math(self):
+        """Physics module matches the original inline equations exactly."""
+        from physics import ScalingParams, invert_prediction
+
+        rho, sigma_0 = 1.548, 0.125
+        s_calib, s_c = 102.57, 120.0
+        max_blur, model_size = 13.72, 256
+        native_size = 299
+        pred_val = 0.42
+
+        # Inline math (original code)
+        sigma_model = pred_val * max_blur
+        sigma_native = sigma_model * (native_size / model_size)
+        scale_ratio = s_c / s_calib
+        rho_eff = rho * scale_ratio
+        sigma_0_eff = sigma_0 * scale_ratio
+        defocus_inline = max(0.0, (sigma_native - sigma_0_eff) / rho_eff)
+
+        # Physics module
+        params = ScalingParams(
+            rho=rho, sigma_0=sigma_0, s_calib=s_calib, s_inference=s_c,
+            max_blur=max_blur, model_size=model_size,
+        )
+        result = invert_prediction(pred_val, params, native_size)
+
+        assert abs(result.defocus_mm - defocus_inline) < 1e-12, (
+            f"Physics module disagrees with inline: {result.defocus_mm} vs {defocus_inline}"
+        )
+        assert abs(result.sigma_model - sigma_model) < 1e-12
+        assert abs(result.sigma_native - sigma_native) < 1e-12

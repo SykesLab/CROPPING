@@ -39,9 +39,10 @@ from blur_measurement import detect_sphere, measure_blur_erf
 from sphere_processing import find_sphere_center, find_consensus_sphere, crop_to_square
 from cine_loader import CineFolderLoader
 
+from paths_config import CINE_FOLDER
+
 # -- Config --------------------------------------------------------------------
 
-CINE_FOLDER = Path(r'C:\Users\justi\Downloads\coursework\coursework\random\7mm-20260316T021631Z-3-001\7mm')
 POSITIONS_CSV = CINE_FOLDER / 'positions.csv'
 OUTPUT_DIR = Path(__file__).parent / 'concern1_output'
 OUTPUT_DIR.mkdir(exist_ok=True)

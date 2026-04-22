@@ -12,11 +12,10 @@ On all 24 crops (8 per camera).
 import sys, numpy as np, cv2, time
 from pathlib import Path
 
+from paths_config import CROP_BASE, SHARP_CSV
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / 'calibration'))
 from blur_measurement import detect_sphere, measure_blur_erf
-
-CROP_BASE = Path(r'C:\Users\justi\Downloads\coursework\coursework\preprocessing\Preprocessing\OUTPUTNEW')
-SHARP_CSV = CROP_BASE / 'Focus' / 'sharp_crops.csv'
 MODEL_SIZE = 256
 FEATHER = 10
 

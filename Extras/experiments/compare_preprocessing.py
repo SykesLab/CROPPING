@@ -33,11 +33,11 @@ from sphere_processing import (process_sphere_stack, find_consensus_sphere,
 from model import DefocusNet
 from inference_real_crops import RealCropInference
 
+from paths_config import CINE_FOLDER, MODEL_PATH
+
 # ── CONFIG ──────────────────────────────────────────────────────────────────
-CINE_FOLDER = r"C:\Users\justi\Downloads\coursework\coursework\random\7mm-20260316T021631Z-3-001\7mm"
-POSITIONS_CSV = os.path.join(CINE_FOLDER, "positions.csv")
-MODEL_PATH = r"C:\Users\justi\Downloads\coursework\coursework\training\Training\training_output\checkpoints\dme_best.pth"
-OUTPUT_DIR = r"C:\Users\justi\Downloads\coursework\coursework\training\Training\inference_results\preprocessing_comparison_v2"
+POSITIONS_CSV = os.path.join(str(CINE_FOLDER), "positions.csv")
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "preprocessing_comparison_output")
 
 FOCAL_PLANE_MM = 8.0
 FRAME_IDX = 0

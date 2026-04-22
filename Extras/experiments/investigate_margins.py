@@ -25,6 +25,8 @@ from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Optional, Tuple
 
+from paths_config import CROP_BASE, SHARP_CSV
+
 # Add calibration module to path
 CALIB_DIR = str(Path(__file__).parent.parent.parent / 'calibration')
 if CALIB_DIR not in sys.path:
@@ -32,11 +34,6 @@ if CALIB_DIR not in sys.path:
 
 from blur_measurement import detect_sphere, measure_blur_erf
 from sphere_processing import find_sphere_center
-
-# -- Paths ---------------------------------------------------------------------
-
-CROP_BASE = Path(r'C:\Users\justi\Downloads\coursework\coursework\preprocessing\Preprocessing\OUTPUTNEW')
-SHARP_CSV = CROP_BASE / 'Focus' / 'sharp_crops.csv'
 OUTPUT_DIR = Path(__file__).parent / 'margin_investigation_output'
 OUTPUT_DIR.mkdir(exist_ok=True)
 

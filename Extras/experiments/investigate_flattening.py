@@ -28,12 +28,7 @@ from sphere_processing import flatten_sphere_crop
 from scipy.optimize import curve_fit
 from scipy.special import erf as scipy_erf
 
-# -- Paths -----------------------------------------------------------------
-
-CALIB_IMG_DIR = Path(r'C:\Users\justi\OneDrive\Desktop\justice\batch_output\7mm\processed_images')
-CALIB_CSV = Path(r'C:\Users\justi\OneDrive\Desktop\justice\batch_output\7mm\per_frame_measurements.csv')
-CROP_BASE = Path(r'C:\Users\justi\OneDrive\Desktop\coursework\Preprocessing\CROPPING\Preprocessing\OUTPUTNEW')
-SHARP_CSV = CROP_BASE / 'Focus' / 'sharp_crops.csv'
+from paths_config import CROP_BASE, CALIB_IMG_DIR, CALIB_CSV, SHARP_CSV
 OUTPUT_DIR = Path(__file__).parent / 'investigation_output'
 OUTPUT_DIR.mkdir(exist_ok=True)
 

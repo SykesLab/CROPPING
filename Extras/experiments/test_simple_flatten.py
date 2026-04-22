@@ -9,10 +9,10 @@ Measures: raw, raw+blur, flattened native, flattened+blur.
 import sys, cv2, numpy as np, time
 from pathlib import Path
 
+from paths_config import CROP_BASE
+
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent / 'calibration'))
 from blur_measurement import detect_sphere, measure_blur_erf
-
-CROP_BASE = Path(r'C:\Users\justi\Downloads\coursework\coursework\preprocessing\Preprocessing\OUTPUTNEW')
 MODEL_SIZE = 256
 FEATHER_PX = 3  # tiny feather just for smoothness
 

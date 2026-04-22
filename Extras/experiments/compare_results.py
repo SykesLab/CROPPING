@@ -134,6 +134,100 @@ def compute_metrics(merged: pd.DataFrame) -> Dict:
     return metrics
 
 
+def compute_per_slice_metrics(merged: pd.DataFrame) -> Dict:
+    """Break down errors by camera, defocus magnitude, and droplet size.
+
+    Extracts camera ID from filename patterns like 'sphere0042g_crop.png'
+    where the letter before _crop is the camera (g/v/m).
+
+    Returns dict of slice_name -> {slice_value -> {mae, rmse, n, ...}}.
+    """
+    slices = {}
+
+    # --- By camera ---
+    if 'filename' in merged.columns:
+        # Try to extract camera letter from filename (e.g. '...g_crop.png' -> 'g')
+        cam = merged.index.to_series().str.extract(r'([gvm])(?:_crop)?\.png$', expand=False)
+        if cam.notna().sum() > 0:
+            merged['camera'] = cam
+            cam_groups = {}
+            for name, group in merged.groupby('camera'):
+                if len(group) < 3:
+                    continue
+                cam_groups[name] = {
+                    'n': len(group),
+                    'blur_mae_px': float(group['blur_abs_error_px'].mean()),
+                    'defocus_mae_mm': float(group['defocus_abs_error_mm'].mean()),
+                    'defocus_rmse_mm': float(np.sqrt((group['defocus_error_mm'] ** 2).mean())),
+                }
+            if cam_groups:
+                slices['camera'] = cam_groups
+
+    # --- By defocus magnitude ---
+    if 'defocus_mm_gt' in merged.columns:
+        defocus_bins = [0, 1, 2, 4, 6, float('inf')]
+        defocus_labels = ['0-1', '1-2', '2-4', '4-6', '6+']
+        merged['defocus_bin'] = pd.cut(
+            merged['defocus_mm_gt'], bins=defocus_bins, labels=defocus_labels
+        )
+        defocus_groups = {}
+        for name, group in merged.groupby('defocus_bin', observed=True):
+            if len(group) < 3:
+                continue
+            defocus_groups[name] = {
+                'n': len(group),
+                'blur_mae_px': float(group['blur_abs_error_px'].mean()),
+                'defocus_mae_mm': float(group['defocus_abs_error_mm'].mean()),
+                'defocus_rmse_mm': float(np.sqrt((group['defocus_error_mm'] ** 2).mean())),
+            }
+        if defocus_groups:
+            slices['defocus_range_mm'] = defocus_groups
+
+    # --- Near-focus vs far-from-focus ---
+    if 'defocus_mm_gt' in merged.columns:
+        near = merged[merged['defocus_mm_gt'] <= 2.0]
+        far = merged[merged['defocus_mm_gt'] > 2.0]
+        focus_groups = {}
+        if len(near) >= 3:
+            focus_groups['near (<=2mm)'] = {
+                'n': len(near),
+                'blur_mae_px': float(near['blur_abs_error_px'].mean()),
+                'defocus_mae_mm': float(near['defocus_abs_error_mm'].mean()),
+            }
+        if len(far) >= 3:
+            focus_groups['far (>2mm)'] = {
+                'n': len(far),
+                'blur_mae_px': float(far['blur_abs_error_px'].mean()),
+                'defocus_mae_mm': float(far['defocus_abs_error_mm'].mean()),
+            }
+        if focus_groups:
+            slices['focus_proximity'] = focus_groups
+
+    # --- By droplet size (if diameter available) ---
+    if 'diameter_px' in merged.columns:
+        valid = merged[merged['diameter_px'] > 0]
+        if len(valid) >= 10:
+            size_bins = [0, 40, 80, 120, float('inf')]
+            size_labels = ['<40px', '40-80px', '80-120px', '120+px']
+            valid_copy = valid.copy()
+            valid_copy['size_bin'] = pd.cut(
+                valid_copy['diameter_px'], bins=size_bins, labels=size_labels
+            )
+            size_groups = {}
+            for name, group in valid_copy.groupby('size_bin', observed=True):
+                if len(group) < 3:
+                    continue
+                size_groups[name] = {
+                    'n': len(group),
+                    'blur_mae_px': float(group['blur_abs_error_px'].mean()),
+                    'defocus_mae_mm': float(group['defocus_abs_error_mm'].mean()),
+                }
+            if size_groups:
+                slices['droplet_size'] = size_groups
+
+    return slices
+
+
 def plot_comparison(merged: pd.DataFrame, metrics: Dict, output_dir: Path, blur_term: str = "CoC"):
     """Create comprehensive comparison plots."""
 
@@ -392,10 +486,26 @@ def generate_report(merged: pd.DataFrame, metrics: Dict, output_dir: Path, blur_
                     f"Improvement from deblurring:     {improvement:.1f}%",
                 ])
 
+    # Per-slice breakdown
+    slice_metrics = compute_per_slice_metrics(merged)
+    if slice_metrics:
+        section_num = 6
+        lines.extend(["", f"{section_num}. PER-SLICE ERROR BREAKDOWN", "-" * 40])
+
+        for slice_name, groups in slice_metrics.items():
+            lines.append(f"\n  By {slice_name}:")
+            lines.append(f"  {'Slice':<16s} {'n':>6s} {'Blur MAE':>10s} {'Defocus MAE':>12s}")
+            lines.append(f"  {'-'*48}")
+            for val, m in groups.items():
+                lines.append(
+                    f"  {str(val):<16s} {m['n']:>6d} "
+                    f"{m['blur_mae_px']:>10.3f} {m['defocus_mae_mm']:>12.4f}"
+                )
+
     # Interpretation
     lines.extend([
         "",
-        "6. INTERPRETATION",
+        "7. INTERPRETATION",
         "-" * 40,
     ])
 

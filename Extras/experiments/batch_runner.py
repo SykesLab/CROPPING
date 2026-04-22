@@ -28,9 +28,11 @@ from cine_loader import CineFolderLoader, PYPHANTOM_AVAILABLE
 from blur_measurement import measure_blur_erf, detect_sphere, BlurMeasurement
 from calibration_core import calibrate_approach_a, CalibrationResultA
 
-# ── Hardcoded paths ──────────────────────────────────────────────────────────
-INPUT_DIR = Path(r"C:\Users\justi\Downloads\justice\justice")
-OUTPUT_DIR = Path(r"C:\Users\justi\Downloads\justice\batch_output")
+from paths_config import BATCH_INPUT_DIR, BATCH_OUTPUT_DIR
+
+# ── Paths ──────────────────────────────────────────────────────────────────
+INPUT_DIR = BATCH_INPUT_DIR
+OUTPUT_DIR = BATCH_OUTPUT_DIR
 
 # Common crop size — all spheres cropped to this square, ensuring identical
 # resize ratio when downscaled to 128×128 for training.

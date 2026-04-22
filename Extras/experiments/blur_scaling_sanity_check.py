@@ -29,6 +29,7 @@ import sys
 import csv
 import math
 import textwrap
+from pathlib import Path
 import numpy as np
 import cv2
 import matplotlib
@@ -48,12 +49,15 @@ except ImportError:
 # PARAMETERS — edit these
 # =============================================================================
 
+from paths_config import CROP_BASE
+
 # Path to a near-focus source crop (grayscale PNG/TIFF/etc.).
-# Ideally already 299×299. If not, it will be resized to crop_size_px.
-IMAGE_PATH = r"C:\Users\justi\OneDrive\Desktop\coursework\Preprocessing\CROPPING\Preprocessing\OUTPUTNEW\10mm-borosilicate-tmx\g\crops\sphere1015g_crop.png"
+# Ideally already 299x299. If not, it will be resized to crop_size_px.
+# Derive from CROP_BASE or set manually below.
+IMAGE_PATH = None  # set manually or derive from CROP_BASE
 
 # Directory where all outputs will be saved (created if absent).
-OUTPUT_DIR = r"C:\Users\justi\OneDrive\Desktop\coursework\blur_sanity_output"
+OUTPUT_DIR = str(Path(__file__).parent / "blur_scaling_output")
 
 # Short label appended to output filenames — useful when running multiple configs.
 IMAGE_LABEL = "camera_g"
