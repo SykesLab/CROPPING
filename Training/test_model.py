@@ -45,7 +45,6 @@ class TestDataset(Dataset):
         bm = data_dir / 'blur_map'
         self.blur_map_dir = bm if bm.exists() else data_dir / 'coc_map'
 
-        # Load metadata once if available
         self.metadata = None
         metadata_path = data_dir / 'metadata.csv'
         if metadata_path.exists():
@@ -58,7 +57,6 @@ class TestDataset(Dataset):
         sample_path = self.sample_paths[idx]
         stem = sample_path.stem
 
-        # Load images
         blur_path = sample_path
         blur_map_path = self.blur_map_dir / f'{stem}.png'
         sharp_path = self.data_dir / 'sharp' / f'{stem}.png'
@@ -70,12 +68,10 @@ class TestDataset(Dataset):
         if blur is None or blur_map is None or sharp is None:
             raise ValueError(f"Failed to load sample {stem}")
 
-        # Convert to float [0, 1]
         blur = blur.astype(np.float32) / 255.0
         blur_map_img = blur_map.astype(np.float32) / 255.0
         sharp = sharp.astype(np.float32) / 255.0
 
-        # Get blur value from metadata
         if self.metadata is not None:
             blur_col = 'sigma_px' if 'sigma_px' in self.metadata.columns else 'coc_px'
             blur_value_gt = self.metadata.loc[stem, blur_col]
@@ -116,7 +112,6 @@ class ModelTester:
         else:
             self.device = torch.device(device)
 
-        # Load checkpoint
         print(f"\n{'='*60}")
         print(f"Loading checkpoint: {Path(model_path).name}")
         print(f"Full path: {model_path}")
@@ -133,7 +128,6 @@ class ModelTester:
             print(f"Checkpoint validation SSIM: {checkpoint['val_ssim']:.4f}")
         print(f"{'='*60}\n")
 
-        # Get config
         if config_path is not None:
             with open(config_path, 'r') as f:
                 self.config = yaml.safe_load(f)
@@ -147,10 +141,8 @@ class ModelTester:
         self.blur_term = "σ" if self.training_mode == "direct" else "CoC"
         self.blur_col = "sigma" if self.training_mode == "direct" else "coc"
 
-        # Create model
         self.model = DefocusNet.from_config(self.config).to(self.device)
 
-        # Load weights
         if 'model_state_dict' in checkpoint:
             self.model.load_state_dict(checkpoint['model_state_dict'])
             print("Loaded model weights")
@@ -202,7 +194,6 @@ class ModelTester:
         return denormalise_label(val, self.max_blur)
 
     def _get_bins(self):
-        """Compute 4 equal bins from 0 to max_blur (ceiling)."""
         max_blur_ceil = int(np.ceil(self.max_blur))
         bin_size = max_blur_ceil / 4.0
         return [(i * bin_size, (i + 1) * bin_size) for i in range(4)]
@@ -262,7 +253,6 @@ class ModelTester:
 
         blur_dir = data_dir / 'blur'
 
-        # Get sample paths
         all_samples = sorted(list(blur_dir.glob('*.png')))
         total_available = len(all_samples)
 
@@ -339,7 +329,6 @@ class ModelTester:
             print(
                 f"Visualization saving: {len(save_viz_indices)} comparisons ({viz_percent}% of {n} samples)")
 
-        # Create dataset and dataloader for batched processing
         dataset = TestDataset(all_samples, data_dir, self.max_blur)
         dataloader = DataLoader(
             dataset,
@@ -376,16 +365,12 @@ class ModelTester:
                     blur_value_gt = blur_values_gt[j]
                     sample_name = sample_names[j]
 
-                    # Convert blur_value_gt to float if it's a tensor
                     if isinstance(blur_value_gt, torch.Tensor):
                         blur_value_gt = blur_value_gt.cpu().item()
                     else:
                         blur_value_gt = float(blur_value_gt)
 
-                    # Convert to pixels
                     pred_blur_px = self.denormalize_blur(pred_blur_map.mean())
-
-                    # Compute error
                     error = abs(pred_blur_px - blur_value_gt)
                     errors.append(error)
 
@@ -438,10 +423,8 @@ class ModelTester:
 
                     global_idx += 1
 
-        # Create DataFrame
         df = pd.DataFrame(results)
 
-        # Compute aggregate metrics
         mae = np.mean(errors)
         rmse = np.sqrt(np.mean(np.array(errors) ** 2))
         median_error = np.median(errors)
@@ -539,13 +522,10 @@ class ModelTester:
                 bin_maes.append(0.0)
                 bin_counts.append(0)
 
-        # Compute weighted MAE
         weighted_mae = sum(w * m for w, m in zip(bin_weights, bin_maes))
 
-        # Format bin labels
         bin_labels = [f"{int(low)}-{int(high)}" for low, high in bins]
 
-        # Compute defocus distance metrics
         defocus_mae_mm = df['defocus_error_mm'].mean()
         defocus_rmse_mm = np.sqrt((df['defocus_error_mm']**2).mean())
         defocus_median_mm = df['defocus_error_mm'].median()
@@ -613,7 +593,6 @@ class ModelTester:
             if not np.isnan(mae):
                 print(f"  {label} px: {mae:.2f} px (n={count})")
 
-        # Save results
         if output_dir:
             output_dir = Path(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
@@ -627,7 +606,6 @@ class ModelTester:
             df.to_csv(csv_path, index=False)
             print(f"\nSaved results to: {csv_path}")
 
-            # Save test summary
             config = {
                 'data_dir': str(data_dir),
                 'model_path': self.model_path,
@@ -645,10 +623,8 @@ class ModelTester:
             }
             self._save_test_summary(dme_test_dir, 'DME', df, config)
 
-            # Create summary plots
             self._plot_dme_results(df, errors, dme_test_dir, min_blur_filter)
 
-            # Create visual sample comparisons
             self._create_dme_visual_comparisons(
                 visual_samples_data, dme_test_dir, num_visual_samples, csv_path, data_dir)
 
@@ -1004,7 +980,6 @@ class ModelTester:
         selected_samples = list(samples_data)
         n = len(selected_samples)
 
-        # Create output directory for visual comparisons
         vis_dir = output_dir / 'dme_visual_comparisons'
         vis_dir.mkdir(exist_ok=True)
 
@@ -1031,12 +1006,10 @@ class ModelTester:
         pred_blur = sample_data['pred_blur_px']
         error = sample_data['error']
 
-        # Convert to defocus distance
         gt_defocus_mm = self.blur_calc.blur_to_defocus(gt_blur)
         pred_defocus_mm = self.blur_calc.blur_to_defocus(pred_blur)
         defocus_error_mm = abs(pred_defocus_mm - gt_defocus_mm)
 
-        # Create figure - 3 panel layout
         fig, axes = plt.subplots(1, 3, figsize=(15, 4))
 
         # 1. Blurred input with annotations
@@ -1136,7 +1109,6 @@ class ModelTester:
         if len(df) == 0:
             return
 
-        # Get blur range
         min_blur = df[f'{self.blur_col}_gt_px'].min()
         max_blur = df[f'{self.blur_col}_gt_px'].max()
         blur_range = max_blur - min_blur
@@ -1148,7 +1120,6 @@ class ModelTester:
             f"\nSelecting grid samples across {self.blur_term} range: {min_blur:.2f} to {max_blur:.2f} px")
         print(f"Using interval: {interval:.2f} px for {num_grid_samples} samples")
 
-        # Create target blur values evenly distributed across the range
         target_blurs = [min_blur + i * interval for i in range(num_grid_samples)]
 
         # For each target blur, find the sample with the closest actual blur
@@ -1180,7 +1151,6 @@ class ModelTester:
 
         print(f"Selected {len(selected_rows)} samples for grid summary")
 
-        # Create 5x5 grid
         nrows = 5
         ncols = 5
         fig, axes = plt.subplots(nrows, ncols, figsize=(3.5 * ncols, 3.5 * nrows))
@@ -1193,7 +1163,6 @@ class ModelTester:
             grid_col = idx % ncols
             ax = axes[grid_row, grid_col]
 
-            # Load blur image
             sample_name = row['sample']
             blur_path = data_dir / 'blur' / f'{sample_name}.png'
 
@@ -1203,7 +1172,6 @@ class ModelTester:
 
                 ax.imshow(blur, cmap='gray', vmin=0, vmax=1)
 
-                # Get values from CSV
                 gt = row[f'{self.blur_col}_gt_px']
                 pred = row[f'{self.blur_col}_pred_px']
                 err = row['error_px']
@@ -1298,7 +1266,6 @@ def main():
             else:
                 args.data = input("Path to test data directory: ").strip()
 
-    # Validate required arguments
     if not args.model or not args.data:
         print("\nError: Model checkpoint and data directory are required.")
         return
@@ -1332,14 +1299,12 @@ def main():
         print(f"\nWarning: Could not find blur directory at {blur_dir}")
         print(f"Using default: {args.samples} samples")
 
-    # Create tester
     tester = ModelTester(
         model_path=args.model,
         config_path=args.config,
         device=args.device
     )
 
-    # Set default output directory if not provided
     if args.output is None:
         args.output = 'test_results'
         print(f"Output directory: {args.output}")
