@@ -126,13 +126,11 @@ class InferenceEngine:
     """End-to-end pipeline: .cine → defocus displacement (mm)."""
 
     def __init__(self, settings: Dict[str, Any]):
-        """
-        Parameters
-        ----------
-        settings : dict
-            Must contain at least ``model_path``.  Optional keys:
-            rho, sigma_0, s_calib, s_c, feather_px, crop_size, device,
-            watch_folder.
+        """Initialise engine with calibration and pipeline settings.
+
+        Args:
+            settings: Must contain at least 'model_path'. Optional keys:
+                rho, sigma_0, s_calib, s_c, feather_px, crop_size, device.
         """
         self.settings = settings
         self.model: Optional[DefocusNet] = None
@@ -317,21 +315,15 @@ class InferenceEngine:
         tensor_input: torch.Tensor,
         native_crop_size: int,
     ) -> Dict[str, float]:
-        """
-        Forward pass through the model and inversion chain.
+        """Forward pass through model and inverse chain to defocus (mm).
 
-        Parameters
-        ----------
-        tensor_input : (1, 1, 256, 256) tensor in [-1, 1]
-        native_crop_size : dimension of the original crop (before resize)
+        Args:
+            tensor_input: (1, 1, 256, 256) tensor in [-1, 1].
+            native_crop_size: dimension of the original crop before resize.
 
-        Returns
-        -------
-        dict with keys:
-            pred_norm    — raw sigmoid output [0, 1]
-            sigma_model  — denormalised blur at model scale (px)
-            sigma_native — blur scaled to native crop resolution (px)
-            defocus_mm   — estimated defocus displacement (mm)
+        Returns:
+            Dict with pred_norm, sigma_model, sigma_native, defocus_mm,
+            saturated/clamped flags, and provenance fields.
         """
         if self.model is None:
             raise RuntimeError("Model not loaded. Call load_model() first.")
@@ -391,15 +383,14 @@ class InferenceEngine:
     def process_cine(
         self, cine_path: Path, progress_cb=None,
     ) -> Dict[str, Any]:
-        """
-        Run the complete pipeline on a single .cine file.
+        """Run the complete pipeline on a single .cine file.
 
-        Parameters
-        ----------
-        cine_path : Path to .cine file
-        progress_cb : optional callable(status_str, fraction_0_to_1)
+        Args:
+            cine_path: Path to .cine file.
+            progress_cb: Optional callable(status_str, fraction_0_to_1).
 
-        Returns dict with all intermediate and final results.
+        Returns:
+            Dict with all intermediate and final results.
         """
         def _progress(msg, frac):
             if progress_cb is not None:
@@ -434,16 +425,14 @@ class InferenceEngine:
     def process_folder(
         self, folder: Path, progress_cb=None,
     ) -> list:
-        """
-        Run the pipeline on every .cine file in *folder*.
+        """Run the pipeline on every .cine file in a folder.
 
-        Parameters
-        ----------
-        folder : directory containing .cine files
-        progress_cb : optional callable(status_str, file_index, total_files)
+        Args:
+            folder: Directory containing .cine files.
+            progress_cb: Optional callable(status_str, file_index, total_files).
 
-        Returns list of result dicts (one per file). Failed files are
-        included with an 'error' key instead of numerical results.
+        Returns:
+            List of result dicts. Failed files have an 'error' key.
         """
         cine_files = sorted(folder.glob("*.cine"), key=lambda p: p.name)
         if not cine_files:
