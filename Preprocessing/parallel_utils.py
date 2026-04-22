@@ -81,17 +81,21 @@ def run_parallel(
 
     if safe_mode:
         results = []
-        for item in tqdm(items, total=total, desc=f"{desc} (safe)", dynamic_ncols=True, smoothing=0.1, unit="item"):
+        for item in tqdm(
+            items, total=total, desc=f"{desc} (safe)", dynamic_ncols=True, smoothing=0.1,
+            unit="item"):
             results.append(func(item))
         return results
 
     with Pool(processes=processes, initializer=_worker_init) as pool:
-        results = list(tqdm(pool.imap(func, items), total=total, desc=desc, dynamic_ncols=True, smoothing=0.1, unit="item"))
+        results = list(tqdm(pool.imap(func, items), total=total, desc=desc,
+                       dynamic_ncols=True, smoothing=0.1, unit="item"))
 
     return results
 
 
-def _emit_gui_progress(current: int, total: int, desc: str, start_time: float, last_print_pct: int) -> None:
+def _emit_gui_progress(
+        current: int, total: int, desc: str, start_time: float, last_print_pct: int) ->None:
     """Emit progress for GUI and print log updates every 10%."""
     progress_pct = int(current / total * 100)
     elapsed = time.time() - start_time

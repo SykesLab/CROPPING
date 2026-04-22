@@ -51,7 +51,8 @@ def main():
     print(f"Matched: {n_matched}  |  Missing: {n_missing}")
 
     if n_missing > 0:
-        missing = crops[crops['scale_px_per_mm'].isna()][['droplet_id', 'camera', 'folder']].drop_duplicates()
+        missing = crops[crops['scale_px_per_mm'].isna()][['droplet_id', 'camera',
+                                                      'folder']].drop_duplicates()
         print("Rows with no scale match:")
         print(missing.to_string(index=False))
 

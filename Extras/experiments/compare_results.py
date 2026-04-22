@@ -262,8 +262,9 @@ def plot_comparison(merged: pd.DataFrame, metrics: Dict, output_dir: Path, blur_
 
     ax.set_xlabel(f'Ground Truth {blur_term} (px)', fontsize=11)
     ax.set_ylabel(f'Predicted {blur_term} (px)', fontsize=11)
-    ax.set_title(f'{blur_term}: Predicted vs Ground Truth\n(R² = {metrics["blur_correlation"]**2:.4f})',
-                 fontsize=12, fontweight='bold')
+    ax.set_title(
+        f'{blur_term}: Predicted vs Ground Truth\n(R² = {metrics["blur_correlation"]**2:.4f})',
+        fontsize=12, fontweight='bold')
     ax.legend(fontsize=9)
     ax.grid(alpha=0.3)
     ax.set_xlim(0, max_val * 1.05)
@@ -278,8 +279,9 @@ def plot_comparison(merged: pd.DataFrame, metrics: Dict, output_dir: Path, blur_
                label=f'Mean bias: {metrics["blur_bias_px"]:.3f} px')
     ax.set_xlabel(f'{blur_term} Prediction Error (px)', fontsize=11)
     ax.set_ylabel('Count', fontsize=11)
-    ax.set_title(f'Error Distribution\nMAE: {metrics["blur_mae_px"]:.3f} px, RMSE: {metrics["blur_rmse_px"]:.3f} px',
-                 fontsize=12, fontweight='bold')
+    ax.set_title(
+        f'Error Distribution\nMAE: {metrics["blur_mae_px"]:.3f} px, RMSE: {metrics["blur_rmse_px"]:.3f} px',
+        fontsize=12, fontweight='bold')
     ax.legend(fontsize=9)
     ax.grid(alpha=0.3)
 
@@ -291,7 +293,8 @@ def plot_comparison(merged: pd.DataFrame, metrics: Dict, output_dir: Path, blur_
     plt.colorbar(scatter, ax=ax, label='|Error| (px)')
     ax.set_xlabel(f'Ground Truth {blur_term} (px)', fontsize=11)
     ax.set_ylabel('Prediction Error (px)', fontsize=11)
-    ax.set_title('Error vs Blur Level\n(positive = over-prediction)', fontsize=12, fontweight='bold')
+    ax.set_title('Error vs Blur Level\n(positive = over-prediction)',
+                 fontsize=12, fontweight='bold')
     ax.grid(alpha=0.3)
 
     # 4. Binned MAE
@@ -375,7 +378,8 @@ def plot_diameter_comparison(merged: pd.DataFrame, output_dir: Path, blur_term: 
     ax.plot([0, max_d], [0, max_d], 'r--', linewidth=2, label='1:1 line')
     ax.set_xlabel('Ground Truth Diameter (px)', fontsize=11)
     ax.set_ylabel('Measured Diameter - Blurred (px)', fontsize=11)
-    ax.set_title('Original vs GT Diameter\n(blur causes measurement error)', fontsize=12, fontweight='bold')
+    ax.set_title('Original vs GT Diameter\n(blur causes measurement error)',
+                 fontsize=12, fontweight='bold')
     ax.legend(fontsize=9)
     ax.grid(alpha=0.3)
 
@@ -390,8 +394,10 @@ def plot_diameter_comparison(merged: pd.DataFrame, output_dir: Path, blur_term: 
         ax.plot([0, max_d], [0, max_d], 'r--', linewidth=2, label='1:1 line')
 
         # Calculate improvement
-        orig_error = (deblur_valid['diameter_original_px'] - deblur_valid['diameter_px']).abs().mean()
-        deblur_error = (deblur_valid['diameter_deblurred_px'] - deblur_valid['diameter_px']).abs().mean()
+        orig_error = (
+            deblur_valid['diameter_original_px'] -deblur_valid['diameter_px']).abs().mean()
+        deblur_error = (
+            deblur_valid['diameter_deblurred_px'] -deblur_valid['diameter_px']).abs().mean()
         improvement = ((orig_error - deblur_error) / orig_error) * 100 if orig_error > 0 else 0
 
         ax.set_title(f'Deblurred vs GT Diameter\nMAE improved by {improvement:.1f}%',
@@ -435,19 +441,12 @@ def generate_report(merged: pd.DataFrame, metrics: Dict, output_dir: Path, blur_
     """Generate text summary report."""
 
     lines = [
-        "=" * 70,
-        "GROUND TRUTH vs MODEL PREDICTION COMPARISON REPORT",
-        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}",
-        "=" * 70,
-        "",
-        "1. DATASET",
-        "-" * 40,
-        f"Matched samples: {metrics['n_samples']}",
+        "=" * 70, "GROUND TRUTH vs MODEL PREDICTION COMPARISON REPORT",
+        f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}", "=" * 70, "", "1. DATASET",
+        "-" * 40, f"Matched samples: {metrics['n_samples']}",
         f"Ground Truth {blur_term} range: [{merged['blur_px_gt'].min():.2f}, {merged['blur_px_gt'].max():.2f}] px",
         f"Predicted {blur_term} range: [{merged['blur_px_pred'].min():.2f}, {merged['blur_px_pred'].max():.2f}] px",
-        "",
-        f"2. {blur_term.upper()} PREDICTION ACCURACY",
-        "-" * 40,
+        "", f"2. {blur_term.upper()} PREDICTION ACCURACY", "-" * 40,
         f"Mean Absolute Error (MAE):     {metrics['blur_mae_px']:.4f} px",
         f"Root Mean Square Error (RMSE): {metrics['blur_rmse_px']:.4f} px",
         f"Mean Bias (systematic error):  {metrics['blur_bias_px']:+.4f} px",
@@ -455,20 +454,11 @@ def generate_report(merged: pd.DataFrame, metrics: Dict, output_dir: Path, blur_
         f"Mean Absolute % Error (MAPE):  {metrics['blur_mape']:.2f}%",
         f"Maximum Error:                 {metrics['blur_max_error_px']:.4f} px",
         f"Correlation (R):               {metrics['blur_correlation']:.4f}",
-        f"R-squared (R²):                {metrics['blur_correlation']**2:.4f}",
-        "",
-        "3. DEFOCUS DISTANCE ACCURACY",
-        "-" * 40,
-        f"MAE:  {metrics['defocus_mae_mm']:.5f} mm",
-        f"RMSE: {metrics['defocus_rmse_mm']:.5f} mm",
-        f"MAPE: {metrics['defocus_mape']:.2f}%",
-        f"Correlation: {metrics['defocus_correlation']:.4f}",
-        "",
-        "4. ACCURACY BY BLUR LEVEL",
-        "-" * 40,
-        f"{blur_term} Range (px) | Samples | MAE (px)",
-        "-" * 40,
-    ]
+        f"R-squared (R²):                {metrics['blur_correlation']**2:.4f}", "",
+        "3. DEFOCUS DISTANCE ACCURACY", "-" * 40, f"MAE:  {metrics['defocus_mae_mm']:.5f} mm",
+        f"RMSE: {metrics['defocus_rmse_mm']:.5f} mm", f"MAPE: {metrics['defocus_mape']:.2f}%",
+        f"Correlation: {metrics['defocus_correlation']:.4f}", "", "4. ACCURACY BY BLUR LEVEL", "-" *
+        40, f"{blur_term} Range (px) | Samples | MAE (px)", "-" * 40,]
 
     for bin_label in metrics['binned_mae'].keys():
         mae = metrics['binned_mae'].get(bin_label, 0)
@@ -491,7 +481,8 @@ def generate_report(merged: pd.DataFrame, metrics: Dict, output_dir: Path, blur_
 
             deblur_valid = valid[valid['diameter_deblurred_px'] > 0]
             if len(deblur_valid) > 0:
-                deblur_mae = (deblur_valid['diameter_deblurred_px'] - deblur_valid['diameter_px']).abs().mean()
+                deblur_mae = (
+                    deblur_valid['diameter_deblurred_px'] -deblur_valid['diameter_px']).abs().mean()
                 improvement = ((orig_mae - deblur_mae) / orig_mae) * 100 if orig_mae > 0 else 0
                 lines.extend([
                     f"Deblurred diameter MAE:          {deblur_mae:.2f} px",
@@ -533,16 +524,19 @@ def generate_report(merged: pd.DataFrame, metrics: Dict, output_dir: Path, blur_
     if abs(metrics['blur_bias_px']) < 0.5:
         lines.append("[OK] Low systematic bias (|bias| < 0.5 px)")
     elif metrics['blur_bias_px'] > 0:
-        lines.append(f"[--] Model tends to OVER-predict {blur_term} by {metrics['blur_bias_px']:.2f} px")
+        lines.append(
+            f"[--] Model tends to OVER-predict {blur_term} by {metrics['blur_bias_px']:.2f} px")
     else:
-        lines.append(f"[--] Model tends to UNDER-predict {blur_term} by {abs(metrics['blur_bias_px']):.2f} px")
+        lines.append(
+            f"[--] Model tends to UNDER-predict {blur_term} by {abs(metrics['blur_bias_px']):.2f} px")
 
     if metrics['blur_correlation'] > 0.95:
         lines.append("[OK] Excellent correlation with ground truth (R > 0.95)")
     elif metrics['blur_correlation'] > 0.90:
         lines.append("[OK] Good correlation with ground truth (R > 0.90)")
     else:
-        lines.append(f"[--] Moderate correlation with ground truth (R = {metrics['blur_correlation']:.3f})")
+        lines.append(
+            f"[--] Moderate correlation with ground truth (R = {metrics['blur_correlation']:.3f})")
 
     lines.extend([
         "",

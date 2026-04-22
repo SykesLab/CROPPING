@@ -20,7 +20,8 @@ from geom_analysis import extract_geometry_info
 
 # Type aliases
 DropletResult = Tuple[str, Dict[str, Dict[str, Any]], List[float], List[float], Dict[str, float]]
-FolderResult = Tuple[str, Dict[Tuple[str, str], Dict[str, Any]], List[float], List[float], Dict[str, float]]
+FolderResult = Tuple[str, Dict[Tuple[str, str], Dict[str, Any]],
+    List[float], List[float], Dict[str, float]]
 
 
 # --- Per-droplet workers (for per-folder pipeline) ---
@@ -122,7 +123,8 @@ def analyze_folder_full(args: Tuple[Path, int]) -> FolderResult:
     groups = group_cines_by_droplet(sub)
     n_groups = len(groups)
 
-    timing = {"load_cine": 0.0, "darkness_curve": 0.0, "best_frame": 0.0, "n_frames": 0, "n_cines": 0}
+    timing = {"load_cine": 0.0, "darkness_curve": 0.0,
+        "best_frame": 0.0, "n_frames": 0, "n_cines": 0}
 
     if n_groups == 0:
         return (sub.name, {}, [], [], timing)

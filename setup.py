@@ -168,7 +168,8 @@ def check_only():
         print(f"  ERROR: Python {MIN_PYTHON[0]}.{MIN_PYTHON[1]}+ required")
         return False
     if ver[:2] > MAX_PYTHON:
-        print(f"  WARNING: Python {ver.major}.{ver.minor} is newer than tested ({MAX_PYTHON[0]}.{MAX_PYTHON[1]})")
+        print(
+            f"  WARNING: Python {ver.major}.{ver.minor} is newer than tested ({MAX_PYTHON[0]}.{MAX_PYTHON[1]})")
 
     venv_active = hasattr(sys, "real_prefix") or (
         hasattr(sys, "base_prefix") and sys.base_prefix != sys.prefix
@@ -220,7 +221,9 @@ def full_setup(cuda_version: str = "cpu"):
     pip = get_python()
 
     # Step 3: PyTorch
-    print_step(3, total_steps, f"Installing PyTorch ({'CUDA ' + cuda_version if cuda_version != 'cpu' else 'CPU'})")
+    print_step(
+        3, total_steps,
+        f"Installing PyTorch ({'CUDA ' + cuda_version if cuda_version != 'cpu' else 'CPU'})")
     torch_url = CUDA_TORCH_URLS.get(cuda_version, CUDA_TORCH_URLS["cpu"])
     if not run([pip, "-m", "pip", "install", "torch", "torchvision",
                 "--index-url", torch_url],

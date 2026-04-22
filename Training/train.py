@@ -216,10 +216,10 @@ class Trainer:
         self.current_session['epochs_trained'] = epoch - self.current_session['start_epoch'] + 1
 
         # Track if this epoch improved the best model
-        if val_loss is not None and(
-            self.training_history['training_summary'] ['best_metrics'] ['val_loss'] is
-            None or val_loss <self.training_history['training_summary'] ['best_metrics']
-            ['val_loss']):
+        if val_loss is not None and (
+                self.training_history['training_summary']['best_metrics']['val_loss'] is
+                None or val_loss < self.training_history['training_summary']['best_metrics']
+                ['val_loss']):
             self.current_session['best_found'] = True
             self.current_session['best_epoch'] = epoch
             self.current_session['best_val_loss'] = val_loss

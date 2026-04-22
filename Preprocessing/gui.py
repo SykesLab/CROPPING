@@ -111,7 +111,8 @@ class PipelineGUI:
 
         # Create canvas and scrollbar for scrollable content
         self.main_canvas = tk.Canvas(self.main_frame, highlightthickness=0)
-        self.main_scrollbar = ttk.Scrollbar(self.main_frame, orient="vertical", command=self.main_canvas.yview)
+        self.main_scrollbar = ttk.Scrollbar(
+            self.main_frame, orient="vertical", command=self.main_canvas.yview)
         self.main_canvas.configure(yscrollcommand=self.main_scrollbar.set)
 
         self.main_scrollbar.grid(row=0, column=1, sticky="ns")
@@ -119,7 +120,8 @@ class PipelineGUI:
 
         # Inner frame that holds all content
         self.main_inner = ttk.Frame(self.main_canvas)
-        self.main_canvas_window = self.main_canvas.create_window((0, 0), window=self.main_inner, anchor="nw")
+        self.main_canvas_window = self.main_canvas.create_window(
+            (0, 0), window=self.main_inner, anchor="nw")
 
         # Configure canvas scrolling
         self.main_inner.bind("<Configure>", self._on_main_inner_configure)
@@ -214,7 +216,8 @@ class PipelineGUI:
             text="",
             foreground="gray",
         )
-        self.landing_cine_info.grid(row=1, column=0, columnspan=2, padx=10, pady=(0, 10), sticky="w")
+        self.landing_cine_info.grid(row=1, column=0, columnspan=2,
+                                    padx=10, pady=(0, 10), sticky="w")
 
         # ----- Output Folder Section -----
         output_section = ttk.LabelFrame(inner, text="Output Folder", padding=10)
@@ -639,7 +642,8 @@ class PipelineGUI:
         )
 
         # Cores controls (disabled in quick mode or safe mode)
-        self.cores_controls: List[tk.Widget] = [self.cores_entry, self.cores_label, self.cores_detected_label]
+        self.cores_controls: List[tk.Widget] = [
+            self.cores_entry, self.cores_label, self.cores_detected_label]
 
         # ----- Calibration (row 1, left) -----
         calib_frame = ttk.LabelFrame(frame, text="Calibration", padding=5)

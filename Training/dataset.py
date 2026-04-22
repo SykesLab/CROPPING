@@ -33,7 +33,7 @@ def _blur_column(df: pd.DataFrame) -> str:
 
 def compute_max_blur_from_metadata(
         data_dir: Union[str, Path],
-        margin_percent: float=5.0) ->float:
+        margin_percent: float = 5.0) -> float:
     """
     Read metadata.csv and compute max blur (CoC or sigma) with safety margin.
 

@@ -43,7 +43,8 @@ def calculate_bin_weights_from_beta(config: Dict[str, Any]) -> List[float]:
         return [0.25, 0.25, 0.25, 0.25]
 
     if beta_alpha is None or beta_beta is None:
-        logger.warning("Weighted distribution specified but beta parameters missing — falling back to uniform")
+        logger.warning(
+            "Weighted distribution specified but beta parameters missing — falling back to uniform")
         return [0.25, 0.25, 0.25, 0.25]
 
     try:

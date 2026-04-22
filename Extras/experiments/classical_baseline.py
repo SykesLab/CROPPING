@@ -62,7 +62,8 @@ def load_dataset(data_dir: Path) -> Tuple[pd.DataFrame, Path]:
 
     blur_col = "sigma_px" if "sigma_px" in df.columns else "coc_px"
     print(f"Loaded {len(df)} samples from {data_dir.name}")
-    print(f"  Blur column: {blur_col}, range: [{df[blur_col].min():.2f}, {df[blur_col].max():.2f}] px")
+    print(
+        f"  Blur column: {blur_col}, range: [{df[blur_col].min():.2f}, {df[blur_col].max():.2f}] px")
     print(f"  Defocus range: [{df['defocus_mm'].min():.3f}, {df['defocus_mm'].max():.3f}] mm")
 
     return df, blur_dir
@@ -156,7 +157,8 @@ def evaluate_method(
 
     # Avoid div-by-zero for MAPE
     nonzero = blur_gt > MIN_BLUR_NONZERO
-    mape = np.mean(np.abs(errors[nonzero]) / blur_gt[nonzero]) * 100 if nonzero.sum() > 5 else float("nan")
+    mape = np.mean(np.abs(errors[nonzero]) / blur_gt[nonzero]
+                   ) * 100 if nonzero.sum() > 5 else float("nan")
 
     corr = np.corrcoef(blur_gt, blur_pred)[0, 1] if len(blur_gt) > 2 else 0.0
 

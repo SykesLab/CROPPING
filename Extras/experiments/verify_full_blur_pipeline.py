@@ -101,7 +101,8 @@ def _require(d: dict, key: str, source: str):
 
 
 rho_direct = float(_require(training_sec, "rho_direct", "optical_config.yaml [training]"))
-scale_calib = float(_require(training_sec, "scale_calib_px_per_mm", "optical_config.yaml [training]"))
+scale_calib = float(_require(training_sec, "scale_calib_px_per_mm",
+                    "optical_config.yaml [training]"))
 sigma_0 = float(training_sec.get("sigma_0", 0.0))
 crop_size = int(_require(training_sec, "crop_size_px", "optical_config.yaml [training]"))
 model_size = int(_require(data_sec, "image_size_px", "optical_config.yaml [data]"))
@@ -115,7 +116,10 @@ if training_mode != "direct":
 
 # Cross-check rho_direct against calibration YAML
 rho_from_calib = float(_require(direct_sec, "rho_px_per_mm", "calibration_results.yaml [direct]"))
-scale_from_calib = float(_require(direct_sec, "scale_calib_px_per_mm", "calibration_results.yaml [direct]"))
+scale_from_calib = float(
+                         _require(
+                             direct_sec, "scale_calib_px_per_mm",
+                             "calibration_results.yaml [direct]"))
 
 print(f"\nCalibration ({CALIB_YAML_PATH.name}):")
 print(f"  rho_direct        = {rho_from_calib} px/mm")
@@ -417,7 +421,8 @@ if all_inv_errs:
     print(f"    max error = {max(all_inv_errs):.2e} mm  (machine epsilon expected)")
 
 print(f"\n  Cross-camera correction active:  {_verdict(bool(slope_results))}")
-print(f"  Slopes match expected formula:   {_verdict(all(r['ok'] for r in slope_results.values()))}")
+print(
+    f"  Slopes match expected formula:   {_verdict(all(r['ok'] for r in slope_results.values()))}")
 print(f"  Inversion exact:                 {_verdict(all(e < 1e-9 for e in all_inv_errs))}")
 print(f"\n  OVERALL: {_verdict(overall_pass)}")
 

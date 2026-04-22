@@ -706,14 +706,14 @@ class SphereAppearanceStats:
 
         stats = SphereAppearanceStats(
             bg_mean=float(np.mean(bg_intensities)),
-            bg_std =float(np.std(bg_intensities)) if len(bg_intensities) > 1 else 0.02,
+            bg_std=float(np.std(bg_intensities)) if len(bg_intensities) > 1 else 0.02,
             interior_mean=float(np.mean(interior_intensities)),
             interior_std=float(np.std(interior_intensities))
             if len(interior_intensities) > 1 else 0.01, noise_std=float(np.mean(noise_stds))
             if noise_stds else 0.003, diameter_min=float(np.min(diameters)),
             diameter_max=float(np.max(diameters)),
             diameter_mean=float(np.mean(diameters)),
-            image_size =image_size, has_highlight =len(highlight_intensities) > len(image_paths) * 0.2,
+            image_size=image_size, has_highlight=len(highlight_intensities) > len(image_paths) * 0.2,
             highlight_intensity=float(np.mean(highlight_intensities))
             if highlight_intensities else 0.1, vignette_strength=float(
                 np.mean(vignette_strengths)) if vignette_strengths else 0.02,

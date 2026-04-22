@@ -19,37 +19,39 @@ import sys
 # =============================================================================
 # Dependency Check
 # =============================================================================
+
+
 def check_dependencies():
     """Check for required dependencies and provide install instructions."""
     missing = []
-    
+
     try:
         import yaml
     except ImportError:
         missing.append("pyyaml")
-    
+
     try:
         import numpy
     except ImportError:
         missing.append("numpy")
-    
+
     try:
         import cv2
     except ImportError:
         missing.append("opencv-python")
-    
+
     try:
         import pandas
     except ImportError:
         missing.append("pandas")
-    
+
     try:
         import tqdm
     except ImportError:
         missing.append("tqdm")
-    
+
     if missing:
-        print("="*60)
+        print("=" * 60)
         print("ERROR: Missing required dependencies:")
         for pkg in missing:
             print(f"  - {pkg}")
@@ -59,8 +61,9 @@ def check_dependencies():
         print()
         print("Or install all dependencies:")
         print("  pip install pyyaml numpy opencv-python pandas tqdm torch torchvision")
-        print("="*60)
+        print("=" * 60)
         sys.exit(1)
+
 
 check_dependencies()
 
@@ -74,7 +77,7 @@ import queue
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Tuple
-from datetime import datetime 
+from datetime import datetime
 import webbrowser
 import yaml
 import numpy as np
@@ -86,7 +89,7 @@ if _parent not in sys.path:
     sys.path.insert(0, _parent)
 
 
-@dataclass 
+@dataclass
 class OpticalConfig:
     """Optical configuration for a folder/setup."""
     folder_name: str = ""
@@ -106,20 +109,20 @@ class OpticalConfig:
     # Training range
     defocus_range_min_mm: float = -12.0
     defocus_range_max_mm: float = 12.0
-    
+
     def update_calculated(self):
         """Update calculated parameters from user inputs."""
         self.aperture_diameter_mm = self.focal_length_mm / self.f_number
         # Lens equation: 1/F = 1/d0 + 1/u0 -> u0 = 1/(1/F - 1/d0)
         try:
-            inv_u0 = 1.0/self.focal_length_mm - 1.0/self.focus_distance_mm
+            inv_u0 = 1.0 / self.focal_length_mm - 1.0 / self.focus_distance_mm
             if inv_u0 > 0:
                 self.imaging_distance_mm = 1.0 / inv_u0
             else:
                 self.imaging_distance_mm = self.focus_distance_mm
         except ZeroDivisionError:
             self.imaging_distance_mm = self.focus_distance_mm
-    
+
     def to_yaml_dict(self) -> dict:
         """Convert to YAML-compatible dict for training_config.yaml."""
         self.update_calculated()
@@ -188,11 +191,12 @@ class FolderStats:
 
 class SharpCropsScanner:
     """Scans sharp crops directories."""
-    
+
     def __init__(self):
         self.supported_extensions = ['.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp']
-    
-    def scan_root(self, root: Path, log_callback=None, camera_filter: str = "all") -> Dict[str, FolderStats]:
+
+    def scan_root(self, root: Path, log_callback=None, camera_filter: str="all") ->Dict[str,
+            FolderStats]:
         """Scan directory for image folders."""
         root = Path(root)
         results = {}
@@ -249,7 +253,8 @@ class SharpCropsScanner:
                                                 material_folder.name, None))
 
         if camera_filter and camera_filter != "all" and log_callback:
-            log_callback(f"Filtering to camera '{camera_filter}': {len(folders_with_images)} matching folders")
+            log_callback(
+                f"Filtering to camera '{camera_filter}': {len(folders_with_images)} matching folders")
 
         if folders_with_images:
             # Has folders with images - scan each
@@ -269,7 +274,7 @@ class SharpCropsScanner:
                 log_callback("No images found!")
 
         return results
-    
+
     def _find_sharp_crops_csv(self, root: Path) -> Optional[Path]:
         """Look for sharp_crops.csv in root or parent directories (up to 3 levels)."""
         search_dir = root
@@ -294,24 +299,24 @@ class SharpCropsScanner:
                 break
 
         return None
-    
+
     def _load_csv_data(self, csv_path: Path) -> Optional[Dict[str, List[Dict]]]:
         """Load CSV and group by folder."""
         try:
             import pandas as pd
             df = pd.read_csv(csv_path)
-            
+
             # Group by folder
             data_by_folder = {}
             for folder_name in df['folder'].unique():
                 folder_df = df[df['folder'] == folder_name]
                 data_by_folder[folder_name] = folder_df.to_dict('records')
-            
+
             return data_by_folder
         except Exception as e:
             print(f"Error loading CSV: {e}")
             return None
-    
+
     def _get_image_files(self, folder: Path) -> List[Path]:
         """Get all image files in a folder (non-recursive)."""
         images = []
@@ -319,7 +324,7 @@ class SharpCropsScanner:
             if f.is_file() and f.suffix.lower() in self.supported_extensions:
                 images.append(f)
         return sorted(images)
-    
+
     def _analyze_folder(self, folder: Path, image_files: List[Path],
                         csv_data: Optional[Dict], log_callback=None,
                         csv_key: Optional[str] = None,
@@ -330,27 +335,27 @@ class SharpCropsScanner:
             folder_path=folder,
             num_images=len(image_files),
         )
-        
+
         # Check ALL image sizes
         sizes_found = {}
-        
+
         for img_path in image_files:
             img = cv2.imread(str(img_path), cv2.IMREAD_GRAYSCALE)
             if img is not None:
                 h, w = img.shape[:2]
                 size_key = (w, h)
                 sizes_found[size_key] = sizes_found.get(size_key, 0) + 1
-        
+
         stats.sizes_found = sizes_found
-        
+
         if sizes_found:
             # Most common size becomes the "primary" size
             primary_size = max(sizes_found.keys(), key=lambda k: sizes_found[k])
             stats.image_width, stats.image_height = primary_size
-            
+
             # Check consistency
             stats.size_consistent = (len(sizes_found) == 1)
-        
+
         # Add focus metrics + metadata from CSV if available
         lookup_key = csv_key if csv_key is not None else folder.name
         if csv_data and lookup_key in csv_data:
@@ -358,8 +363,10 @@ class SharpCropsScanner:
             if camera_filter:
                 folder_records = [r for r in folder_records if r.get('camera') == camera_filter]
             if folder_records:
-                laplacians = [r['laplacian_var'] for r in folder_records if 'laplacian_var' in r and r['laplacian_var'] == r['laplacian_var']]
-                tenengrads = [r['tenengrad'] for r in folder_records if 'tenengrad' in r and r['tenengrad'] == r['tenengrad']]
+                laplacians = [r['laplacian_var'] for r in folder_records
+                              if 'laplacian_var' in r and r['laplacian_var'] ==r['laplacian_var']]
+                tenengrads = [r['tenengrad'] for r in folder_records
+                              if 'tenengrad' in r and r['tenengrad'] ==r['tenengrad']]
 
                 if laplacians:
                     stats.has_focus_metrics = True
@@ -372,9 +379,12 @@ class SharpCropsScanner:
 
                 # Scale, native blur, diameter, camera
                 scales = [float(r['scale_px_per_mm']) for r in folder_records
-                          if 'scale_px_per_mm' in r and r['scale_px_per_mm'] == r['scale_px_per_mm']]
-                blurs = [float(r['native_blur_sigma']) for r in folder_records
-                         if 'native_blur_sigma' in r and r['native_blur_sigma'] == r['native_blur_sigma']]
+                          if 'scale_px_per_mm' in r and r['scale_px_per_mm'] ==
+                          r['scale_px_per_mm']]
+                blurs = [
+                    float(r['native_blur_sigma']) for r in folder_records
+                    if 'native_blur_sigma' in r and r['native_blur_sigma'] ==
+                    r['native_blur_sigma']]
                 diams = [float(r['diameter_px']) for r in folder_records
                          if 'diameter_px' in r and r['diameter_px'] == r['diameter_px']]
                 cameras = [r['camera'] for r in folder_records if 'camera' in r and r['camera']]
@@ -397,31 +407,32 @@ class SharpCropsScanner:
                 if cameras:
                     # Take most common camera label
                     stats.camera = max(set(cameras), key=cameras.count)
-        
+
         # Log result
         if log_callback:
             size_info = f"{stats.image_width}×{stats.image_height}"
             if not stats.size_consistent:
                 size_str = ", ".join(f"{w}×{h}({n})" for (w, h), n in sizes_found.items())
                 size_info = f"MIXED: {size_str}"
-            
+
             blur_info = ""
             if stats.has_csv_metadata and stats.mean_native_blur > 0:
                 blur_info = f", σ_native=[{stats.min_native_blur:.3f}–{stats.max_native_blur:.3f}] px"
-            
+
             prefix = "⚠ " if not stats.size_consistent else "  "
-            log_callback(f"{prefix}{folder.name}: {stats.num_images} images, {size_info}{blur_info}")
-        
+            log_callback(
+                f"{prefix}{folder.name}: {stats.num_images} images, {size_info}{blur_info}")
+
         return stats
-    
+
     def check_cross_folder_consistency(self, stats_dict: Dict[str, FolderStats]) -> Tuple[bool, str]:
         """Check if all folders have the same image size."""
         if not stats_dict:
             return True, "No folders to check"
-        
+
         # First check if any folder has internal inconsistency
         inconsistent_folders = [name for name, s in stats_dict.items() if not s.size_consistent]
-        
+
         # Then check cross-folder consistency
         sizes = {}
         for folder_name, stats in stats_dict.items():
@@ -430,14 +441,14 @@ class SharpCropsScanner:
                 if size not in sizes:
                     sizes[size] = []
                 sizes[size].append(folder_name)
-        
+
         msg_parts = []
         all_consistent = True
-        
+
         if inconsistent_folders:
             all_consistent = False
             msg_parts.append(f"⚠ Mixed sizes WITHIN folders: {', '.join(inconsistent_folders)}")
-        
+
         if len(sizes) == 0:
             msg_parts.append("No image sizes determined")
         elif len(sizes) == 1:
@@ -451,7 +462,7 @@ class SharpCropsScanner:
                 if len(folders) > 3:
                     folder_list += f" (+{len(folders)-3} more)"
                 msg_parts.append(f"  {size[0]}×{size[1]}: {folder_list}")
-        
+
         return all_consistent, "\n".join(msg_parts)
 
 
@@ -460,12 +471,12 @@ class SharpCropsScanner:
 # =============================================================================
 class TrainingGUI:
     """Main training GUI application."""
-    
+
     def __init__(self):
         self.root = tk.Tk()
         self.root.title("Defocus Estimation - Training Suite")
         self.root.geometry("1100x800")
-        
+
         # State
         self.sharp_crops_dir: Optional[Path] = None
         self.output_dir: Optional[Path] = None
@@ -475,20 +486,20 @@ class TrainingGUI:
         self.selected_folder: Optional[str] = None
         self.global_config: Optional[Dict[str, Any]] = None
         self.all_sizes_consistent: bool = True
-        
+
         # Training state
         self.training_thread: Optional[threading.Thread] = None
         self.stop_training = False
-        
+
         # Message queue for thread communication
         self.msg_queue = queue.Queue()
-        
+
         # Build UI
         self._create_ui()
 
         # Start message processor
         self._process_messages()
-    
+
     def _create_ui(self):
         """Create the main UI."""
         # Main container
@@ -498,17 +509,17 @@ class TrainingGUI:
         # Notebook with tabs (paths are now in individual tabs)
         self.notebook = ttk.Notebook(main_frame)
         self.notebook.pack(fill='both', expand=True, pady=(10, 0))
-        
+
         # Tab 1: Scan & Configure
         self.tab_config = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(self.tab_config, text="1. Scan & Configure")
         self._create_config_tab()
-        
+
         # Tab 2: Generate
         self.tab_generate = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(self.tab_generate, text="2. Generate")
         self._create_generate_tab()
-        
+
         # Tab 3: Train
         self.tab_train = ttk.Frame(self.notebook, padding=10)
         self.notebook.add(self.tab_train, text="3. Train")
@@ -526,7 +537,7 @@ class TrainingGUI:
 
         # Bottom: Log output
         self._create_log_section(main_frame)
-    
+
     def _create_path_section(self, parent):
         """Create path selection section."""
         frame = ttk.LabelFrame(parent, text="Sharp Crops Path", padding=10)
@@ -544,11 +555,11 @@ class TrainingGUI:
         ttk.Label(row1, text="Camera:").pack(side='left', padx=(10, 2))
         self.camera_filter_var = tk.StringVar(value="all")
         camera_combo = ttk.Combobox(row1, textvariable=self.camera_filter_var, width=6,
-                                     values=["all", "g", "m", "v"], state="readonly")
+                                    values=["all", "g", "m", "v"], state="readonly")
         camera_combo.pack(side='left')
 
         # Note: Output directory is in Tab 2 (Generate)
-    
+
     def _create_config_tab(self):
         """Create scan & configure tab."""
         # Add path section at the top
@@ -557,39 +568,43 @@ class TrainingGUI:
         # Left side: Folder list
         left_frame = ttk.Frame(self.tab_config)
         left_frame.pack(side='left', fill='both', expand=True)
-        
+
         ttk.Label(left_frame, text="Sharp Crop Folders:").pack(anchor='w')
-        
+
         # Scan button
         btn_frame = ttk.Frame(left_frame)
         btn_frame.pack(fill='x', pady=5)
-        ttk.Button(btn_frame, text="Load from CSVs", command=self._scan_sharp_crops).pack(side='left')
-        
+        ttk.Button(btn_frame, text="Load from CSVs",
+                   command=self._scan_sharp_crops).pack(side='left')
+
         # Folder listbox with scrollbar
         list_frame = ttk.Frame(left_frame)
         list_frame.pack(fill='both', expand=True)
-        
+
         scrollbar = ttk.Scrollbar(list_frame)
         scrollbar.pack(side='right', fill='y')
-        
+
         self.folder_listbox = tk.Listbox(list_frame, yscrollcommand=scrollbar.set, width=30)
         self.folder_listbox.pack(side='left', fill='both', expand=True)
         self.folder_listbox.bind('<<ListboxSelect>>', self._on_folder_select)
         scrollbar.config(command=self.folder_listbox.yview)
-        
+
         # Delete button
-        ttk.Button(left_frame, text="Remove Selected", command=self._remove_selected_folder).pack(anchor='w', pady=(5, 0))
+        ttk.Button(
+            left_frame, text="Remove Selected", command=self._remove_selected_folder).pack(
+            anchor='w', pady=(5, 0))
 
         # Summary label
         self.summary_var = tk.StringVar(value="No folders loaded")
-        ttk.Label(left_frame, textvariable=self.summary_var, wraplength=250).pack(anchor='w', pady=5)
-        
+        ttk.Label(left_frame, textvariable=self.summary_var,
+                  wraplength=250).pack(anchor='w', pady=5)
+
         # Right side: Configuration
         right_frame = ttk.LabelFrame(self.tab_config, text="Configuration", padding=10)
         right_frame.pack(side='right', fill='both', expand=True, padx=(10, 0))
-        
+
         self._create_config_fields(right_frame)
-    
+
     def _create_config_fields(self, parent):
         """Create optical configuration input fields."""
         # Folder stats (read-only)
@@ -625,7 +640,8 @@ class TrainingGUI:
         ).pack(side='left', padx=10)
 
         # Mode description label
-        self.mode_desc_var = tk.StringVar(value="Uses optical formula (Wang et al.) to generate blur from known optical parameters")
+        self.mode_desc_var = tk.StringVar(
+            value="Uses optical formula (Wang et al.) to generate blur from known optical parameters")
         ttk.Label(mode_frame, textvariable=self.mode_desc_var,
                   font=('', 8), foreground='gray', wraplength=500).pack(anchor='w', pady=(5, 0))
 
@@ -693,7 +709,9 @@ class TrainingGUI:
         ttk.Label(row4, text="Pixel Size (mm):", width=20).pack(side='left')
         self.pixel_size_var = tk.StringVar(value="0.020")
         ttk.Entry(row4, textvariable=self.pixel_size_var, width=12).pack(side='left')
-        ttk.Button(row4, text="?", width=2, command=self._lookup_training_pixel_size).pack(side='left', padx=2)
+        ttk.Button(
+            row4, text="?", width=2, command=self._lookup_training_pixel_size).pack(
+            side='left', padx=2)
 
         # Training crop size (original size before resize to 128)
         row4b = ttk.Frame(self.optical_params_frame)
@@ -701,7 +719,8 @@ class TrainingGUI:
         ttk.Label(row4b, text="Crop Size (px):", width=20).pack(side='left')
         self.training_crop_size_var = tk.StringVar(value="299")
         ttk.Entry(row4b, textvariable=self.training_crop_size_var, width=12).pack(side='left')
-        ttk.Label(row4b, text="(original crop before 128px resize)", font=('', 7)).pack(side='left', padx=5)
+        ttk.Label(row4b, text="(original crop before 128px resize)",
+                  font=('', 7)).pack(side='left', padx=5)
 
         # Direct Calibration Parameters frame (NEW - for direct mode)
         self.direct_params_frame = ttk.Frame(self.lens_frame)
@@ -713,37 +732,46 @@ class TrainingGUI:
         ttk.Label(row_browse, text="Calibration File:", width=20).pack(side='left')
         self.direct_calib_path_var = tk.StringVar()
         self.direct_calib_entry = ttk.Entry(row_browse, textvariable=self.direct_calib_path_var,
-                                             width=40, state='readonly')
+                                            width=40, state='readonly')
         self.direct_calib_entry.pack(side='left', padx=5)
-        ttk.Button(row_browse, text="Browse...", command=self._browse_direct_calibration).pack(side='left')
+        ttk.Button(
+            row_browse, text="Browse...", command=self._browse_direct_calibration).pack(
+            side='left')
 
         # Read-only displays for loaded values (USER CONSTRAINT: no manual editing)
         row_rho = ttk.Frame(self.direct_params_frame)
         row_rho.pack(fill='x', pady=2)
         ttk.Label(row_rho, text="ρ_direct (px/mm):", width=20).pack(side='left')
         self.rho_direct_var = tk.StringVar(value="")
-        ttk.Entry(row_rho, textvariable=self.rho_direct_var, width=12, state='readonly').pack(side='left')
+        ttk.Entry(row_rho, textvariable=self.rho_direct_var,
+                  width=12, state='readonly').pack(side='left')
 
         row_sigma = ttk.Frame(self.direct_params_frame)
         row_sigma.pack(fill='x', pady=2)
         ttk.Label(row_sigma, text="σ₀ (px):", width=20).pack(side='left')
         self.sigma_0_var = tk.StringVar(value="")
-        ttk.Entry(row_sigma, textvariable=self.sigma_0_var, width=12, state='readonly').pack(side='left')
+        ttk.Entry(row_sigma, textvariable=self.sigma_0_var,
+                  width=12, state='readonly').pack(side='left')
 
         # Info label
-        ttk.Label(self.direct_params_frame,
-                  text="Load calibration file from direct calibration workflow to populate these values.",
-                  font=('', 8), foreground='gray', wraplength=500).pack(anchor='w', pady=5)
+        ttk.Label(
+            self.direct_params_frame,
+            text="Load calibration file from direct calibration workflow to populate these values.",
+            font=('', 8),
+            foreground='gray', wraplength=500).pack(
+            anchor='w', pady=5)
 
         # Calibration reference section (loaded from calibration file)
-        self.calib_ref_frame = ttk.LabelFrame(parent, text="Calibration Reference (from calibration file)", padding=5)
+        self.calib_ref_frame = ttk.LabelFrame(
+            parent, text="Calibration Reference (from calibration file)", padding=5)
         self.calib_ref_frame.pack(fill='x', pady=5)
 
         row_calib1 = ttk.Frame(self.calib_ref_frame)
         row_calib1.pack(fill='x', pady=2)
         ttk.Label(row_calib1, text="Calib Pixel Size (mm):", width=20).pack(side='left')
         self.calib_pixel_size_var = tk.StringVar(value="")
-        calib_px_entry = ttk.Entry(row_calib1, textvariable=self.calib_pixel_size_var, width=12, state='readonly')
+        calib_px_entry = ttk.Entry(
+            row_calib1, textvariable=self.calib_pixel_size_var, width=12, state='readonly')
         calib_px_entry.pack(side='left')
         ttk.Label(row_calib1, text="(auto-loaded)", font=('', 7)).pack(side='left', padx=5)
 
@@ -751,7 +779,9 @@ class TrainingGUI:
         row_calib2.pack(fill='x', pady=2)
         ttk.Label(row_calib2, text="Calib Resolution (px):", width=20).pack(side='left')
         self.calib_reference_resolution_var = tk.StringVar(value="")
-        calib_res_entry = ttk.Entry(row_calib2, textvariable=self.calib_reference_resolution_var, width=12, state='readonly')
+        calib_res_entry = ttk.Entry(
+            row_calib2, textvariable=self.calib_reference_resolution_var, width=12,
+            state='readonly')
         calib_res_entry.pack(side='left')
         ttk.Label(row_calib2, text="(auto-loaded)", font=('', 7)).pack(side='left', padx=5)
 
@@ -759,14 +789,15 @@ class TrainingGUI:
         row_calib3.pack(fill='x', pady=2)
         ttk.Label(row_calib3, text="Calib Scale (px/mm):", width=20).pack(side='left')
         self.calib_scale_px_per_mm_var = tk.StringVar(value="")
-        calib_scale_entry = ttk.Entry(row_calib3, textvariable=self.calib_scale_px_per_mm_var, width=12, state='readonly')
+        calib_scale_entry = ttk.Entry(
+            row_calib3, textvariable=self.calib_scale_px_per_mm_var, width=12, state='readonly')
         calib_scale_entry.pack(side='left')
         ttk.Label(row_calib3, text="(auto-loaded)", font=('', 7)).pack(side='left', padx=5)
 
         # Training parameters
         train_frame = ttk.LabelFrame(parent, text="Training Parameters", padding=5)
         train_frame.pack(fill='x', pady=5)
-        
+
         # Defocus range
         row5 = ttk.Frame(train_frame)
         row5.pack(fill='x', pady=2)
@@ -776,33 +807,36 @@ class TrainingGUI:
         ttk.Label(row5, text=" to ").pack(side='left')
         self.defocus_max_var = tk.StringVar(value="12.0")
         ttk.Entry(row5, textvariable=self.defocus_max_var, width=8).pack(side='left')
-        
+
         # Rho
         self.rho_row = ttk.Frame(train_frame)
         self.rho_row.pack(fill='x', pady=2)
         ttk.Label(self.rho_row, text="ρ (blur constant):", width=20).pack(side='left')
         self.rho_var = tk.StringVar(value="1.0")
         ttk.Entry(self.rho_row, textvariable=self.rho_var, width=15).pack(side='left')
-        
+
         # Calculated values display
         self.calc_values_frame = ttk.LabelFrame(parent, text="Calculated Values", padding=5)
         self.calc_values_frame.pack(fill='x', pady=5)
 
         self.calculated_text = tk.Text(self.calc_values_frame, height=3, width=40, state='disabled')
         self.calculated_text.pack(fill='x')
-        
+
         # Buttons - changes based on mode
         self.config_btn_frame = ttk.Frame(parent)
         self.config_btn_frame.pack(fill='x', pady=10)
 
-        self.load_calib_btn = ttk.Button(self.config_btn_frame, text="Load from Calibration", command=self._load_from_calibration)
+        self.load_calib_btn = ttk.Button(
+            self.config_btn_frame, text="Load from Calibration", command=self._load_from_calibration)
         self.load_calib_btn.pack(side='left', padx=5)
-        ttk.Button(self.config_btn_frame, text="Calculate", command=self._update_calculated).pack(side='left', padx=5)
+        ttk.Button(self.config_btn_frame, text="Calculate",
+                   command=self._update_calculated).pack(side='left', padx=5)
 
         # Save button - text changes based on mode
-        self.save_config_btn = ttk.Button(self.config_btn_frame, text="Save Config (Global)", command=self._save_config)
+        self.save_config_btn = ttk.Button(
+            self.config_btn_frame, text="Save Config (Global)", command=self._save_config)
         self.save_config_btn.pack(side='left', padx=5)
-    
+
     def _create_generate_tab(self):
         """Create synthetic data generation tab."""
 
@@ -832,7 +866,7 @@ class TrainingGUI:
         # Settings frame (in left column)
         settings_frame = ttk.LabelFrame(left_column, text="Generation Settings", padding=10)
         settings_frame.pack(fill='x', pady=5)
-        
+
         # Number of synthetic samples
         row1 = ttk.Frame(settings_frame)
         row1.pack(fill='x', pady=2)
@@ -840,7 +874,7 @@ class TrainingGUI:
         self.num_samples_var = tk.StringVar(value="50000")
         ttk.Entry(row1, textvariable=self.num_samples_var, width=15).pack(side='left')
         ttk.Label(row1, text="(more = better model, slower)").pack(side='left', padx=5)
-        
+
         # Training crop size
         row2 = ttk.Frame(settings_frame)
         row2.pack(fill='x', pady=2)
@@ -859,9 +893,13 @@ class TrainingGUI:
         row3.pack(fill='x', pady=2)
         ttk.Label(row3, text="Distribution:", width=20).pack(side='left')
         self.blur_distribution_var = tk.StringVar(value="uniform")
-        uniform_rb = ttk.Radiobutton(row3, text="Uniform", variable=self.blur_distribution_var, value="uniform", command=self._on_blur_distribution_change)
+        uniform_rb = ttk.Radiobutton(
+            row3, text="Uniform", variable=self.blur_distribution_var, value="uniform",
+            command=self._on_blur_distribution_change)
         uniform_rb.pack(side='left', padx=5)
-        weighted_rb = ttk.Radiobutton(row3, text="Weighted", variable=self.blur_distribution_var, value="weighted", command=self._on_blur_distribution_change)
+        weighted_rb = ttk.Radiobutton(
+            row3, text="Weighted", variable=self.blur_distribution_var, value="weighted",
+            command=self._on_blur_distribution_change)
         weighted_rb.pack(side='left', padx=5)
 
         # Beta parameters (only shown for weighted)
@@ -870,15 +908,19 @@ class TrainingGUI:
 
         ttk.Label(self.beta_params_frame, text="Beta α:", width=10).pack(side='left')
         self.beta_alpha_var = tk.StringVar(value="2.0")
-        self.beta_alpha_entry = ttk.Entry(self.beta_params_frame, textvariable=self.beta_alpha_var, width=8)
+        self.beta_alpha_entry = ttk.Entry(
+            self.beta_params_frame, textvariable=self.beta_alpha_var, width=8)
         self.beta_alpha_entry.pack(side='left', padx=(0, 10))
 
         ttk.Label(self.beta_params_frame, text="Beta β:", width=10).pack(side='left')
         self.beta_beta_var = tk.StringVar(value="5.0")
-        self.beta_beta_entry = ttk.Entry(self.beta_params_frame, textvariable=self.beta_beta_var, width=8)
+        self.beta_beta_entry = ttk.Entry(
+            self.beta_params_frame, textvariable=self.beta_beta_var, width=8)
         self.beta_beta_entry.pack(side='left', padx=(0, 10))
 
-        self.beta_hint_label = ttk.Label(self.beta_params_frame, text="(α<β favors small CoC)", font=('', 8), foreground='gray')
+        self.beta_hint_label = ttk.Label(
+            self.beta_params_frame, text="(α<β favors small CoC)", font=('', 8),
+            foreground='gray')
         self.beta_hint_label.pack(side='left')
 
         # Initially disable beta params
@@ -911,7 +953,8 @@ This gives the model examples with known ground truth to learn from."""
         progress_frame.pack(fill='x', pady=5)
 
         self.gen_progress_var = tk.DoubleVar(value=0)
-        self.gen_progress_bar = ttk.Progressbar(progress_frame, variable=self.gen_progress_var, maximum=100)
+        self.gen_progress_bar = ttk.Progressbar(
+            progress_frame, variable=self.gen_progress_var, maximum=100)
         self.gen_progress_bar.pack(fill='x', pady=5)
 
         self.gen_status_var = tk.StringVar(value="Ready")
@@ -920,7 +963,7 @@ This gives the model examples with known ground truth to learn from."""
         # Action buttons (in left column)
         btn_frame = ttk.Frame(left_column)
         btn_frame.pack(fill='x', pady=10)
-        
+
         self.generate_btn = ttk.Button(
             btn_frame,
             text="Generate Synthetic Data",
@@ -959,8 +1002,7 @@ This gives the model examples with known ground truth to learn from."""
             min_blur_frame,
             text="ℹ️  Value is in calibration-camera pixels. Bins and intervals shift to [min, max]",
             font=('TkDefaultFont', 8),
-            foreground='gray'
-        )
+            foreground='gray')
         info_label.grid(row=2, column=0, columnspan=2, sticky='w', pady=(5, 0))
 
         # Preview button to visualize blur at different levels
@@ -1002,6 +1044,7 @@ This gives the model examples with known ground truth to learn from."""
 
         # Keep ERF count in sync with synthetic samples when user hasn't overridden
         self._erf_count_user_modified = False
+
         def _on_num_samples_change(*_args):
             if not self._erf_count_user_modified:
                 self.erf_validation_count_var.set(self.num_samples_var.get())
@@ -1019,7 +1062,8 @@ This gives the model examples with known ground truth to learn from."""
         self.calc_container = calc_container  # stored for label updates on mode change
 
         # Left: Forward Calculator (Beta → Distribution)
-        forward_frame = ttk.LabelFrame(calc_container, text="Forward: Beta → Distribution", padding=10)
+        forward_frame = ttk.LabelFrame(
+            calc_container, text="Forward: Beta → Distribution", padding=10)
         forward_frame.pack(side='left', fill='both', expand=False, padx=(0, 5))
 
         # Input section
@@ -1028,38 +1072,43 @@ This gives the model examples with known ground truth to learn from."""
 
         ttk.Label(input_section, text="Beta α:", width=8).pack(side='left', padx=(0, 5))
         self.calc_alpha_var = tk.StringVar(value="2.0")
-        ttk.Entry(input_section, textvariable=self.calc_alpha_var, width=10).pack(side='left', padx=(0, 15))
+        ttk.Entry(input_section, textvariable=self.calc_alpha_var,
+                  width=10).pack(side='left', padx=(0, 15))
 
         ttk.Label(input_section, text="Beta β:", width=8).pack(side='left', padx=(0, 5))
         self.calc_beta_var = tk.StringVar(value="5.0")
-        ttk.Entry(input_section, textvariable=self.calc_beta_var, width=10).pack(side='left', padx=(0, 15))
+        ttk.Entry(input_section, textvariable=self.calc_beta_var,
+                  width=10).pack(side='left', padx=(0, 15))
 
-        ttk.Button(input_section, text="Calculate", command=self._calculate_beta_distribution).pack(side='left')
+        ttk.Button(input_section, text="Calculate",
+                   command=self._calculate_beta_distribution).pack(side='left')
 
         # Results section
         results_frame = ttk.Frame(forward_frame)
         results_frame.pack(fill='both', expand=False, pady=(10, 0))
 
-        self.beta_calc_results = tk.Text(results_frame, height=15, width=50, state='disabled', font=('Courier', 9))
+        self.beta_calc_results = tk.Text(results_frame, height=15,
+                                         width=50, state='disabled', font=('Courier', 9))
         self.beta_calc_results.pack()
 
         # Set initial placeholder message
         self.beta_calc_results.config(state='normal')
         self.beta_calc_results.insert('1.0',
-            "Press 'Calculate' to compute the CoC\n"
-            "distribution for your Beta parameters.\n\n"
-            "Results will be based on the optical\n"
-            "configuration saved in Tab 1.\n\n"
-            "The distribution will show:\n"
-            "  • CoC range (0 to max CoC in px)\n"
-            "  • Mean, Median, Std Dev\n"
-            "  • Distribution across 4 intervals\n"
-            "  • Visual bar charts"
-        )
+                                      "Press 'Calculate' to compute the CoC\n"
+                                      "distribution for your Beta parameters.\n\n"
+                                      "Results will be based on the optical\n"
+                                      "configuration saved in Tab 1.\n\n"
+                                      "The distribution will show:\n"
+                                      "  • CoC range (0 to max CoC in px)\n"
+                                      "  • Mean, Median, Std Dev\n"
+                                      "  • Distribution across 4 intervals\n"
+                                      "  • Visual bar charts"
+                                      )
         self.beta_calc_results.config(state='disabled')
 
         # Right: Reverse Calculator (Distribution → Beta)
-        reverse_frame = ttk.LabelFrame(calc_container, text="Reverse: Target Distribution → Beta", padding=10)
+        reverse_frame = ttk.LabelFrame(
+            calc_container, text="Reverse: Target Distribution → Beta", padding=10)
         reverse_frame.pack(side='left', fill='both', expand=False, padx=(5, 0))
 
         # Target distribution inputs
@@ -1075,44 +1124,48 @@ This gives the model examples with known ground truth to learn from."""
             ttk.Label(row, text="%").pack(side='left')
             self.reverse_interval_vars.append(var)
 
-        ttk.Button(reverse_frame, text="Find Beta Params", command=self._reverse_calculate_beta).pack(pady=(10, 5))
+        ttk.Button(reverse_frame, text="Find Beta Params",
+                   command=self._reverse_calculate_beta).pack(pady=(10, 5))
 
         # Reverse results
         reverse_results_frame = ttk.Frame(reverse_frame)
         reverse_results_frame.pack(fill='both', expand=False, pady=(10, 0))
 
-        self.reverse_calc_results = tk.Text(reverse_results_frame, height=8, width=40, state='disabled', font=('Courier', 9))
+        self.reverse_calc_results = tk.Text(
+            reverse_results_frame, height=8, width=40, state='disabled', font=('Courier', 9))
         self.reverse_calc_results.pack()
 
     def _create_train_tab(self):
         """Create model training tab with mode selection."""
-        
+
         # Mode selection frame
         mode_frame = ttk.LabelFrame(self.tab_train, text="Select Training Mode", padding=10)
         mode_frame.pack(fill='x', pady=5)
-        
+
         self.train_mode_var = tk.StringVar(value="")
-        
+
         mode_btn_frame = ttk.Frame(mode_frame)
         mode_btn_frame.pack(fill='x')
-        
+
         self.mode_full_btn = ttk.Button(
             mode_btn_frame, text="Train Full Model",
             command=lambda: self._select_train_mode("full")
         )
         self.mode_full_btn.pack(side='left', padx=5, pady=5)
-        
+
         self.mode_dme_btn = ttk.Button(
             mode_btn_frame, text="Train DME Only",
             command=lambda: self._select_train_mode("dme")
         )
         self.mode_dme_btn.pack(side='left', padx=5, pady=5)
-        
+
         # Checkpoint selection (right side)
         checkpoint_frame = ttk.Frame(mode_btn_frame)
         checkpoint_frame.pack(side='right', padx=5)
 
-        ttk.Label(checkpoint_frame, text="Resume from:", font=('', 9)).pack(side='left', padx=(0, 5))
+        ttk.Label(
+            checkpoint_frame, text="Resume from:", font=('', 9)).pack(
+            side='left', padx=(0, 5))
 
         self.checkpoint_path_var = tk.StringVar(value="")
         self.checkpoint_display_var = tk.StringVar(value="Auto-detect")
@@ -1151,10 +1204,12 @@ This gives the model examples with known ground truth to learn from."""
         left_info.pack(side='left', fill='x', expand=True)
 
         self.mode_desc_var = tk.StringVar(value="Select a training mode above")
-        ttk.Label(left_info, textvariable=self.mode_desc_var, foreground='gray', font=('', 8)).pack(anchor='w')
+        ttk.Label(left_info, textvariable=self.mode_desc_var,
+                  foreground='gray', font=('', 8)).pack(anchor='w')
 
         self.checkpoint_info_var = tk.StringVar(value="")
-        self.checkpoint_info_label = ttk.Label(left_info, textvariable=self.checkpoint_info_var, foreground='blue', font=('', 8))
+        self.checkpoint_info_label = ttk.Label(
+            left_info, textvariable=self.checkpoint_info_var, foreground='blue', font=('', 8))
         self.checkpoint_info_label.pack(anchor='w')
 
         # Right side: Scan checkpoint button and metrics
@@ -1162,7 +1217,8 @@ This gives the model examples with known ground truth to learn from."""
         scan_inner.pack(side='right', padx=5)
 
         self.checkpoint_metrics_var = tk.StringVar(value="")
-        ttk.Label(scan_inner, textvariable=self.checkpoint_metrics_var, foreground='gray', font=('', 8)).pack(side='left', padx=(0, 5))
+        ttk.Label(scan_inner, textvariable=self.checkpoint_metrics_var,
+                  foreground='gray', font=('', 8)).pack(side='left', padx=(0, 5))
 
         ttk.Button(
             scan_inner,
@@ -1174,32 +1230,32 @@ This gives the model examples with known ground truth to learn from."""
         # Settings frame (initially disabled)
         self.settings_frame = ttk.LabelFrame(self.tab_train, text="Settings", padding=10)
         self.settings_frame.pack(fill='x', pady=5)
-        
+
         # Create two columns
         left_col = ttk.Frame(self.settings_frame)
         left_col.pack(side='left', fill='both', expand=True)
-        
+
         right_col = ttk.Frame(self.settings_frame)
-        right_col.pack(side='left', fill='both', expand=True, padx=(20,0))
-        
+        right_col.pack(side='left', fill='both', expand=True, padx=(20, 0))
+
         # DME settings (left column)
         self.dme_settings_frame = ttk.LabelFrame(left_col, text="DME Settings", padding=5)
         self.dme_settings_frame.pack(fill='x', pady=2)
-        
+
         row1 = ttk.Frame(self.dme_settings_frame)
         row1.pack(fill='x', pady=2)
         ttk.Label(row1, text="Epochs to Train:", width=14).pack(side='left')
         self.epochs_dme_var = tk.StringVar(value="50")
         self.epochs_dme_entry = ttk.Entry(row1, textvariable=self.epochs_dme_var, width=10)
         self.epochs_dme_entry.pack(side='left')
-        
+
         row2 = ttk.Frame(self.dme_settings_frame)
         row2.pack(fill='x', pady=2)
         ttk.Label(row2, text="Batch Size:", width=12).pack(side='left')
         self.batch_size_var = tk.StringVar(value="128")
         self.batch_dme_entry = ttk.Entry(row2, textvariable=self.batch_size_var, width=10)
         self.batch_dme_entry.pack(side='left')
-        
+
         # Learning rate (right column)
         self.lr_frame = ttk.LabelFrame(right_col, text="Learning Rate", padding=5)
         self.lr_frame.pack(fill='x', pady=2)
@@ -1229,7 +1285,7 @@ This gives the model examples with known ground truth to learn from."""
             foreground='gray'
         )
         lr_note.pack(anchor='w', padx=(0, 0))
-        
+
         # GPU setting (right column)
         self.gpu_frame = ttk.LabelFrame(right_col, text="Device", padding=5)
         self.gpu_frame.pack(fill='x', pady=2)
@@ -1279,7 +1335,8 @@ This gives the model examples with known ground truth to learn from."""
         save_help.pack(anchor='w', padx=(20, 0))
 
         # Validation Split Strategy
-        self.val_split_frame = ttk.LabelFrame(self.tab_train, text="Validation Split Strategy", padding=10)
+        self.val_split_frame = ttk.LabelFrame(
+            self.tab_train, text="Validation Split Strategy", padding=10)
         self.val_split_frame.pack(fill='x', pady=5)
 
         self.val_split_var = tk.StringVar(value="random")
@@ -1317,35 +1374,35 @@ This gives the model examples with known ground truth to learn from."""
         # Start button frame
         start_frame = ttk.Frame(self.tab_train)
         start_frame.pack(fill='x', pady=10)
-        
+
         self.start_train_btn = ttk.Button(
             start_frame, text="Start Training",
             command=self._start_training,
             state='disabled'
         )
         self.start_train_btn.pack(side='left', padx=5)
-        
+
         self.stop_btn = ttk.Button(
             start_frame, text="Stop",
             command=self._stop_training,
             state='disabled'
         )
         self.stop_btn.pack(side='left', padx=5)
-        
+
         # Progress
         progress_frame = ttk.LabelFrame(self.tab_train, text="Progress", padding=10)
         progress_frame.pack(fill='x', pady=5)
-        
+
         self.progress_var = tk.DoubleVar(value=0)
         self.progress_bar = ttk.Progressbar(progress_frame, variable=self.progress_var, maximum=100)
         self.progress_bar.pack(fill='x', pady=5)
-        
+
         self.status_var = tk.StringVar(value="Select a training mode to begin")
         ttk.Label(progress_frame, textvariable=self.status_var).pack(anchor='w')
-        
+
         # Initially disable all settings
         self._disable_all_settings()
-    
+
     def _select_train_mode(self, mode: str):
         """Handle training mode selection."""
         self.train_mode_var.set(mode)
@@ -1417,7 +1474,7 @@ This gives the model examples with known ground truth to learn from."""
             else:
                 self.checkpoint_path_var.set("")
                 self.checkpoint_display_var.set("Not found (will start fresh)")
-    
+
     def _disable_all_settings(self):
         """Disable all settings fields."""
         for widget in [self.epochs_dme_entry, self.batch_dme_entry]:
@@ -1426,7 +1483,7 @@ This gives the model examples with known ground truth to learn from."""
         self.override_lr_checkbox.config(state='disabled')
         self.gpu_checkbox.config(state='disabled')
         self.start_train_btn.config(state='disabled')
-    
+
     def _enable_dme_settings(self):
         """Enable DME settings."""
         self.epochs_dme_entry.config(state='normal')
@@ -1531,15 +1588,18 @@ This gives the model examples with known ground truth to learn from."""
 
             if mode == 'dme':
                 if has_dme:
-                    self.checkpoint_info_var.set(f"ℹ️ Will resume DME training from {checkpoint_name}")
+                    self.checkpoint_info_var.set(
+                        f"ℹ️ Will resume DME training from {checkpoint_name}")
                 else:
-                    self.checkpoint_info_var.set(f"⚠️ Checkpoint format not recognized: {checkpoint_name}")
+                    self.checkpoint_info_var.set(
+                        f"⚠️ Checkpoint format not recognized: {checkpoint_name}")
 
             elif mode == 'full':
                 if has_dme:
                     self.checkpoint_info_var.set(f"ℹ️ Will resume DME from {checkpoint_name}")
                 else:
-                    self.checkpoint_info_var.set(f"⚠️ Checkpoint format not recognized: {checkpoint_name}")
+                    self.checkpoint_info_var.set(
+                        f"⚠️ Checkpoint format not recognized: {checkpoint_name}")
 
         except Exception as e:
             self.checkpoint_info_var.set(f"⚠️ Could not analyze {checkpoint_name}: {str(e)}")
@@ -1558,13 +1618,16 @@ This gives the model examples with known ground truth to learn from."""
 
             if dme_checkpoint.exists():
                 self.checkpoint_display_var.set(dme_checkpoint.name)
-                self.checkpoint_info_var.set(f"ℹ️ Will train DD from scratch using DME from {dme_checkpoint.name}")
+                self.checkpoint_info_var.set(
+                    f"ℹ️ Will train DD from scratch using DME from {dme_checkpoint.name}")
             else:
                 self.checkpoint_display_var.set("None")
-                self.checkpoint_info_var.set("⚠️ No DME checkpoint found - DD training may not work properly")
+                self.checkpoint_info_var.set(
+                    "⚠️ No DME checkpoint found - DD training may not work properly")
         else:
             self.checkpoint_display_var.set("None")
-            self.checkpoint_info_var.set("ℹ️ Will train from scratch (will overwrite checkpoints if they already exist)")
+            self.checkpoint_info_var.set(
+                "ℹ️ Will train from scratch (will overwrite checkpoints if they already exist)")
 
         self._update_val_split_state()
 
@@ -1645,12 +1708,13 @@ This gives the model examples with known ground truth to learn from."""
             self._train_model()
         elif mode == "dme":
             self._train_dme_only()
-    
+
     def _create_inference_tab_scrollable(self):
         """Create scrollable inference tab wrapper."""
         # Create canvas and scrollbar
         self.inf_canvas = tk.Canvas(self.tab_inference, highlightthickness=0)
-        self.inf_scrollbar = ttk.Scrollbar(self.tab_inference, orient="vertical", command=self.inf_canvas.yview)
+        self.inf_scrollbar = ttk.Scrollbar(
+            self.tab_inference, orient="vertical", command=self.inf_canvas.yview)
         self.inf_scrollable_frame = ttk.Frame(self.inf_canvas, padding=10)
 
         # Configure scrolling
@@ -1668,7 +1732,7 @@ This gives the model examples with known ground truth to learn from."""
 
         # Bind mousewheel to canvas
         def _on_mousewheel(event):
-            self.inf_canvas.yview_scroll(int(-1*(event.delta/120)), "units")
+            self.inf_canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
 
         def _bind_mousewheel(event):
             self.inf_canvas.bind_all("<MouseWheel>", _on_mousewheel)
@@ -1685,7 +1749,8 @@ This gives the model examples with known ground truth to learn from."""
     def _create_inference_tab(self):
         """Create inference & analysis tab."""
         # Use scrollable frame for content
-        parent = self.inf_scrollable_frame if hasattr(self, 'inf_scrollable_frame') else self.tab_inference
+        parent = self.inf_scrollable_frame if hasattr(
+            self, 'inf_scrollable_frame') else self.tab_inference
 
         # Model selection
         model_frame = ttk.LabelFrame(parent, text="Model Selection", padding=10)
@@ -1697,7 +1762,9 @@ This gives the model examples with known ground truth to learn from."""
         self.inf_model_var = tk.StringVar(value="training_output/checkpoints/dme_best.pth")
         ttk.Entry(row1, textvariable=self.inf_model_var, width=60).pack(side='left', padx=5)
         ttk.Button(row1, text="Browse", command=self._browse_inference_model).pack(side='left')
-        ttk.Button(row1, text="Scan", command=self._scan_inference_checkpoint).pack(side='left', padx=5)
+        ttk.Button(
+            row1, text="Scan", command=self._scan_inference_checkpoint).pack(
+            side='left', padx=5)
 
         # Model info display (below)
         model_info_row = ttk.Frame(model_frame)
@@ -1713,12 +1780,18 @@ This gives the model examples with known ground truth to learn from."""
         src_type_row = ttk.Frame(self.inf_source_frame)
         src_type_row.pack(fill='x', pady=(0, 5))
         self.inf_source_type_var = tk.StringVar(value="crops")
-        ttk.Radiobutton(src_type_row, text="Pre-cropped Folder", variable=self.inf_source_type_var,
-                        value="crops", command=self._on_inf_source_type_change).pack(side='left', padx=5)
-        ttk.Radiobutton(src_type_row, text="Image Folder", variable=self.inf_source_type_var,
-                        value="folder", command=self._on_inf_source_type_change).pack(side='left', padx=5)
-        ttk.Radiobutton(src_type_row, text=".cine Files", variable=self.inf_source_type_var,
-                        value="cine", command=self._on_inf_source_type_change).pack(side='left', padx=5)
+        ttk.Radiobutton(
+            src_type_row, text="Pre-cropped Folder", variable=self.inf_source_type_var,
+            value="crops", command=self._on_inf_source_type_change).pack(
+            side='left', padx=5)
+        ttk.Radiobutton(
+            src_type_row, text="Image Folder", variable=self.inf_source_type_var, value="folder",
+            command=self._on_inf_source_type_change).pack(
+            side='left', padx=5)
+        ttk.Radiobutton(
+            src_type_row, text=".cine Files", variable=self.inf_source_type_var, value="cine",
+            command=self._on_inf_source_type_change).pack(
+            side='left', padx=5)
         try:
             try:
                 from Calibration.cine_loader import check_pyphantom as _cpq
@@ -1732,27 +1805,32 @@ This gives the model examples with known ground truth to learn from."""
         except Exception as e:
             logging.debug(f"pyphantom check failed: {e}")
             _pa = False
-        ttk.Label(src_type_row, text=f"({'✓' if _pa else '⚠'} pyphantom)",
-                  font=('TkDefaultFont', 8), foreground='green' if _pa else 'orange').pack(side='left', padx=10)
+        ttk.Label(src_type_row, text=f"({'✓' if _pa else '⚠'} pyphantom)", font=(
+            'TkDefaultFont', 8), foreground='green' if _pa else 'orange').pack(side='left', padx=10)
 
         self.inf_source_container = ttk.Frame(self.inf_source_frame)
         self.inf_source_container.pack(fill='x')
 
         # === Image Folder Source ===
-        self.inf_folder_source_frame = ttk.LabelFrame(self.inf_source_container, text="Image Folder Source", padding=10)
+        self.inf_folder_source_frame = ttk.LabelFrame(
+            self.inf_source_container, text="Image Folder Source", padding=10)
 
         row_f1 = ttk.Frame(self.inf_folder_source_frame)
         row_f1.pack(fill='x', pady=2)
         ttk.Label(row_f1, text="Image Folder:", width=14).pack(side='left')
         self.inf_zstack_folder_var = tk.StringVar()
-        ttk.Entry(row_f1, textvariable=self.inf_zstack_folder_var, width=50).pack(side='left', padx=5)
+        ttk.Entry(
+            row_f1, textvariable=self.inf_zstack_folder_var, width=50).pack(
+            side='left', padx=5)
         ttk.Button(row_f1, text="Browse", command=self._browse_inf_zstack_folder).pack(side='left')
 
         row_f2 = ttk.Frame(self.inf_folder_source_frame)
         row_f2.pack(fill='x', pady=2)
         ttk.Label(row_f2, text="Positions CSV:", width=14).pack(side='left')
         self.inf_positions_file_var = tk.StringVar()
-        ttk.Entry(row_f2, textvariable=self.inf_positions_file_var, width=50).pack(side='left', padx=5)
+        ttk.Entry(
+            row_f2, textvariable=self.inf_positions_file_var, width=50).pack(
+            side='left', padx=5)
         ttk.Button(row_f2, text="Browse", command=self._browse_inf_positions_file).pack(side='left')
 
         self.inf_positions_csv_info_var = tk.StringVar(value="")
@@ -1768,33 +1846,45 @@ This gives the model examples with known ground truth to learn from."""
 
         gen_frame = ttk.Frame(self.inf_folder_source_frame)
         gen_frame.pack(fill='x', pady=(10, 0))
-        ttk.Label(gen_frame, text="Or generate positions:", font=('TkDefaultFont', 8, 'bold')).pack(anchor='w')
+        ttk.Label(gen_frame, text="Or generate positions:", font=(
+            'TkDefaultFont', 8, 'bold')).pack(anchor='w')
         range_row = ttk.Frame(gen_frame)
         range_row.pack(fill='x', pady=2)
         ttk.Label(range_row, text="Z min:", width=6).pack(side='left')
         self.inf_z_min_var = tk.StringVar(value="-12")
-        ttk.Entry(range_row, textvariable=self.inf_z_min_var, width=6).pack(side='left', padx=(0, 5))
+        ttk.Entry(
+            range_row, textvariable=self.inf_z_min_var, width=6).pack(
+            side='left', padx=(0, 5))
         ttk.Label(range_row, text="max:", width=4).pack(side='left')
         self.inf_z_max_var = tk.StringVar(value="12")
-        ttk.Entry(range_row, textvariable=self.inf_z_max_var, width=6).pack(side='left', padx=(0, 5))
+        ttk.Entry(
+            range_row, textvariable=self.inf_z_max_var, width=6).pack(
+            side='left', padx=(0, 5))
         ttk.Label(range_row, text="mm", font=('TkDefaultFont', 8)).pack(side='left')
 
         # === .cine Folder Source ===
-        self.inf_cine_source_frame = ttk.LabelFrame(self.inf_source_container, text=".cine Folder Source", padding=10)
+        self.inf_cine_source_frame = ttk.LabelFrame(
+            self.inf_source_container, text=".cine Folder Source", padding=10)
 
         cine_row1 = ttk.Frame(self.inf_cine_source_frame)
         cine_row1.pack(fill='x', pady=2)
         ttk.Label(cine_row1, text=".cine Folder:", width=14).pack(side='left')
         self.inf_cine_folder_var = tk.StringVar()
-        ttk.Entry(cine_row1, textvariable=self.inf_cine_folder_var, width=50).pack(side='left', padx=5)
+        ttk.Entry(
+            cine_row1, textvariable=self.inf_cine_folder_var, width=50).pack(
+            side='left', padx=5)
         ttk.Button(cine_row1, text="Browse", command=self._browse_inf_cine_folder).pack(side='left')
 
         cine_row1b = ttk.Frame(self.inf_cine_source_frame)
         cine_row1b.pack(fill='x', pady=2)
         ttk.Label(cine_row1b, text="Positions CSV:", width=14).pack(side='left')
         self.inf_cine_positions_csv_var = tk.StringVar()
-        ttk.Entry(cine_row1b, textvariable=self.inf_cine_positions_csv_var, width=50).pack(side='left', padx=5)
-        ttk.Button(cine_row1b, text="Browse", command=self._browse_inf_cine_positions_csv).pack(side='left')
+        ttk.Entry(
+            cine_row1b, textvariable=self.inf_cine_positions_csv_var, width=50).pack(
+            side='left', padx=5)
+        ttk.Button(
+            cine_row1b, text="Browse", command=self._browse_inf_cine_positions_csv).pack(
+            side='left')
         ttk.Label(self.inf_cine_source_frame,
                   text="(optional: CSV with filename, stage_position_mm columns)",
                   font=('TkDefaultFont', 8), foreground='gray').pack(anchor='w', padx=14)
@@ -1804,7 +1894,9 @@ This gives the model examples with known ground truth to learn from."""
         ttk.Label(cine_row2, text="Stage Range:", width=14).pack(side='left')
         ttk.Label(cine_row2, text="Start:", width=5).pack(side='left')
         self.inf_stage_start_var = tk.StringVar(value="0")
-        ttk.Entry(cine_row2, textvariable=self.inf_stage_start_var, width=6).pack(side='left', padx=2)
+        ttk.Entry(
+            cine_row2, textvariable=self.inf_stage_start_var, width=6).pack(
+            side='left', padx=2)
         ttk.Label(cine_row2, text="End:", width=4).pack(side='left')
         self.inf_stage_end_var = tk.StringVar(value="12")
         ttk.Entry(cine_row2, textvariable=self.inf_stage_end_var, width=6).pack(side='left', padx=2)
@@ -1815,14 +1907,18 @@ This gives the model examples with known ground truth to learn from."""
         cine_row3.pack(fill='x', pady=2)
         ttk.Label(cine_row3, text="Focus at stage:", width=14).pack(side='left')
         self.inf_stage_focus_var = tk.StringVar(value="6")
-        ttk.Entry(cine_row3, textvariable=self.inf_stage_focus_var, width=6).pack(side='left', padx=2)
+        ttk.Entry(
+            cine_row3, textvariable=self.inf_stage_focus_var, width=6).pack(
+            side='left', padx=2)
         ttk.Label(cine_row3, text="mm", font=('TkDefaultFont', 8)).pack(side='left', padx=2)
 
         cine_row4 = ttk.Frame(self.inf_cine_source_frame)
         cine_row4.pack(fill='x', pady=2)
         ttk.Label(cine_row4, text="Frame index:", width=14).pack(side='left')
         self.inf_cine_frame_idx_var = tk.StringVar(value="0")
-        ttk.Entry(cine_row4, textvariable=self.inf_cine_frame_idx_var, width=6).pack(side='left', padx=2)
+        ttk.Entry(
+            cine_row4, textvariable=self.inf_cine_frame_idx_var, width=6).pack(
+            side='left', padx=2)
         ttk.Label(cine_row4, text="(which frame from each .cine)",
                   font=('TkDefaultFont', 8), foreground='gray').pack(side='left', padx=5)
 
@@ -1831,7 +1927,8 @@ This gives the model examples with known ground truth to learn from."""
                   font=('TkDefaultFont', 8), foreground='blue').pack(anchor='w', pady=2)
 
         # Sphere Processing (shown when folder/cine selected)
-        self.inf_sphere_frame = ttk.LabelFrame(self.inf_source_frame, text="Sphere Processing", padding=5)
+        self.inf_sphere_frame = ttk.LabelFrame(
+            self.inf_source_frame, text="Sphere Processing", padding=5)
 
         sphere_row1 = ttk.Frame(self.inf_sphere_frame)
         sphere_row1.pack(fill='x', pady=2)
@@ -1843,7 +1940,9 @@ This gives the model examples with known ground truth to learn from."""
         sphere_row2.pack(fill='x', pady=2)
         ttk.Label(sphere_row2, text="Sphere diameter (mm):").pack(side='left')
         self.inf_sphere_diameter_mm_var = tk.StringVar(value="10.0")
-        ttk.Entry(sphere_row2, textvariable=self.inf_sphere_diameter_mm_var, width=6).pack(side='left', padx=5)
+        ttk.Entry(
+            sphere_row2, textvariable=self.inf_sphere_diameter_mm_var, width=6).pack(
+            side='left', padx=5)
         ttk.Label(sphere_row2, text="(physical size of sphere)",
                   foreground='gray', font=('TkDefaultFont', 8)).pack(side='left')
 
@@ -1909,8 +2008,11 @@ This gives the model examples with known ground truth to learn from."""
         viz_rate_row.pack(fill='x', pady=(5, 2))
         ttk.Label(viz_rate_row, text="  Viz Sample Rate:", width=18).pack(side='left')
         self.inf_viz_rate_var = tk.StringVar(value="10")
-        ttk.Entry(viz_rate_row, textvariable=self.inf_viz_rate_var, width=8).pack(side='left', padx=(0, 5))
-        ttk.Label(viz_rate_row, text="(1 per N crops)", font=('TkDefaultFont', 8), foreground='gray').pack(side='left')
+        ttk.Entry(
+            viz_rate_row, textvariable=self.inf_viz_rate_var, width=8).pack(
+            side='left', padx=(0, 5))
+        ttk.Label(viz_rate_row, text="(1 per N crops)", font=(
+            'TkDefaultFont', 8), foreground='gray').pack(side='left')
 
         # Right column - analysis
         analysis_opts = ttk.LabelFrame(right_opts, text="Analysis & Comparison", padding=5)
@@ -1954,13 +2056,18 @@ This gives the model examples with known ground truth to learn from."""
         scale_row.pack(fill='x', pady=2)
         ttk.Label(scale_row, text="Inference camera:", width=16).pack(side='left')
         self.inf_camera_scale_var = tk.StringVar(value="")
-        ttk.Entry(scale_row, textvariable=self.inf_camera_scale_var, width=10).pack(side='left', padx=2)
+        ttk.Entry(
+            scale_row, textvariable=self.inf_camera_scale_var, width=10).pack(
+            side='left', padx=2)
         ttk.Label(scale_row, text="px/mm", font=('TkDefaultFont', 8)).pack(side='left', padx=2)
 
-        ttk.Label(scale_frame,
-                  text="Auto-detected from sphere when you Load & Preprocess.\n"
-                       "Required for direct mode if inference camera differs from calibration camera.",
-                  font=('TkDefaultFont', 7), foreground='gray', wraplength=280).pack(anchor='w', pady=(2, 0))
+        ttk.Label(
+            scale_frame,
+            text="Auto-detected from sphere when you Load & Preprocess.\n"
+            "Required for direct mode if inference camera differs from calibration camera.",
+            font=('TkDefaultFont', 7),
+            foreground='gray', wraplength=280).pack(
+            anchor='w', pady=(2, 0))
 
         # Device settings
         device_frame = ttk.LabelFrame(right_opts, text="Device", padding=5)
@@ -2005,7 +2112,8 @@ This gives the model examples with known ground truth to learn from."""
         inf_progress_frame.pack(fill='x', pady=5)
 
         self.inf_progress_var = tk.DoubleVar(value=0)
-        self.inf_progress_bar = ttk.Progressbar(inf_progress_frame, variable=self.inf_progress_var, maximum=100)
+        self.inf_progress_bar = ttk.Progressbar(
+            inf_progress_frame, variable=self.inf_progress_var, maximum=100)
         self.inf_progress_bar.pack(fill='x', pady=5)
 
         self.inf_status_var = tk.StringVar(value="Ready to run inference")
@@ -2015,7 +2123,8 @@ This gives the model examples with known ground truth to learn from."""
         results_frame = ttk.LabelFrame(parent, text="Results Summary", padding=10)
         results_frame.pack(fill='both', expand=True, pady=5)
 
-        self.inf_results_text = scrolledtext.ScrolledText(results_frame, height=8, state='disabled', wrap='word')
+        self.inf_results_text = scrolledtext.ScrolledText(
+            results_frame, height=8, state='disabled', wrap='word')
         self.inf_results_text.pack(fill='both', expand=True)
 
     def _create_validation_tab(self):
@@ -2103,11 +2212,13 @@ This gives the model examples with known ground truth to learn from."""
         self.val_min_blur_label = ttk.Label(min_blur_row, text="Min CoC (px):", width=14)
         self.val_min_blur_label.pack(side='left')
         self.val_min_blur_var = tk.DoubleVar(value=0.0)
-        self.val_min_blur_entry = ttk.Entry(min_blur_row, textvariable=self.val_min_blur_var, width=8, state='readonly')
+        self.val_min_blur_entry = ttk.Entry(
+            min_blur_row, textvariable=self.val_min_blur_var, width=8, state='readonly')
         self.val_min_blur_entry.pack(side='left', padx=5)
 
         # Granular filter options
-        self.val_filter_opts_label = ttk.Label(filter_frame, text="Exclude low CoC from:", font=('TkDefaultFont', 9))
+        self.val_filter_opts_label = ttk.Label(
+            filter_frame, text="Exclude low CoC from:", font=('TkDefaultFont', 9))
         self.val_filter_opts_label.pack(anchor='w', pady=(8, 2))
 
         self.val_filter_worst_pct_var = tk.BooleanVar(value=True)
@@ -2208,7 +2319,9 @@ This gives the model examples with known ground truth to learn from."""
             state='disabled'
         )
         self.val_num_samples_spinbox.pack(side='left', padx=(0, 5))
-        self.val_samples_range_label = ttk.Label(num_row, text="(max: unknown)", font=('TkDefaultFont', 8), foreground='gray')
+        self.val_samples_range_label = ttk.Label(
+            num_row, text="(max: unknown)", font=('TkDefaultFont', 8),
+            foreground='gray')
         self.val_samples_range_label.pack(side='left')
 
         # Batch size
@@ -2224,7 +2337,9 @@ This gives the model examples with known ground truth to learn from."""
             width=8
         )
         batch_spinbox.pack(side='left', padx=(0, 5))
-        ttk.Label(batch_row, text="(Higher = faster GPU utilization)", font=('', 8)).pack(side='left')
+        ttk.Label(
+            batch_row, text="(Higher = faster GPU utilization)", font=('', 8)).pack(
+            side='left')
 
         # Num workers
         workers_row = ttk.Frame(left_opts)
@@ -2239,7 +2354,10 @@ This gives the model examples with known ground truth to learn from."""
             width=8
         )
         workers_spinbox.pack(side='left', padx=(0, 5))
-        ttk.Label(workers_row, text="(0 recommended for GUI)", font=('', 8), foreground='gray').pack(side='left')
+        ttk.Label(
+            workers_row, text="(0 recommended for GUI)", font=('', 8),
+            foreground='gray').pack(
+            side='left')
 
         # Visualizations
         viz_frame = ttk.LabelFrame(right_opts, text="Outputs", padding=5)
@@ -2302,7 +2420,8 @@ This gives the model examples with known ground truth to learn from."""
             width=8
         )
         self.val_num_worst_spinbox.pack(side='left', padx=(0, 5))
-        ttk.Label(worst_num_row_1, text="worst samples", font=('TkDefaultFont', 9)).pack(side='left')
+        ttk.Label(worst_num_row_1, text="worst samples",
+                  font=('TkDefaultFont', 9)).pack(side='left')
 
         # Right side - second worst case type
         right_worst = ttk.Frame(worst_cases_row)
@@ -2329,7 +2448,8 @@ This gives the model examples with known ground truth to learn from."""
             width=8
         )
         self.val_num_worst_spinbox_2.pack(side='left', padx=(0, 5))
-        ttk.Label(worst_num_row_2, text="worst samples", font=('TkDefaultFont', 9)).pack(side='left')
+        ttk.Label(worst_num_row_2, text="worst samples",
+                  font=('TkDefaultFont', 9)).pack(side='left')
 
         # Device
         device_frame = ttk.LabelFrame(right_opts, text="Device", padding=5)
@@ -2367,7 +2487,8 @@ This gives the model examples with known ground truth to learn from."""
         val_progress_frame.grid(row=4, column=0, columnspan=2, sticky='ew', padx=5, pady=5)
 
         self.val_progress_var = tk.DoubleVar(value=0)
-        self.val_progress_bar = ttk.Progressbar(val_progress_frame, variable=self.val_progress_var, maximum=100)
+        self.val_progress_bar = ttk.Progressbar(
+            val_progress_frame, variable=self.val_progress_var, maximum=100)
         self.val_progress_bar.pack(fill='x', pady=5)
 
         self.val_status_var = tk.StringVar(value="Select test mode and click Run Test")
@@ -2380,7 +2501,8 @@ This gives the model examples with known ground truth to learn from."""
         # Configure row weight for results frame to expand
         self.tab_validation.rowconfigure(5, weight=1)
 
-        self.val_results_text = scrolledtext.ScrolledText(val_results_frame, height=10, state='disabled', wrap='word')
+        self.val_results_text = scrolledtext.ScrolledText(
+            val_results_frame, height=10, state='disabled', wrap='word')
         self.val_results_text.pack(fill='both', expand=True)
 
         # Set initial state for worst-case controls based on default mode (DME)
@@ -2390,7 +2512,7 @@ This gives the model examples with known ground truth to learn from."""
         """Create log output section."""
         # Log section removed - all output goes to terminal
         pass
-    
+
     # =========================================================================
     # Path Selection
     # =========================================================================
@@ -2401,7 +2523,7 @@ This gives the model examples with known ground truth to learn from."""
             self.sharp_crops_dir = Path(path)
             self.sharp_crops_var.set(path)
             self._log(f"Sharp crops dir set: {path}")
-    
+
     def _browse_output_dir(self):
         """Browse for output directory."""
         path = filedialog.askdirectory(title="Select Output Directory")
@@ -2452,36 +2574,44 @@ This gives the model examples with known ground truth to learn from."""
 
             # Validate all required fields are present
             missing = []
-            if rho_direct is None: missing.append('rho_px_per_mm')
-            if scale_calib_px_per_mm is None: missing.append('scale_calib_px_per_mm')
-            if reference_resolution is None: missing.append('reference_resolution')
-            if defocus_range is None: missing.append('defocus_range_mm')
-            if sigma_0 is None: missing.append('sigma_0')
-            if calibration_mode is None: missing.append('calibration_mode')
+            if rho_direct is None:
+                missing.append('rho_px_per_mm')
+            if scale_calib_px_per_mm is None:
+                missing.append('scale_calib_px_per_mm')
+            if reference_resolution is None:
+                missing.append('reference_resolution')
+            if defocus_range is None:
+                missing.append('defocus_range_mm')
+            if sigma_0 is None:
+                missing.append('sigma_0')
+            if calibration_mode is None:
+                missing.append('calibration_mode')
 
             if missing:
                 messagebox.showerror("Invalid File",
-                    f"Calibration file missing required fields:\n\n"
-                    f"{', '.join(missing)}\n\n"
-                    "These can appear at any nesting level in the YAML.")
+                                     f"Calibration file missing required fields:\n\n"
+                                     f"{', '.join(missing)}\n\n"
+                                     "These can appear at any nesting level in the YAML.")
                 return
 
             # Validate calibration_mode is direct
             if calibration_mode != 'direct':
-                messagebox.showerror("Invalid Mode",
+                messagebox.showerror(
+                    "Invalid Mode",
                     f"calibration_mode is '{calibration_mode}', expected 'direct'.\n\n"
                     "This loader is for direct calibration files only.")
                 return
 
             # Sanity validation
             if rho_direct <= 0:
-                messagebox.showerror("Invalid Parameters",
+                messagebox.showerror(
+                    "Invalid Parameters",
                     f"Invalid rho_px_per_mm: {rho_direct}\n\nMust be greater than 0.")
                 return
 
             if sigma_0 < 0:
                 messagebox.showerror("Invalid Parameters",
-                    f"Invalid sigma_0: {sigma_0}\n\nMust be >= 0.")
+                                     f"Invalid sigma_0: {sigma_0}\n\nMust be >= 0.")
                 return
 
             # Load into GUI fields
@@ -2510,12 +2640,12 @@ This gives the model examples with known ground truth to learn from."""
                 self._log(f"  defocus range: {defocus_range[0]} to {defocus_range[1]} mm")
 
             messagebox.showinfo("Success",
-                f"Loaded direct calibration parameters:\n\n"
-                f"ρ_direct = {rho_direct:.6f} px/mm\n"
-                f"σ₀ = {sigma_0:.4f} px\n"
-                f"scale_calib = {scale_calib_px_per_mm:.4f} px/mm\n"
-                f"reference_resolution = {reference_resolution} px\n"
-                f"defocus_range = {defocus_range}")
+                                f"Loaded direct calibration parameters:\n\n"
+                                f"ρ_direct = {rho_direct:.6f} px/mm\n"
+                                f"σ₀ = {sigma_0:.4f} px\n"
+                                f"scale_calib = {scale_calib_px_per_mm:.4f} px/mm\n"
+                                f"reference_resolution = {reference_resolution} px\n"
+                                f"defocus_range = {defocus_range}")
 
         except FileNotFoundError:
             messagebox.showerror("Error", f"File not found:\n{file_path}")
@@ -2656,7 +2786,8 @@ This gives the model examples with known ground truth to learn from."""
                     pos_col = col
                     break
             if pos_col is None:
-                self.inf_cine_info_var.set("CSV missing position column (stage_position_mm or z_position_mm)")
+                self.inf_cine_info_var.set(
+                    "CSV missing position column (stage_position_mm or z_position_mm)")
                 return
             positions = df[pos_col].values
             self.inf_cine_info_var.set(
@@ -2679,7 +2810,8 @@ This gives the model examples with known ground truth to learn from."""
         self.root.update_idletasks()
 
         import threading
-        t = threading.Thread(target=self._load_and_preprocess_inf_worker, args=(source_type, output_dir), daemon=True)
+        t = threading.Thread(target=self._load_and_preprocess_inf_worker,
+                             args=(source_type, output_dir), daemon=True)
         t.start()
 
     def _load_and_preprocess_inf_worker(self, source_type: str, output_dir: str):
@@ -2708,7 +2840,8 @@ This gives the model examples with known ground truth to learn from."""
             if source_type == "folder":
                 folder = self.inf_zstack_folder_var.get()
                 if not folder or not Path(folder).exists():
-                    self.root.after(0, lambda: messagebox.showerror("Error", "Please select a valid image folder"))
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Error", "Please select a valid image folder"))
                     self.root.after(0, lambda: self.inf_preproc_status_var.set(""))
                     return
 
@@ -2721,7 +2854,8 @@ This gives the model examples with known ground truth to learn from."""
                 image_files = sorted(set(image_files))
 
                 if not image_files:
-                    self.root.after(0, lambda: messagebox.showerror("Error", "No images found in folder"))
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Error", "No images found in folder"))
                     self.root.after(0, lambda: self.inf_preproc_status_var.set(""))
                     return
 
@@ -2778,14 +2912,16 @@ This gives the model examples with known ground truth to learn from."""
             else:  # cine
                 folder_path = self.inf_cine_folder_var.get()
                 if not folder_path or not Path(folder_path).exists():
-                    self.root.after(0, lambda: messagebox.showerror("Error", "Please select a valid .cine folder"))
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Error", "Please select a valid .cine folder"))
                     self.root.after(0, lambda: self.inf_preproc_status_var.set(""))
                     return
 
                 try:
                     from cine_loader import CineFolderLoader
                 except ImportError as e:
-                    self.root.after(0, lambda: messagebox.showerror("Error", f"cine_loader not available: {e}"))
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Error", f"cine_loader not available: {e}"))
                     self.root.after(0, lambda: self.inf_preproc_status_var.set(""))
                     return
 
@@ -2795,7 +2931,8 @@ This gives the model examples with known ground truth to learn from."""
                     self.inf_cine_folder_loader = loader
 
                 if loader.num_files == 0:
-                    self.root.after(0, lambda: messagebox.showerror("Error", "No .cine files found in folder"))
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Error", "No .cine files found in folder"))
                     self.root.after(0, lambda: self.inf_preproc_status_var.set(""))
                     return
 
@@ -2805,11 +2942,13 @@ This gives the model examples with known ground truth to learn from."""
                     stage_focus = float(self.inf_stage_focus_var.get())
                     frame_idx = int(self.inf_cine_frame_idx_var.get())
                 except ValueError as e:
-                    self.root.after(0, lambda: messagebox.showerror("Error", f"Invalid parameters: {e}"))
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Error", f"Invalid parameters: {e}"))
                     self.root.after(0, lambda: self.inf_preproc_status_var.set(""))
                     return
 
-                self.root.after(0, lambda: self.inf_preproc_status_var.set("Extracting .cine frames..."))
+                self.root.after(0, lambda: self.inf_preproc_status_var.set(
+                                    "Extracting .cine frames..."))
 
                 csv_path = self.inf_cine_positions_csv_var.get()
                 use_csv = csv_path and Path(csv_path).exists()
@@ -2823,7 +2962,8 @@ This gives the model examples with known ground truth to learn from."""
                         frame_idx=frame_idx)
 
                 if not imgs:
-                    self.root.after(0, lambda: messagebox.showerror("Error", "No frames extracted from .cine files"))
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Error", "No frames extracted from .cine files"))
                     self.root.after(0, lambda: self.inf_preproc_status_var.set(""))
                     return
 
@@ -2851,8 +2991,10 @@ This gives the model examples with known ground truth to learn from."""
                     d_mm = float(self.inf_sphere_diameter_mm_var.get())
                     if d_mm > 0:
                         scale_px_per_mm = (r * 2) / d_mm
-                        self._log(f"Inference camera scale: (2 x {r:.1f}) / {d_mm} = {scale_px_per_mm:.2f} px/mm")
-                        self.root.after(0, lambda s=scale_px_per_mm: self.inf_camera_scale_var.set(f"{s:.2f}"))
+                        self._log(
+                            f"Inference camera scale: (2 x {r:.1f}) / {d_mm} = {scale_px_per_mm:.2f} px/mm")
+                        self.root.after(
+                            0, lambda s=scale_px_per_mm: self.inf_camera_scale_var.set(f"{s:.2f}"))
                 except ValueError:
                     self._log("Warning: invalid sphere diameter -- cannot compute scale")
             else:
@@ -2941,7 +3083,8 @@ This gives the model examples with known ground truth to learn from."""
             # Show max blur/coc if available (use correct label for mode)
             ckpt_max = checkpoint.get('max_blur', checkpoint.get('max_coc'))
             if ckpt_max is not None:
-                mode_label = 'max_sigma' if checkpoint.get('training_mode', 'optical') == 'direct' else 'max_coc'
+                mode_label = 'max_sigma' if checkpoint.get(
+                    'training_mode', 'optical') =='direct' else 'max_coc'
                 info_parts.append(f"{mode_label}: {ckpt_max:.2f}px")
 
             # Show metrics
@@ -3021,7 +3164,11 @@ This gives the model examples with known ground truth to learn from."""
                 ]
 
                 # Show top 3 materials by count
-                top_materials = sorted(material_counts.items(), key=lambda x: x[1], reverse=True)[:3]
+                top_materials = sorted(
+                    material_counts.items(),
+                    key=lambda x: x[1],
+                    reverse=True) [
+                    : 3]
                 if top_materials:
                     top_str = ", ".join([f"{mat}: {cnt}" for mat, cnt in top_materials])
                     info_parts.append(f"Top: {top_str}")
@@ -3047,7 +3194,8 @@ This gives the model examples with known ground truth to learn from."""
 
     def _browse_val_data(self):
         """Browse for validation test data directory."""
-        path = filedialog.askdirectory(title="Select Synthetic Data Directory (with blur/, sharp/, blur_map/)")
+        path = filedialog.askdirectory(
+            title="Select Synthetic Data Directory (with blur/, sharp/, blur_map/)")
         if path:
             self.val_data_var.set(path)
             self._log(f"Test data set: {path}")
@@ -3106,7 +3254,8 @@ This gives the model examples with known ground truth to learn from."""
             if not self.val_enable_coc_filter_var.get():
                 self.val_min_blur_entry.config(state='readonly')
 
-            _bt = "blur" if getattr(self, 'training_mode_var', None) and self.training_mode_var.get() == 'direct' else "CoC"
+            _bt = "blur" if getattr(self, 'training_mode_var',
+                                    None) and self.training_mode_var.get() == 'direct' else "CoC"
             self._log(f"Auto-loaded min {_bt} for validation: {min_blur_val} px from {config_path}")
         except Exception as e:
             self._log(f"Warning: Could not load min_blur_px from config: {e}")
@@ -3158,7 +3307,7 @@ This gives the model examples with known ground truth to learn from."""
                 rho = float(self.rho_var.get())
 
                 aperture_diameter = focal_length / f_number
-                inv_u0 = 1.0/focal_length - 1.0/focus_distance
+                inv_u0 = 1.0 / focal_length - 1.0 / focus_distance
                 imaging_distance = 1.0 / inv_u0 if abs(inv_u0) > 1e-6 else focus_distance
 
                 optical_params = BlurParams(
@@ -3216,15 +3365,16 @@ This gives the model examples with known ground truth to learn from."""
                 droplet_diameter = 50
                 sharp_img = np.ones((img_size, img_size), dtype=np.float32)
                 import cv2
-                cv2.circle(sharp_img, (img_size // 2, img_size // 2), droplet_diameter // 2, 0.0, -1)
+                cv2.circle(
+                    sharp_img, (img_size // 2, img_size // 2),
+                    droplet_diameter // 2, 0.0, -1)
                 img_source = "synthetic"
 
             # Header with image source
             header = ttk.Label(
                 preview_win,
                 text=f"Blur Preview - Bottom 50% ({blur_unit} 0-{max_preview_blur:.1f} px of {max_blur:.1f} px max)",
-                font=('TkDefaultFont', 11, 'bold')
-            )
+                font=('TkDefaultFont', 11, 'bold'))
             header.pack(pady=(10, 2))
 
             source_label = ttk.Label(
@@ -3275,7 +3425,8 @@ This gives the model examples with known ground truth to learn from."""
                 # Calculate sigma (kernel) and defocus from blur level
                 if is_direct:
                     sigma = blur_px  # blur level IS sigma in direct mode
-                    defocus_mm = (blur_px - sigma_0) / rho_direct if rho_direct > 0 and blur_px > sigma_0 else 0.0
+                    defocus_mm = (
+                        blur_px -sigma_0) /rho_direct if rho_direct >0 and blur_px >sigma_0 else 0.0
                 else:
                     sigma = blur_calc.coc_to_sigma(blur_px)
                     defocus_mm = blur_calc.blur_to_defocus(blur_px) if blur_px > 0 else 0.0
@@ -3306,14 +3457,16 @@ This gives the model examples with known ground truth to learn from."""
 
                 # Bind click to show enlarged view
                 img_idx = len(self._preview_full_images) - 1
-                img_label.bind('<Button-1>', lambda e, idx=img_idx: self._show_enlarged_preview(idx))
+                img_label.bind('<Button-1>', lambda e,
+                               idx=img_idx: self._show_enlarged_preview(idx))
 
                 # Info label
                 if is_direct:
                     info_text = f"σ: {blur_px:.2f} px\nd: {defocus_mm:.2f} mm"
                 else:
                     info_text = f"CoC: {blur_px:.1f} px | σ: {sigma:.2f} px\nd: {defocus_mm:.2f} mm"
-                info_label = ttk.Label(sample_frame, text=info_text, justify='center', font=('TkDefaultFont', 8))
+                info_label = ttk.Label(sample_frame, text=info_text,
+                                       justify='center', font=('TkDefaultFont', 8))
                 info_label.pack()
 
             # Explanation text
@@ -3322,8 +3475,7 @@ This gives the model examples with known ground truth to learn from."""
                 preview_win,
                 text=f"Showing bottom 50% of {blur_unit} range. Set min {_filter_term} filter above where blur becomes visible.",
                 font=('TkDefaultFont', 9),
-                foreground='gray'
-            )
+                foreground='gray')
             explanation.pack(pady=10)
 
             # Close button
@@ -3431,8 +3583,10 @@ This gives the model examples with known ground truth to learn from."""
 
         # DME only - blur error px and blur error %
         _bt = self.blur_term if hasattr(self, 'blur_term') else "CoC"
-        self.val_save_worst_checkbox.config(text=f"Save Worst Cases (by {_bt} error px)", state='normal')
-        self.val_save_worst_checkbox_2.config(text=f"Save Worst Cases (by {_bt} error %)", state='normal')
+        self.val_save_worst_checkbox.config(
+            text=f"Save Worst Cases (by {_bt} error px)", state='normal')
+        self.val_save_worst_checkbox_2.config(
+            text=f"Save Worst Cases (by {_bt} error %)", state='normal')
 
         if self.val_save_worst_var.get():
             self.val_num_worst_spinbox.config(state='normal')
@@ -3486,7 +3640,9 @@ This gives the model examples with known ground truth to learn from."""
                 self._log(f"Scanned synthetic_data: {count} image pairs")
             else:
                 self.val_data_info_var.set("⚠ Invalid directory (no blur/ folder)")
-                messagebox.showerror("Error", "Invalid synthetic_data directory.\nExpected structure: blur/, sharp/, blur_map/")
+                messagebox.showerror(
+                    "Error",
+                    "Invalid synthetic_data directory.\nExpected structure: blur/, sharp/, blur_map/")
                 return
 
             # Update spinbox max value and range label
@@ -3498,7 +3654,8 @@ This gives the model examples with known ground truth to learn from."""
                 self.val_num_samples_var.set(str(default_n))
             else:
                 self.val_data_info_var.set("⚠ No valid samples found")
-                messagebox.showwarning("Warning", "No valid sample files found in the selected directory.")
+                messagebox.showwarning(
+                    "Warning", "No valid sample files found in the selected directory.")
 
         except Exception as e:
             self.val_data_info_var.set(f"⚠ Scan error: {str(e)}")
@@ -3536,7 +3693,8 @@ This gives the model examples with known ground truth to learn from."""
             # Show max blur/coc if available (use correct label for mode)
             ckpt_max = checkpoint.get('max_blur', checkpoint.get('max_coc'))
             if ckpt_max is not None:
-                mode_label = 'max_sigma' if checkpoint.get('training_mode', 'optical') == 'direct' else 'max_coc'
+                mode_label = 'max_sigma' if checkpoint.get(
+                    'training_mode', 'optical') =='direct' else 'max_coc'
                 info_parts.append(f"{mode_label}: {ckpt_max:.2f}px")
 
             # Check compatibility and show relevant metrics
@@ -3587,43 +3745,44 @@ This gives the model examples with known ground truth to learn from."""
         if not sharp_crops:
             messagebox.showwarning("Warning", "Please select a sharp crops directory first.")
             return
-        
+
         self.sharp_crops_dir = Path(sharp_crops)
         if not self.sharp_crops_dir.exists():
             messagebox.showerror("Error", f"Directory not found: {sharp_crops}")
             return
-        
+
         self._log(f"\nLoading from: {sharp_crops}")
-        
+
         # Scan in thread to avoid UI freeze
         def scan_thread():
             camera_filter = self.camera_filter_var.get() if hasattr(self, 'camera_filter_var') else "all"
             results = self.scanner.scan_root(self.sharp_crops_dir, self._log, camera_filter)
             self.msg_queue.put(('scan_complete', results))
-        
+
         threading.Thread(target=scan_thread, daemon=True).start()
-    
+
     def _on_scan_complete(self, results: Dict[str, FolderStats]):
         """Handle scan completion."""
         self.folder_stats = results
-        
+
         # Check cross-folder consistency
-        self.all_sizes_consistent, consistency_msg = self.scanner.check_cross_folder_consistency(results)
-        
+        self.all_sizes_consistent, consistency_msg = self.scanner.check_cross_folder_consistency(
+                                                                                                 results)
+
         # Clear and populate listbox
         self.folder_listbox.delete(0, tk.END)
         total_images = 0
-        
+
         for folder_name in sorted(results.keys()):
             stats = results[folder_name]
             total_images += stats.num_images
-            
+
             # Show warning if sizes inconsistent within folder
             if stats.size_consistent:
                 self.folder_listbox.insert(tk.END, f"{folder_name} ({stats.num_images})")
             else:
                 self.folder_listbox.insert(tk.END, f"⚠ {folder_name} ({stats.num_images})")
-            
+
             # Create default config for each folder
             if folder_name not in self.folder_configs:
                 config = OpticalConfig(
@@ -3632,7 +3791,7 @@ This gives the model examples with known ground truth to learn from."""
                     sensor_height_px=stats.image_height,
                 )
                 self.folder_configs[folder_name] = config
-        
+
         # Update summary
         num_folders = len(results)
         if self.all_sizes_consistent:
@@ -3641,22 +3800,22 @@ This gives the model examples with known ground truth to learn from."""
             self.summary_var.set(f"{num_folders} folders, {total_images} images\n{size_str} ✓")
         else:
             self.summary_var.set(f"{num_folders} folders, {total_images} images\n⚠ Mixed sizes")
-        
+
         self._log(f"Found {num_folders} folders, {total_images} images")
         self._log(consistency_msg)
-        
+
         # If sizes inconsistent, force per-folder mode
         if not self.all_sizes_consistent:
             self.config_mode_var.set("per_folder")
             self.global_radio.config(state='disabled')
         else:
             self.global_radio.config(state='normal')
-        
+
         # Select first folder
         if results:
             self.folder_listbox.selection_set(0)
             self._on_folder_select(None)
-    
+
     def _remove_selected_folder(self):
         """Remove the currently selected folder from the loaded set."""
         selection = self.folder_listbox.curselection()
@@ -3701,18 +3860,18 @@ This gives the model examples with known ground truth to learn from."""
         selection = self.folder_listbox.curselection()
         if not selection:
             return
-        
+
         # Extract folder name (remove warning prefix and count suffix)
         listbox_text = self.folder_listbox.get(selection[0])
         folder_name = listbox_text.lstrip("⚠ ").split(" (")[0]
         self.selected_folder = folder_name
-        
+
         # Update folder stats display
         if folder_name in self.folder_stats:
             stats = self.folder_stats[folder_name]
             self.folder_stats_text.config(state='normal')
             self.folder_stats_text.delete(1.0, tk.END)
-            
+
             info_lines = [
                 f"Folder: {stats.folder_name}",
                 f"Images: {stats.num_images}",
@@ -3733,20 +3892,24 @@ This gives the model examples with known ground truth to learn from."""
                     if abs(stats.max_scale_px_per_mm - stats.min_scale_px_per_mm) < 0.5:
                         info_lines.append(f"Scale: {stats.mean_scale_px_per_mm:.1f} px/mm")
                     else:
-                        info_lines.append(f"Scale: {stats.mean_scale_px_per_mm:.1f} px/mm  [{stats.min_scale_px_per_mm:.1f}–{stats.max_scale_px_per_mm:.1f}]")
+                        info_lines.append(
+                            f"Scale: {stats.mean_scale_px_per_mm:.1f} px/mm  [{stats.min_scale_px_per_mm:.1f}–{stats.max_scale_px_per_mm:.1f}]")
                 if stats.mean_native_blur > 0:
-                    info_lines.append(f"Native blur σ: {stats.mean_native_blur:.3f} px  [{stats.min_native_blur:.3f}–{stats.max_native_blur:.3f}]")
+                    info_lines.append(
+                        f"Native blur σ: {stats.mean_native_blur:.3f} px  [{stats.min_native_blur:.3f}–{stats.max_native_blur:.3f}]")
                 if stats.mean_diameter_px > 0:
-                    info_lines.append(f"Diameter: {stats.mean_diameter_px:.1f} px  [{stats.min_diameter_px:.0f}–{stats.max_diameter_px:.0f}]")
+                    info_lines.append(
+                        f"Diameter: {stats.mean_diameter_px:.1f} px  [{stats.min_diameter_px:.0f}–{stats.max_diameter_px:.0f}]")
 
             if stats.has_focus_metrics:
-                info_lines.append(f"Laplacian: {stats.mean_laplacian:.1f} (mean)  [{stats.min_laplacian:.1f}–{stats.max_laplacian:.1f}]")
+                info_lines.append(
+                    f"Laplacian: {stats.mean_laplacian:.1f} (mean)  [{stats.min_laplacian:.1f}–{stats.max_laplacian:.1f}]")
                 if stats.mean_tenengrad > 0:
                     info_lines.append(f"Tenengrad: {stats.mean_tenengrad:.0f} (mean)")
-            
+
             self.folder_stats_text.insert(tk.END, "\n".join(info_lines))
             self.folder_stats_text.config(state='disabled')
-        
+
         # Load config values
         if folder_name in self.folder_configs:
             config = self.folder_configs[folder_name]
@@ -3757,9 +3920,9 @@ This gives the model examples with known ground truth to learn from."""
             self.defocus_min_var.set(str(config.defocus_range_min_mm))
             self.defocus_max_var.set(str(config.defocus_range_max_mm))
             self.rho_var.set(str(config.rho))
-            
+
             self._update_calculated()
-    
+
     def _load_from_calibration(self):
         """Load optical parameters from a calibration results YAML file."""
         file_path = filedialog.askopenfilename(
@@ -3847,11 +4010,13 @@ This gives the model examples with known ground truth to learn from."""
             # Log what was loaded
             self._log(f"Loaded calibration from: {Path(file_path).name}")
             self._log(f"  F={focal_length}mm, f/{f_number}, d0={focus_distance}mm")
-            self._log(f"  pixel={pixel_size}mm, rho={rho:.4f}" if rho else f"  pixel={pixel_size}mm")
+            self._log(f"  pixel={pixel_size}mm, rho={rho:.4f}"
+                      if rho else f"  pixel={pixel_size}mm")
             if defocus_range:
                 self._log(f"  defocus range: {defocus_range[0]} to {defocus_range[1]} mm")
             if calib_reference_resolution:
-                self._log(f"  calib reference: {calib_pixel_size}mm @ {calib_reference_resolution}px")
+                self._log(
+                    f"  calib reference: {calib_pixel_size}mm @ {calib_reference_resolution}px")
 
             msg = f"Loaded optical parameters from calibration file.\n\nrho = {rho:.4f}" if rho else "Loaded optical parameters from calibration file."
             if defocus_range:
@@ -3877,32 +4042,32 @@ This gives the model examples with known ground truth to learn from."""
             focal_length = float(self.focal_length_var.get())
             f_number = float(self.f_number_var.get())
             focus_distance = float(self.focus_distance_var.get())
-            
+
             aperture = focal_length / f_number
-            
+
             # Lens equation
-            inv_u0 = 1.0/focal_length - 1.0/focus_distance
+            inv_u0 = 1.0 / focal_length - 1.0 / focus_distance
             if inv_u0 > 0:
                 imaging_distance = 1.0 / inv_u0
             else:
                 imaging_distance = focus_distance
-            
+
             # Update display
             self.calculated_text.config(state='normal')
             self.calculated_text.delete(1.0, tk.END)
             self.calculated_text.insert(tk.END,
-                f"Aperture Diameter: {aperture:.2f} mm\n"
-                f"Imaging Distance: {imaging_distance:.2f} mm\n"
-                f"Magnification: {imaging_distance/focus_distance:.3f}×"
-            )
+                                        f"Aperture Diameter: {aperture:.2f} mm\n"
+                                        f"Imaging Distance: {imaging_distance:.2f} mm\n"
+                                        f"Magnification: {imaging_distance/focus_distance:.3f}×"
+                                        )
             self.calculated_text.config(state='disabled')
-            
+
         except ValueError as e:
             self.calculated_text.config(state='normal')
             self.calculated_text.delete(1.0, tk.END)
             self.calculated_text.insert(tk.END, f"Error: {e}")
             self.calculated_text.config(state='disabled')
-    
+
     def _on_mode_change(self):
         """Handle mode toggle between Global and Per Subfolder."""
         mode = self.config_mode_var.get()
@@ -3999,7 +4164,8 @@ This gives the model examples with known ground truth to learn from."""
             self.sigma_0_var.set("")
             self.calib_scale_px_per_mm_var.set("")
             # Update description
-            self.mode_desc_var.set("Uses optical formula (Wang et al.) to generate blur from known optical parameters")
+            self.mode_desc_var.set(
+                "Uses optical formula (Wang et al.) to generate blur from known optical parameters")
             self._log("Training Mode: Optical Formula")
 
         else:  # direct mode
@@ -4022,7 +4188,8 @@ This gives the model examples with known ground truth to learn from."""
             # Hide calculated values (optical-only)
             self.calc_values_frame.pack_forget()
             # Update description
-            self.mode_desc_var.set("Uses linear blur relationship from direct calibration data (σ = ρ_direct × |z| + σ₀)")
+            self.mode_desc_var.set(
+                "Uses linear blur relationship from direct calibration data (σ = ρ_direct × |z| + σ₀)")
             self._log("Training Mode: Direct Calibration (requires calibration file)")
 
         # Distribution, min-filter, and beta calculator apply to both modes
@@ -4044,18 +4211,18 @@ This gives the model examples with known ground truth to learn from."""
     def _save_config(self):
         """Save config based on current mode (global or per-folder)."""
         mode = self.config_mode_var.get()
-        
+
         if mode == "global":
             self._apply_to_all_folders()
         else:
             self._save_folder_config()
-    
+
     def _save_folder_config(self):
         """Save config for selected folder."""
         if not self.selected_folder:
             messagebox.showwarning("Warning", "No folder selected.")
             return
-        
+
         try:
             config = OpticalConfig(
                 folder_name=self.selected_folder,
@@ -4067,22 +4234,22 @@ This gives the model examples with known ground truth to learn from."""
                 defocus_range_min_mm=float(self.defocus_min_var.get()),
                 defocus_range_max_mm=float(self.defocus_max_var.get()),
             )
-            
+
             # Get sensor dimensions from folder stats
             if self.selected_folder in self.folder_stats:
                 stats = self.folder_stats[self.selected_folder]
                 config.sensor_width_px = stats.image_width
                 config.sensor_height_px = stats.image_height
-            
+
             config.update_calculated()
             self.folder_configs[self.selected_folder] = config
-            
+
             self._log(f"Saved config for: {self.selected_folder}")
             messagebox.showinfo("Saved", f"Config saved for: {self.selected_folder}")
-            
+
         except ValueError as e:
             messagebox.showerror("Error", f"Invalid value: {e}")
-    
+
     def _apply_to_all_folders(self):
         """Apply current config to all folders."""
         if not self.folder_stats:
@@ -4124,7 +4291,8 @@ This gives the model examples with known ground truth to learn from."""
                     'focal_length_mm', 'f_number', 'focus_distance_mm',
                     'pixel_size_mm', 'rho', 'defocus_range_min_mm', 'defocus_range_max_mm',
                 }
-                optical_config_kwargs = {k: v for k, v in base_config.items() if k in optical_fields}
+                optical_config_kwargs = {k: v for k,
+                    v in base_config.items() if k in optical_fields}
 
                 for folder_name, stats in self.folder_stats.items():
                     config = OpticalConfig(
@@ -4135,13 +4303,14 @@ This gives the model examples with known ground truth to learn from."""
                     )
                     config.update_calculated()
                     self.folder_configs[folder_name] = config
-            
+
             self._log(f"Applied config to {len(self.folder_stats)} folders")
-            messagebox.showinfo("Saved", f"Global config applied to {len(self.folder_stats)} folders")
-            
+            messagebox.showinfo(
+                "Saved", f"Global config applied to {len(self.folder_stats)} folders")
+
         except ValueError as e:
             messagebox.showerror("Error", f"Invalid value: {e}")
-    
+
     # =========================================================================
     # Data Generation & Training
     # =========================================================================
@@ -4182,7 +4351,7 @@ This gives the model examples with known ground truth to learn from."""
             weights = []
 
             for i in range(4):
-                count = np.sum((beta_samples >= bin_edges[i]) & (beta_samples < bin_edges[i+1]))
+                count = np.sum((beta_samples >= bin_edges[i]) & (beta_samples < bin_edges[i + 1]))
                 weight = count / num_samples
                 weights.append(weight)
 
@@ -4230,7 +4399,7 @@ This gives the model examples with known ground truth to learn from."""
                 pixel_size = float(self.pixel_size_var.get())
 
                 aperture_diameter = focal_length / f_number
-                inv_u0 = 1.0/focal_length - 1.0/focus_distance
+                inv_u0 = 1.0 / focal_length - 1.0 / focus_distance
                 imaging_distance = 1.0 / inv_u0 if abs(inv_u0) > 1e-6 else focus_distance
 
                 optical_params = BlurParams(
@@ -4287,7 +4456,8 @@ This gives the model examples with known ground truth to learn from."""
             output.append(f"Beta Distribution: α={alpha:.2f}, β={beta:.2f}\n")
             output.append("=" * 45)
             if blur_min_px > 0:
-                output.append(f"\n{blur_unit} Range:    {blur_min_px:.1f} - {blur_max_px:.1f} px (min filter applied)")
+                output.append(
+                    f"\n{blur_unit} Range:    {blur_min_px:.1f} - {blur_max_px:.1f} px (min filter applied)")
             else:
                 output.append(f"\n{blur_unit} Range:    {blur_min_px:.1f} - {blur_max_px:.1f} px")
             output.append(f"Mean {blur_unit}:     {mean_blur:.2f} px")
@@ -4315,7 +4485,9 @@ This gives the model examples with known ground truth to learn from."""
         except Exception as e:
             self.beta_calc_results.config(state='normal')
             self.beta_calc_results.delete('1.0', tk.END)
-            self.beta_calc_results.insert('1.0', f"Error: {str(e)}\n\nPlease check:\n- Beta α and β are positive numbers\n- Mode parameters are configured in Tab 1")
+            self.beta_calc_results.insert(
+                '1.0',
+                f"Error: {str(e)}\n\nPlease check:\n- Beta α and β are positive numbers\n- Mode parameters are configured in Tab 1")
             self.beta_calc_results.config(state='disabled')
 
     def _reverse_calculate_beta(self):
@@ -4370,7 +4542,7 @@ This gives the model examples with known ground truth to learn from."""
 
             for alpha_init, beta_init in [(1, 1), (2, 2), (2, 5), (5, 2), (3, 3)]:
                 result = minimize(objective, [alpha_init, beta_init], method='Nelder-Mead',
-                                options={'maxiter': 500, 'xatol': 0.001})
+                                  options={'maxiter': 500, 'xatol': 0.001})
                 if result.fun < best_error and result.x[0] > 0 and result.x[1] > 0:
                     best_error = result.fun
                     best_result = result
@@ -4401,7 +4573,8 @@ This gives the model examples with known ground truth to learn from."""
 
             for i, (target, actual) in enumerate(zip(target_pcts * 100, actual_pcts)):
                 diff = actual - target
-                output.append(f"Interval {i+1}: {actual:.1f}% (target: {target:.1f}%, diff: {diff:+.1f}%)")
+                output.append(
+                    f"Interval {i+1}: {actual:.1f}% (target: {target:.1f}%, diff: {diff:+.1f}%)")
 
             # Update display
             self.reverse_calc_results.config(state='normal')
@@ -4421,32 +4594,34 @@ This gives the model examples with known ground truth to learn from."""
         except Exception as e:
             self.reverse_calc_results.config(state='normal')
             self.reverse_calc_results.delete('1.0', tk.END)
-            self.reverse_calc_results.insert('1.0', f"Error: {str(e)}\n\nPlease check:\n- All percentages are non-negative numbers")
+            self.reverse_calc_results.insert(
+                '1.0', f"Error: {str(e)}\n\nPlease check:\n- All percentages are non-negative numbers")
             self.reverse_calc_results.config(state='disabled')
 
     def _generate_data(self):
         """Generate synthetic training data."""
         if not self._validate_paths():
             return
-        
+
         if not self.folder_configs:
-            messagebox.showwarning("Warning", "No optical configs saved. Please scan and configure first.")
+            messagebox.showwarning(
+                "Warning", "No optical configs saved. Please scan and configure first.")
             return
-        
+
         self._set_training_state(True)
-        self._log("\n" + "="*50)
+        self._log("\n" + "=" * 50)
         self._log("Starting synthetic data generation...")
-        
+
         def generate_thread():
             try:
                 self._run_generation()
                 self.msg_queue.put(('generation_complete', None))
             except Exception as e:
                 self.msg_queue.put(('error', str(e)))
-        
+
         self.training_thread = threading.Thread(target=generate_thread, daemon=True)
         self.training_thread.start()
-    
+
     def _run_generation(self):
         """Run data generation (in thread)."""
         output_dir = Path(self.output_dir_var.get())
@@ -4602,20 +4777,20 @@ This gives the model examples with known ground truth to learn from."""
 
         config_label = "direct calibration" if gui_training_mode == "direct" else "optical"
         self.msg_queue.put(('log', f"Saved {config_label} config: {config_path}"))
-        
+
         # Log sharp crops info
         if sharp_crops_dir and sharp_crops_dir.exists():
             # Count images in sharp crops directory (efficient single pass)
             image_count = sum(1 for ext in ['.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp']
-                            for _ in sharp_crops_dir.rglob(f'*{ext}'))
+                              for _ in sharp_crops_dir.rglob(f'*{ext}'))
             self.msg_queue.put(('log', f"Sharp crops directory: {sharp_crops_dir}"))
             self.msg_queue.put(('log', f"Found {image_count} images (recursive search)"))
         else:
             self.msg_queue.put(('log', "No sharp crops directory - using synthetic droplets only"))
-        
+
         self.msg_queue.put(('status', "Generating synthetic blur data..."))
         self.msg_queue.put(('log', f"Generating {num_samples} samples..."))
-        
+
         # Import and run generator
         try:
             # Force reload to pick up any code changes
@@ -4642,7 +4817,7 @@ This gives the model examples with known ground truth to learn from."""
                 )
                 self.msg_queue.put(('log', f"Direct mode: rho_direct={gui_rho_direct} px/mm, "
                                    f"sigma_0={gui_sigma_0} px, "
-                                   f"scale_calib={calib_scale_px_per_mm} px/mm"))
+                                    f"scale_calib={calib_scale_px_per_mm} px/mm"))
             else:
                 optical_params = BlurParams(
                     focal_length_mm=gui_focal_length,
@@ -4659,7 +4834,8 @@ This gives the model examples with known ground truth to learn from."""
             original_size = min(config.sensor_width_px, config.sensor_height_px)
 
             if train_size != original_size:
-                self.msg_queue.put(('log', f"Resizing: {original_size}×{original_size} → {train_size}×{train_size} px"))
+                self.msg_queue.put(
+                    ('log', f"Resizing: {original_size}×{original_size} → {train_size}×{train_size} px"))
             else:
                 self.msg_queue.put(('log', f"Image size: {train_size}×{train_size} px"))
 
@@ -4671,10 +4847,12 @@ This gives the model examples with known ground truth to learn from."""
                     if min_blur_px < 0:
                         min_blur_px = 0.0
                     _bt = "blur" if self.training_mode_var.get() == 'direct' else "CoC"
-                    self.msg_queue.put(('log', f"Applying minimum {_bt} filter: {min_blur_px:.2f} px"))
+                    self.msg_queue.put(
+                        ('log', f"Applying minimum {_bt} filter: {min_blur_px:.2f} px"))
                 except ValueError:
                     _bt = "blur" if self.training_mode_var.get() == 'direct' else "CoC"
-                    self.msg_queue.put(('log', f"Warning: Invalid min {_bt} value, ignoring filter"))
+                    self.msg_queue.put(
+                        ('log', f"Warning: Invalid min {_bt} value, ignoring filter"))
                     min_blur_px = None
 
             # Parse ERF validation count
@@ -4685,13 +4863,14 @@ This gives the model examples with known ground truth to learn from."""
                     if count_str:
                         erf_validation_count = int(count_str)
                         if erf_validation_count > num_samples:
-                            self.msg_queue.put(('log',
-                                f"ERF validation count ({erf_validation_count}) > num_samples "
-                                f"({num_samples}), capping to {num_samples}"))
+                            self.msg_queue.put(
+                                ('log',
+                                 f"ERF validation count ({erf_validation_count}) > num_samples "
+                                 f"({num_samples}), capping to {num_samples}"))
                             erf_validation_count = num_samples
                 except ValueError:
-                    self.msg_queue.put(('log',
-                        "Warning: Invalid ERF validation count, validating all samples"))
+                    self.msg_queue.put(
+                        ('log', "Warning: Invalid ERF validation count, validating all samples"))
                     erf_validation_count = None
 
             generator = SyntheticBlurGenerator(
@@ -4705,22 +4884,19 @@ This gives the model examples with known ground truth to learn from."""
                 beta_beta=float(self.beta_beta_var.get()),
                 min_blur_px=min_blur_px
             )
-            
+
             data_dir = output_dir / 'synthetic_data'
-            
+
             # Get camera filter
             camera_filter = self.camera_filter_var.get() if hasattr(self, 'camera_filter_var') else "all"
 
             gen_metadata = generator.generate_dataset(
-                output_dir=data_dir,
-                num_samples=num_samples,
-                sharp_images_dir=sharp_crops_dir if (sharp_crops_dir and sharp_crops_dir.exists()) else None,
+                output_dir=data_dir, num_samples=num_samples, sharp_images_dir=sharp_crops_dir
+                if(sharp_crops_dir and sharp_crops_dir.exists()) else None,
                 diameter_range_px=(10, 200),
-                camera_filter=camera_filter,
-                save_blur_trace=self.save_blur_trace_var.get(),
+                camera_filter=camera_filter, save_blur_trace=self.save_blur_trace_var.get(),
                 erf_validation=self.erf_validation_var.get(),
-                erf_validation_count=erf_validation_count,
-            )
+                erf_validation_count=erf_validation_count,)
 
             # Save diameter bin info to training_config.yaml if stratified sampling was used
             if gen_metadata['diameter_bins_used'] and gen_metadata['diameter_bin_boundaries'] is not None:
@@ -4742,7 +4918,8 @@ This gives the model examples with known ground truth to learn from."""
                 with open(config_path, 'w') as f:
                     yaml.dump(config_dict, f, default_flow_style=False)
 
-                self.msg_queue.put(('log', f"Saved diameter bin boundaries to config: {p33:.1f}, {p67:.1f}"))
+                self.msg_queue.put(
+                    ('log', f"Saved diameter bin boundaries to config: {p33:.1f}, {p67:.1f}"))
 
             # Count actual generated files
             actual_count = len(list((data_dir / 'blur').glob('*.png')))
@@ -4753,7 +4930,8 @@ This gives the model examples with known ground truth to learn from."""
             self.msg_queue.put(('show_histogram', str(data_dir)))
 
         except ImportError as e:
-            self.msg_queue.put(('error', f"Import error: {e}\nMake sure synthetic_blur.py is in the same directory."))
+            self.msg_queue.put(
+                ('error', f"Import error: {e}\nMake sure synthetic_blur.py is in the same directory."))
 
     def _show_coc_histogram(self, data_dir: Path):
         """Show histogram of blur distribution from metadata.csv."""
@@ -4803,7 +4981,7 @@ This gives the model examples with known ground truth to learn from."""
             bin_counts = []
             for i in range(4):
                 lower = bins_edges[i]
-                upper = bins_edges[i+1]
+                upper = bins_edges[i + 1]
                 if i == 3:  # Last bin includes max value
                     count = np.sum((blur_values >= lower) & (blur_values <= upper))
                 else:
@@ -4815,17 +4993,20 @@ This gives the model examples with known ground truth to learn from."""
             # Log statistics directly to log widget (since we're on main thread)
             _bt = "Blur" if self.training_mode_var.get() == 'direct' else "CoC"
             log_messages = []
-            log_messages.append("\n" + "="*50)
+            log_messages.append("\n" + "=" * 50)
             log_messages.append(f"{_bt} Distribution Summary:")
             log_messages.append(f"Total samples: {total}")
-            log_messages.append(f"{_bt} Range: {min_blur_val:.2f} - {max_blur_val:.2f} px {bin_note}")
+            log_messages.append(
+                f"{_bt} Range: {min_blur_val:.2f} - {max_blur_val:.2f} px {bin_note}")
             log_messages.append(f"Mean {_bt}: {blur_values.mean():.2f} px")
             log_messages.append(f"Median {_bt}: {np.median(blur_values):.2f} px")
             log_messages.append("\nBinned Distribution:")
-            for label, count, pct, target in zip(bin_labels, bin_counts, bin_percentages, bin_weights):
+            for label, count, pct, target in zip(
+                bin_labels, bin_counts, bin_percentages, bin_weights):
                 target_pct = target * 100
                 diff = pct - target_pct
-                log_messages.append(f"  {label}: {count:5d} ({pct:5.1f}%) | Target: {target_pct:5.1f}% | Diff: {diff:+5.1f}%")
+                log_messages.append(
+                    f"  {label}: {count:5d} ({pct:5.1f}%) | Target: {target_pct:5.1f}% | Diff: {diff:+5.1f}%")
 
             # Per-integer interval distribution
             log_messages.append(f"\nPer-Integer {_bt} Distribution:")
@@ -4839,7 +5020,7 @@ This gives the model examples with known ground truth to learn from."""
                 pct = (count / total) * 100
                 bar = "█" * int(pct / 2)  # Scale for display
                 log_messages.append(f"  {lower:2d}-{upper:2d} px: {count:5d} ({pct:5.1f}%) {bar}")
-            log_messages.append("="*50 + "\n")
+            log_messages.append("=" * 50 + "\n")
 
             # Print to console/terminal
             for msg in log_messages:
@@ -4855,8 +5036,10 @@ This gives the model examples with known ground truth to learn from."""
 
             # Top plot: Fine-grained histogram
             ax1.hist(blur_values, bins=50, alpha=0.7, color='steelblue', edgecolor='black')
-            ax1.axvline(blur_values.mean(), color='red', linestyle='--', linewidth=2, label=f'Mean: {blur_values.mean():.2f} px')
-            ax1.axvline(np.median(blur_values), color='orange', linestyle='--', linewidth=2, label=f'Median: {np.median(blur_values):.2f} px')
+            ax1.axvline(blur_values.mean(), color='red', linestyle='--',
+                        linewidth=2, label=f'Mean: {blur_values.mean():.2f} px')
+            ax1.axvline(np.median(blur_values), color='orange', linestyle='--',
+                        linewidth=2, label=f'Median: {np.median(blur_values):.2f} px')
             ax1.set_xlabel(f'{_bt} (pixels)')
             ax1.set_ylabel('Count')
             ax1.set_title(f'{_bt} Distribution ({total} samples)')
@@ -4866,8 +5049,10 @@ This gives the model examples with known ground truth to learn from."""
             # Middle plot: 4-bin actual vs target comparison
             x = np.arange(len(bin_labels))
             width = 0.35
-            ax2.bar(x - width/2, bin_percentages, width, label='Actual', alpha=0.8, color='steelblue')
-            ax2.bar(x + width/2, [w*100 for w in bin_weights], width, label='Target', alpha=0.8, color='orange')
+            ax2.bar(x - width / 2, bin_percentages, width,
+                    label='Actual', alpha=0.8, color='steelblue')
+            ax2.bar(x + width / 2, [w * 100 for w in bin_weights],
+                    width, label='Target', alpha=0.8, color='orange')
 
             ax2.set_xlabel(f'{_bt} Bin')
             ax2.set_ylabel('Percentage (%)')
@@ -4878,10 +5063,13 @@ This gives the model examples with known ground truth to learn from."""
             ax2.grid(True, alpha=0.3, axis='y')
 
             # Add percentage labels on bars
-            max_pct_4bin = max(max(bin_percentages), max([w*100 for w in bin_weights]))
-            for i, (actual, target) in enumerate(zip(bin_percentages, [w*100 for w in bin_weights])):
-                ax2.text(i - width/2, actual + 1, f'{actual:.1f}%', ha='center', va='bottom', fontsize=9)
-                ax2.text(i + width/2, target + 1, f'{target:.1f}%', ha='center', va='bottom', fontsize=9)
+            max_pct_4bin = max(max(bin_percentages), max([w * 100 for w in bin_weights]))
+            for i, (actual, target) in enumerate(
+                zip(bin_percentages, [w * 100 for w in bin_weights])):
+                ax2.text(i - width / 2, actual + 1,
+                         f'{actual:.1f}%', ha='center', va='bottom', fontsize=9)
+                ax2.text(i + width / 2, target + 1,
+                         f'{target:.1f}%', ha='center', va='bottom', fontsize=9)
 
             # Set y-limit to ensure labels fit (add 15% padding)
             ax2.set_ylim(0, max_pct_4bin * 1.15)
@@ -4948,18 +5136,19 @@ This gives the model examples with known ground truth to learn from."""
         """Train the model."""
         if not self._validate_paths():
             return
-        
+
         output_dir = Path(self.output_dir_var.get())
         data_dir = output_dir / 'synthetic_data'
-        
+
         if not data_dir.exists():
-            messagebox.showwarning("Warning", "Synthetic data not found. Please generate data first.")
+            messagebox.showwarning(
+                "Warning", "Synthetic data not found. Please generate data first.")
             return
-        
+
         self._set_training_state(True)
-        self._log("\n" + "="*50)
+        self._log("\n" + "=" * 50)
         self._log("Starting model training...")
-        
+
         def train_thread():
             try:
                 self._run_training()
@@ -4969,26 +5158,27 @@ This gives the model examples with known ground truth to learn from."""
                 error_msg = f"{e}\n{traceback.format_exc()}"
                 print(f"\nERROR: {error_msg}", flush=True)  # Echo to terminal
                 self.msg_queue.put(('error', error_msg))
-        
+
         self.training_thread = threading.Thread(target=train_thread, daemon=True)
         self.training_thread.start()
-    
+
     def _train_dme_only(self):
         """Train only the DME subnet."""
         if not self._validate_paths():
             return
-        
+
         output_dir = Path(self.output_dir_var.get())
         data_dir = output_dir / 'synthetic_data'
-        
+
         if not data_dir.exists():
-            messagebox.showwarning("Warning", "Synthetic data not found. Please generate data first.")
+            messagebox.showwarning(
+                "Warning", "Synthetic data not found. Please generate data first.")
             return
-        
+
         self._set_training_state(True)
-        self._log("\n" + "="*50)
+        self._log("\n" + "=" * 50)
         self._log("Starting DME-only training...")
-        
+
         def train_thread():
             try:
                 self._run_dme_only_training()
@@ -4998,17 +5188,18 @@ This gives the model examples with known ground truth to learn from."""
                 error_msg = f"{e}\n{traceback.format_exc()}"
                 print(f"\nERROR: {error_msg}", flush=True)  # Echo to terminal
                 self.msg_queue.put(('error', error_msg))
-        
+
         self.training_thread = threading.Thread(target=train_thread, daemon=True)
         self.training_thread.start()
-    
+
     def _run_dme_only_training(self):
         """Run DME-only training (in thread)."""
         # Set CUDA launch blocking if requested (must be done before any CUDA operations)
         if self.cuda_launch_blocking_var.get():
             import os
             os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-            self.msg_queue.put(('log', "⚠ CUDA_LAUNCH_BLOCKING enabled - training will be slower but errors will be precise"))
+            self.msg_queue.put(
+                ('log', "⚠ CUDA_LAUNCH_BLOCKING enabled - training will be slower but errors will be precise"))
 
         output_dir = Path(self.output_dir_var.get())
         data_dir = output_dir / 'synthetic_data'
@@ -5032,10 +5223,10 @@ This gives the model examples with known ground truth to learn from."""
             yaml.dump(config, f, default_flow_style=False)
 
         self.msg_queue.put(('status', "Initialising trainer..."))
-        
+
         try:
             from train import Trainer
-            
+
             device = 'cuda' if self.use_gpu_var.get() else 'cpu'
 
             trainer = Trainer(
@@ -5062,7 +5253,8 @@ This gives the model examples with known ground truth to learn from."""
             )
 
             self.msg_queue.put(('log', "DME training complete!"))
-            self.msg_queue.put(('log', f"Model saved to: {output_dir / 'checkpoints' / 'dme_best.pth'}"))
+            self.msg_queue.put(
+                ('log', f"Model saved to: {output_dir / 'checkpoints' / 'dme_best.pth'}"))
 
         except ImportError as e:
             self.msg_queue.put(('error', f"Import error: {e}"))
@@ -5073,7 +5265,8 @@ This gives the model examples with known ground truth to learn from."""
         if self.cuda_launch_blocking_var.get():
             import os
             os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-            self.msg_queue.put(('log', "⚠ CUDA_LAUNCH_BLOCKING enabled - training will be slower but errors will be precise"))
+            self.msg_queue.put(
+                ('log', "⚠ CUDA_LAUNCH_BLOCKING enabled - training will be slower but errors will be precise"))
 
         output_dir = Path(self.output_dir_var.get())
         data_dir = output_dir / 'synthetic_data'
@@ -5082,7 +5275,7 @@ This gives the model examples with known ground truth to learn from."""
         # Load config
         with open(config_path, 'r') as f:
             config = yaml.safe_load(f)
-        
+
         # Update training params from GUI
         config['training']['epochs_dme'] = int(self.epochs_dme_var.get())
         config['training']['batch_size'] = int(self.batch_size_var.get())
@@ -5094,12 +5287,12 @@ This gives the model examples with known ground truth to learn from."""
         # Save updated config
         with open(config_path, 'w') as f:
             yaml.dump(config, f, default_flow_style=False)
-        
+
         self.msg_queue.put(('status', "Initialising trainer..."))
-        
+
         try:
             from train import Trainer
-            
+
             device = 'cuda' if self.use_gpu_var.get() else 'cpu'
 
             trainer = Trainer(
@@ -5122,8 +5315,9 @@ This gives the model examples with known ground truth to learn from."""
             trainer.train_dme(resume_from=explicit_checkpoint)
 
             self.msg_queue.put(('log', "Training complete!"))
-            self.msg_queue.put(('log', f"Model saved to: {output_dir / 'checkpoints' / 'dme_best.pth'}"))
-            
+            self.msg_queue.put(
+                ('log', f"Model saved to: {output_dir / 'checkpoints' / 'dme_best.pth'}"))
+
         except ImportError as e:
             self.msg_queue.put(('error', f"Import error: {e}"))
 
@@ -5205,9 +5399,11 @@ This gives the model examples with known ground truth to learn from."""
             if inf_camera_scale_str:
                 try:
                     inf_camera_scale = float(inf_camera_scale_str)
-                    self.msg_queue.put(('log', f"Inference camera scale: {inf_camera_scale:.2f} px/mm"))
+                    self.msg_queue.put(
+                        ('log', f"Inference camera scale: {inf_camera_scale:.2f} px/mm"))
                 except ValueError:
-                    self.msg_queue.put(('log', f"WARNING: Invalid inference camera scale '{inf_camera_scale_str}' — ignoring"))
+                    self.msg_queue.put(
+                        ('log', f"WARNING: Invalid inference camera scale '{inf_camera_scale_str}' — ignoring"))
 
             inference = RealCropInference(
                 model_path=str(model_path),
@@ -5225,24 +5421,29 @@ This gives the model examples with known ground truth to learn from."""
                 if inf_camera_scale is not None:
                     self.msg_queue.put(('log', f"  scale_inf: {inf_camera_scale:.2f} px/mm"))
                 else:
-                    self.msg_queue.put(('log', f"  scale_inf: not set (no cross-camera correction)"))
+                    self.msg_queue.put(
+                        ('log', f"  scale_inf: not set (no cross-camera correction)"))
                 self.msg_queue.put(('log', f"  model_size: {inference.model_size} px"))
                 self.msg_queue.put(('log', f"  max_sigma: {inference.max_blur:.4f} px"))
-                self.msg_queue.put(('log', f"  Inversion: |z| = sigma_model × native_size / ({inference.direct_slope:.4f} × {inference.model_size})"))
+                self.msg_queue.put(
+                    ('log',
+                     f"  Inversion: |z| = sigma_model × native_size / ({inference.direct_slope:.4f} × {inference.model_size})"))
 
             # Get options
             save_viz = self.inf_save_viz_var.get()
             viz_rate = int(self.inf_viz_rate_var.get()) if self.inf_viz_rate_var.get() else 10
 
             self.msg_queue.put(('log', f"\nOptions:"))
-            self.msg_queue.put(('log', f"  Save visualizations: {save_viz} (1 per {viz_rate} crops)"))
+            self.msg_queue.put(
+                ('log', f"  Save visualizations: {save_viz} (1 per {viz_rate} crops)"))
 
             # Find material folders OR check for images directly in input_dir
             material_dirs = [d for d in input_dir.iterdir() if d.is_dir()]
 
             # Check if there are images directly in the input folder (no subfolders case)
             direct_crops = list(input_dir.glob('*_crop.png'))
-            direct_images = list(input_dir.glob('*.png')) if len(direct_crops) == 0 else direct_crops
+            direct_images = list(input_dir.glob(
+                '*.png')) if len(direct_crops) == 0 else direct_crops
 
             self.msg_queue.put(('log', f"\nScanning input directory: {input_dir}"))
             self.msg_queue.put(('log', f"  Subfolders found: {len(material_dirs)}"))
@@ -5250,7 +5451,8 @@ This gives the model examples with known ground truth to learn from."""
             self.msg_queue.put(('log', f"  *.png files: {len(direct_images)}"))
 
             if len(material_dirs) == 0 and len(direct_images) == 0:
-                self.msg_queue.put(('error', f"No material subdirectories or images found in {input_dir}"))
+                self.msg_queue.put(
+                    ('error', f"No material subdirectories or images found in {input_dir}"))
                 return
 
             # Decide processing mode
@@ -5285,7 +5487,8 @@ This gives the model examples with known ground truth to learn from."""
                         all_results.append(df)
             else:
                 # Single folder mode: treat input_dir itself as the material folder
-                self.msg_queue.put(('log', f"\nNo subfolders found - processing images directly from input folder"))
+                self.msg_queue.put(
+                    ('log', f"\nNo subfolders found - processing images directly from input folder"))
                 self.msg_queue.put(('log', f"  Found {len(direct_images)} images"))
 
                 all_results = []
@@ -5347,9 +5550,9 @@ This gives the model examples with known ground truth to learn from."""
                 summary_text += f"  Range:  {combined_df['defocus_mm'].min():.2f} - {combined_df['defocus_mm'].max():.2f} mm\n\n"
 
                 # Per-material breakdown
-                summary_text += "="*60 + "\n"
+                summary_text += "=" * 60 + "\n"
                 summary_text += "BY MATERIAL:\n"
-                summary_text += "="*60 + "\n"
+                summary_text += "=" * 60 + "\n"
                 for material in combined_df['material'].unique():
                     mat_df = combined_df[combined_df['material'] == material]
                     summary_text += f"\n{material}:\n"
@@ -5357,10 +5560,10 @@ This gives the model examples with known ground truth to learn from."""
                     summary_text += f"  {blur_label} Mean: {mat_df[blur_col].mean():.2f} px (±{mat_df[blur_col].std():.2f})\n"
                     summary_text += f"  Defocus: {mat_df['defocus_mm'].mean():.2f} mm (±{mat_df['defocus_mm'].std():.2f})\n"
 
-                summary_text += "\n" + "="*60 + "\n"
+                summary_text += "\n" + "=" * 60 + "\n"
                 summary_text += f"✓ Results saved to: {output_dir}\n"
                 summary_text += f"✓ Summary plots: {output_dir / 'summary_analysis.png'}\n"
-                summary_text += "="*60
+                summary_text += "=" * 60
 
                 # Display in results text box
                 self.msg_queue.put(('inf_results', summary_text))
@@ -5494,7 +5697,8 @@ This gives the model examples with known ground truth to learn from."""
                     self.msg_queue.put(('error', f"No images found in {input_dir}"))
                     return
                 test_dir = input_dir
-                self.msg_queue.put(('log', f"\nUsing crops directly from: {test_dir.name} ({len(direct_images)} images)"))
+                self.msg_queue.put(
+                    ('log', f"\nUsing crops directly from: {test_dir.name} ({len(direct_images)} images)"))
             self.msg_queue.put(('inf_progress', 20))
 
             # Run validation
@@ -5536,11 +5740,11 @@ This gives the model examples with known ground truth to learn from."""
                         summary_text += f"    Diameter Error: {subset['diameter_error_px'].mean():.2f} px "
                         summary_text += f"({subset['diameter_error_pct'].mean():.2f}%)\n"
 
-                summary_text += "\n" + "="*60 + "\n"
+                summary_text += "\n" + "=" * 60 + "\n"
                 summary_text += f"✓ Results saved to: {output_dir}\n"
                 summary_text += f"✓ Plots: {output_dir / 'validation_analysis.png'}\n"
                 summary_text += f"✓ CSV: {output_dir / 'synthetic_validation_results.csv'}\n"
-                summary_text += "="*60
+                summary_text += "=" * 60
 
                 # Display in results text box
                 self.msg_queue.put(('inf_results', summary_text))
@@ -5586,7 +5790,8 @@ This gives the model examples with known ground truth to learn from."""
         self.val_results_text.config(state='disabled')
 
         # Run in thread
-        self.validation_test_thread = threading.Thread(target=self._validation_test_worker, daemon=True)
+        self.validation_test_thread = threading.Thread(
+            target=self._validation_test_worker, daemon=True)
         self.validation_test_thread.start()
 
     def _validation_test_worker(self):
@@ -5618,7 +5823,8 @@ This gives the model examples with known ground truth to learn from."""
                 percentage = int(self.val_percentage_var.get())
                 num_samples = max(1, int(total_files * percentage / 100.0))
             else:
-                num_samples = int(self.val_num_samples_var.get()) if self.val_num_samples_var.get() else 0
+                num_samples = int(self.val_num_samples_var.get()
+                                  ) if self.val_num_samples_var.get() else 0
 
             self.msg_queue.put(('log', f"\n{'='*60}"))
             self.msg_queue.put(('log', f"MODEL TEST: {mode.upper()}"))
@@ -5634,12 +5840,15 @@ This gives the model examples with known ground truth to learn from."""
                 tester = ModelTester(model_path=str(model_path), device=device)
 
                 # Get worst-case settings
-                num_worst_px = int(self.val_num_worst_var.get()) if self.val_save_worst_var.get() else 0
-                num_worst_pct = int(self.val_num_worst_var_2.get()) if self.val_save_worst_var_2.get() else 0
+                num_worst_px = int(self.val_num_worst_var.get()
+                                   ) if self.val_save_worst_var.get() else 0
+                num_worst_pct = int(self.val_num_worst_var_2.get()
+                                    ) if self.val_save_worst_var_2.get() else 0
 
                 # Get blur filter settings
                 enable_coc_filter = self.val_enable_coc_filter_var.get()
-                min_blur_threshold = float(self.val_min_blur_var.get()) if enable_coc_filter else None
+                min_blur_threshold = float(self.val_min_blur_var.get()
+                                           ) if enable_coc_filter else None
                 filter_worst_pct = self.val_filter_worst_pct_var.get() if enable_coc_filter else False
                 filter_metrics = self.val_filter_metrics_var.get() if enable_coc_filter else False
                 exclude_from_test = self.val_exclude_from_test_var.get() if enable_coc_filter else False
@@ -5669,14 +5878,16 @@ This gives the model examples with known ground truth to learn from."""
                     max_blur = tester.max_blur
                     blur_range = max_blur - min_blur
                     bin_size = blur_range / 4.0
-                    bins = [(min_blur + i * bin_size, min_blur + (i + 1) * bin_size) for i in range(4)]
+                    bins = [(min_blur + i * bin_size, min_blur + (i + 1) * bin_size)
+                             for i in range(4)]
 
                     # Use bin weights from the tester (calculated from model's training config)
                     bin_weights = tester.bin_weights
                     bin_maes = []
 
                     for low, high in bins:
-                        mask = (df[f'{tester.blur_col}_gt_px'] >= low) & (df[f'{tester.blur_col}_gt_px'] < high)
+                        mask = (df[f'{tester.blur_col}_gt_px'] >=low) &(
+                            df[f'{tester.blur_col}_gt_px'] <high)
                         bin_errors = df[mask]['error_px'].values
                         bin_maes.append(np.mean(bin_errors) if len(bin_errors) > 0 else 0.0)
 
@@ -5735,15 +5946,16 @@ This gives the model examples with known ground truth to learn from."""
         """Run full pipeline: generate + train."""
         if not self._validate_paths():
             return
-        
+
         if not self.folder_configs:
-            messagebox.showwarning("Warning", "No optical configs saved. Please scan and configure first.")
+            messagebox.showwarning(
+                "Warning", "No optical configs saved. Please scan and configure first.")
             return
-        
+
         self._set_training_state(True)
-        self._log("\n" + "="*50)
+        self._log("\n" + "=" * 50)
         self._log("Starting full training pipeline...")
-        
+
         def full_thread():
             try:
                 self._run_generation()
@@ -5755,16 +5967,16 @@ This gives the model examples with known ground truth to learn from."""
                 error_msg = f"{e}\n{traceback.format_exc()}"
                 print(f"\nERROR: {error_msg}", flush=True)  # Echo to terminal
                 self.msg_queue.put(('error', error_msg))
-        
+
         self.training_thread = threading.Thread(target=full_thread, daemon=True)
         self.training_thread.start()
-    
+
     def _stop_training(self):
         """Stop training."""
         self.stop_training = True
         self._log("⚠️  Stopping training after current batch completes...")
         # Note: Don't call _set_training_state(False) here - let training thread do it when it exits
-    
+
     def _validate_paths(self) -> bool:
         """Validate required paths are set and mode-specific requirements."""
         if not self.output_dir_var.get():
@@ -5777,7 +5989,8 @@ This gives the model examples with known ground truth to learn from."""
         if mode == "direct":
             # Check if calibration file was loaded
             if not self.rho_direct_var.get() or not self.sigma_0_var.get():
-                messagebox.showerror("Configuration Error",
+                messagebox.showerror(
+                    "Configuration Error",
                     "Direct Calibration mode requires a calibration file.\n\n"
                     "Click 'Browse...' in the Direct Calibration Parameters section "
                     "to load calibration data before starting training.")
@@ -5792,14 +6005,14 @@ This gives the model examples with known ground truth to learn from."""
                     raise ValueError("Invalid calibration parameters")
             except (ValueError, AttributeError):
                 messagebox.showerror("Configuration Error",
-                    "Invalid direct calibration parameters.\n\n"
-                    "Please reload the calibration file.")
+                                     "Invalid direct calibration parameters.\n\n"
+                                     "Please reload the calibration file.")
                 return False
 
             self._log("Validation passed: Direct mode calibration parameters loaded")
 
         return True
-    
+
     def _set_training_state(self, is_training: bool):
         """Update UI state during training."""
         state = 'disabled' if is_training else 'normal'
@@ -5808,36 +6021,36 @@ This gives the model examples with known ground truth to learn from."""
         self.mode_dme_btn.config(state=state)
         self.start_train_btn.config(state=state)
         self.stop_btn.config(state='normal' if is_training else 'disabled')
-        
+
         if not is_training:
             self.stop_training = False
-    
+
     # =========================================================================
     # Logging & Messages
     # =========================================================================
     def _log(self, message: str):
         """Add message to log."""
         self.msg_queue.put(('log', message))
-    
+
     def _process_messages(self):
         """Process messages from worker threads."""
         try:
             while True:
                 msg_type, data = self.msg_queue.get_nowait()
-                
+
                 if msg_type == 'log':
                     # Log widget removed - print to terminal instead
                     print(data, flush=True)
-                
+
                 elif msg_type == 'status':
                     self.status_var.set(data)
-                
+
                 elif msg_type == 'progress':
                     self.progress_var.set(data)
-                
+
                 elif msg_type == 'scan_complete':
                     self._on_scan_complete(data)
-                
+
                 elif msg_type == 'generation_complete':
                     self._log("Data generation complete!")
                     self.status_var.set("Generation complete")
@@ -5853,7 +6066,7 @@ This gives the model examples with known ground truth to learn from."""
                     self.progress_var.set(100)
                     self._set_training_state(False)
                     messagebox.showinfo("Complete", "Training pipeline finished!")
-                
+
                 elif msg_type == 'error':
                     self._log(f"ERROR: {data}")
                     self.status_var.set("Error")
@@ -5873,7 +6086,8 @@ This gives the model examples with known ground truth to learn from."""
                     self.run_inference_btn.config(state='normal')
                     self.stop_inference_btn.config(state='disabled')
                     if self.inf_status_var.get() == "Inference complete!":
-                        messagebox.showinfo("Complete", "Inference finished! Check the results summary below.")
+                        messagebox.showinfo(
+                            "Complete", "Inference finished! Check the results summary below.")
 
                 elif msg_type == 'val_progress':
                     self.val_progress_var.set(data)
@@ -5895,10 +6109,10 @@ This gives the model examples with known ground truth to learn from."""
 
         except queue.Empty:
             pass
-        
+
         # Schedule next check
         self.root.after(100, self._process_messages)
-    
+
     def run(self):
         """Start the GUI."""
         self.root.mainloop()

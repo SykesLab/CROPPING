@@ -47,9 +47,12 @@ def analyze_results(
 
     print(f"Total samples: {len(df)}")
     print(f"\nDiameter Error Statistics:")
-    print(f"  Mean Error: {df['diameter_error_px'].mean():.2f} px ({df['diameter_error_pct'].mean():.2f}%)")
-    print(f"  Median Error: {df['diameter_error_px'].median():.2f} px ({df['diameter_error_pct'].median():.2f}%)")
-    print(f"  Max Error: {df['diameter_error_px'].max():.2f} px ({df['diameter_error_pct'].max():.2f}%)")
+    print(
+        f"  Mean Error: {df['diameter_error_px'].mean():.2f} px ({df['diameter_error_pct'].mean():.2f}%)")
+    print(
+        f"  Median Error: {df['diameter_error_px'].median():.2f} px ({df['diameter_error_pct'].median():.2f}%)")
+    print(
+        f"  Max Error: {df['diameter_error_px'].max():.2f} px ({df['diameter_error_pct'].max():.2f}%)")
     print(f"  Std Dev: {df['diameter_error_px'].std():.2f} px")
 
     # Sort by diameter error percentage
@@ -71,7 +74,10 @@ def analyze_results(
     print(f"\nGenerating visualizations for {len(worst_samples)} worst cases...")
 
     # Process each worst sample
-    for idx, row in tqdm(worst_samples.iterrows(), total=len(worst_samples), desc="Creating visualizations"):
+    for idx, row in tqdm(
+        worst_samples.iterrows(),
+        total=len(worst_samples),
+        desc="Creating visualizations"):
         sample_name = f"{int(row['sample']):06d}"
         sample_path = data_dir / 'blur' / f'{sample_name}.png'
 
@@ -109,7 +115,8 @@ def _create_summary_plots(df: pd.DataFrame, output_dir: Path):
     fig, axes = plt.subplots(2, 2, figsize=(12, 10))
 
     # 1. Diameter error distribution
-    axes[0, 0].hist(df['diameter_error_px'], bins=30, edgecolor='black', alpha=0.7, color='steelblue')
+    axes[0, 0].hist(df['diameter_error_px'], bins=30,
+                    edgecolor='black', alpha=0.7, color='steelblue')
     axes[0, 0].axvline(df['diameter_error_px'].mean(), color='red', linestyle='--',
                        label=f"Mean: {df['diameter_error_px'].mean():.2f} px")
     axes[0, 0].set_xlabel('Diameter Error (px)')
@@ -162,17 +169,20 @@ def main():
     print("worst-case visualizations based on diameter error.\n")
 
     # Get inputs interactively
-    results_csv = input("Path to dual_test_results.csv (or press Enter for default 'test_results/dual_test_results.csv'): ").strip()
+    results_csv = input(
+        "Path to dual_test_results.csv (or press Enter for default 'test_results/dual_test_results.csv'): ").strip()
     if not results_csv:
         results_csv = "test_results/dual_test_results.csv"
     results_csv = Path(results_csv)
 
-    data_dir = input("Path to test data directory (or press Enter for default 'training_output/synthetic_data'): ").strip()
+    data_dir = input(
+        "Path to test data directory (or press Enter for default 'training_output/synthetic_data'): ").strip()
     if not data_dir:
         data_dir = "training_output/synthetic_data"
     data_dir = Path(data_dir)
 
-    model_path = input("Path to model checkpoint (or press Enter for default 'training_output/checkpoints/best_model.pth'): ").strip()
+    model_path = input(
+        "Path to model checkpoint (or press Enter for default 'training_output/checkpoints/best_model.pth'): ").strip()
     if not model_path:
         model_path = "training_output/checkpoints/best_model.pth"
     model_path = Path(model_path)
@@ -182,7 +192,8 @@ def main():
         output_dir = "test_results"
     output_dir = Path(output_dir)
 
-    num_worst_input = input("Number of worst cases to visualize (or press Enter for default '10'): ").strip()
+    num_worst_input = input(
+        "Number of worst cases to visualize (or press Enter for default '10'): ").strip()
     if not num_worst_input:
         num_worst = 10
     else:

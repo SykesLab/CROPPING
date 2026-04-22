@@ -251,8 +251,9 @@ def main():
                         shutil.copy2(src, cam_focus_dir / src.name)
                         total_sharp_copied += 1
 
-            print(f"  {folder}/{cam}: {cam_sharp} sharp / {cam_medium} medium / {cam_blurry} blurry "
-                  f"(thresh: sharp<{sharp_thresh:.2f}, blur>{blur_thresh:.2f})")
+            print(
+                f"  {folder}/{cam}: {cam_sharp} sharp / {cam_medium} medium / {cam_blurry} blurry "
+                f"(thresh: sharp<{sharp_thresh:.2f}, blur>{blur_thresh:.2f})")
 
     # Save classified CSV
     all_path = focus_dir / "focus_classified_all.csv"

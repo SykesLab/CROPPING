@@ -88,8 +88,10 @@ def _print_pipeline_summary(output_root: Path) -> None:
     # Print overall stats
     logger.info(f"\n  Total cines processed: {total_cines}")
     if total_cines > 0:
-        logger.info(f"  With valid geometry:   {total_with_geometry} ({total_with_geometry/total_cines*100:.1f}%)")
-        logger.info(f"  Missing geometry:      {total_missing_geometry} ({total_missing_geometry/total_cines*100:.1f}%)")
+        logger.info(
+            f"  With valid geometry:   {total_with_geometry} ({total_with_geometry/total_cines*100:.1f}%)")
+        logger.info(
+            f"  Missing geometry:      {total_missing_geometry} ({total_missing_geometry/total_cines*100:.1f}%)")
 
     if total_missing_crops > 0:
         logger.warning(f"  Missing crop files:    {total_missing_crops}")
@@ -138,7 +140,8 @@ def process_per_folder(
         return
 
     if quick_test:
-        _quick_test_per_folder(safe_mode=safe_mode, profile=profile, full_output=full_output, gui_mode=gui_mode)
+        _quick_test_per_folder(safe_mode=safe_mode, profile=profile,
+                               full_output=full_output, gui_mode=gui_mode)
         return
 
     # Set full output mode for overlay generation (independent of darkness curves)
@@ -195,7 +198,8 @@ def process_per_folder(
 
         global_done += n_outputs
         pct = (global_done / total_droplets) * 100 if total_droplets > 0 else 100.0
-        logger.info(f"[GLOBAL] {global_done}/{total_droplets} — {pct:.1f}% (elapsed {global_timer.elapsed})")
+        logger.info(
+            f"[GLOBAL] {global_done}/{total_droplets} — {pct:.1f}% (elapsed {global_timer.elapsed})")
 
         if profile:
             folder_profiles.append({
@@ -333,12 +337,13 @@ def _quick_test_per_folder(safe_mode: bool = False, profile: bool = False,
     folder_profiles: List[Dict[str, Any]] = []
 
     output_str = "full output" if full_output else "crops only"
-    logger.info(f"Quick test: {total_folders} folders, {output_str}, {'SAFE' if safe_mode else 'FAST'} mode")
+    logger.info(
+        f"Quick test: {total_folders} folders, {output_str}, {'SAFE' if safe_mode else 'FAST'} mode")
     logger.info(f"Processing first droplet from each of {total_folders} folders.")
 
     for f_idx, sub in enumerate(subfolders, start=1):
-        folder_timing = _quick_test_single_folder(sub=sub, f_idx=f_idx,
-                                                  total_folders=total_folders, full_output=full_output)
+        folder_timing = _quick_test_single_folder(
+            sub=sub, f_idx=f_idx, total_folders=total_folders, full_output=full_output)
         if folder_timing is None:
             continue
 
@@ -417,7 +422,8 @@ def _quick_test_single_folder(sub: Path, f_idx: int, total_folders: int,
             viz_dir.mkdir(parents=True, exist_ok=True)
 
             t0 = time.perf_counter()
-            save_darkness_plot(viz_dir / f"{path.stem}_darkness.png", curve, first, last, best_idx, path.name)
+            save_darkness_plot(viz_dir / f"{path.stem}_darkness.png",
+                               curve, first, last, best_idx, path.name)
             folder_timing["darkness_plot"] += time.perf_counter() - t0
 
             t0 = time.perf_counter()
@@ -427,16 +433,19 @@ def _quick_test_single_folder(sub: Path, f_idx: int, total_folders: int,
                 "frame": frame, "mask": mask, "y_top": geo["y_top"], "y_bottom": geo["y_bottom"],
                 "y_bottom_sphere": geo["y_bottom_sphere"], "cx": geo["cx"],
             }
-            save_geometric_overlay(viz_dir / f"{path.stem}_overlay.png", geo_for_plot, best_idx, cnn_size=None)
+            save_geometric_overlay(viz_dir / f"{path.stem}_overlay.png",
+                                   geo_for_plot, best_idx, cnn_size=None)
             folder_timing["overlay_plot"] += time.perf_counter() - t0
         else:
             t0 = time.perf_counter()
             best_idx, geo = choose_best_frame_geometry_only(cine_obj)
             folder_timing["geometry_scan"] += time.perf_counter() - t0
 
-    analysis_time = folder_timing["darkness_curve"] + folder_timing["best_frame"] + folder_timing["geometry_scan"]
-    logger.info(f"  load: {format_time(folder_timing['load_cine'])} | "
-                f"analysis: {format_time(analysis_time)} | frames: {int(folder_timing['n_frames'])}")
+    analysis_time = folder_timing["darkness_curve"] + \
+        folder_timing["best_frame"] + folder_timing["geometry_scan"]
+    logger.info(
+        f"  load: {format_time(folder_timing['load_cine'])} | "
+        f"analysis: {format_time(analysis_time)} | frames: {int(folder_timing['n_frames'])}")
 
     return folder_timing
 

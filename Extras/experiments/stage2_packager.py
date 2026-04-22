@@ -111,7 +111,8 @@ def write_sharp_crops_csv(path: Path, records: List[FrameRecord]):
     """Write training-GUI-ready sharp_crops.csv with the 4 mandatory columns."""
     with open(path, 'w', newline='') as f:
         writer = csv.writer(f)
-        writer.writerow(['filename', 'diameter_px', 'scale_px_per_mm', 'native_blur_sigma', 'camera'])
+        writer.writerow(['filename', 'diameter_px', 'scale_px_per_mm',
+                        'native_blur_sigma', 'camera'])
         for r in records:
             writer.writerow([
                 r.image_filename,

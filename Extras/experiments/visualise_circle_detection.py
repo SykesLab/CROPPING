@@ -95,8 +95,10 @@ def main(n_samples: int = 12, camera: str = "m", seed: int = 42):
             color = "red"
 
         # Image centre crosshair — red
-        cv2.line(annotated, (int(cx_img) - 5, int(cy_img)), (int(cx_img) + 5, int(cy_img)), (220, 0, 0), 1)
-        cv2.line(annotated, (int(cx_img), int(cy_img) - 5), (int(cx_img), int(cy_img) + 5), (220, 0, 0), 1)
+        cv2.line(annotated, (int(cx_img) - 5, int(cy_img)),
+                 (int(cx_img) + 5, int(cy_img)), (220, 0, 0), 1)
+        cv2.line(annotated, (int(cx_img), int(cy_img) - 5),
+                 (int(cx_img), int(cy_img) + 5), (220, 0, 0), 1)
 
         ax.imshow(annotated)
         ax.set_title(title, fontsize=7, color=color)
