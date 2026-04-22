@@ -32,6 +32,22 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
+# Status colours for plausibility indicators
+COLOR_GOOD = "#2d8a2d"
+COLOR_WARN = "#cc8800"
+COLOR_BAD = "#cc3333"
+
+
+def _classify_param(name: str, value: float) -> str:
+    """Pick a colour based on whether a calibration parameter is in a healthy range."""
+    if name == "R^2":
+        return COLOR_GOOD if value > 0.95 else COLOR_WARN if value > 0.9 else COLOR_BAD
+    if name == "sigma_0":
+        return COLOR_GOOD if value < 5 else COLOR_WARN
+    if name == "n_points":
+        return COLOR_GOOD if value >= 10 else COLOR_WARN if value >= 5 else COLOR_BAD
+    return COLOR_GOOD if value > 0.5 else COLOR_WARN
+
 
 # ═══════════════════════════════════════════════════════════════════════════
 # Input loading helpers
