@@ -251,7 +251,7 @@ class RealCropInference:
                 focal_length = optics_cfg.get('focal_length_mm', 70.0)
                 focus_distance = optics_cfg.get('focus_distance_mm', 200.0)
                 imaging_distance = optics_cfg.get('imaging_distance_mm',
-                                                  1.0 / (1.0 /focal_length - 1.0 /focus_distance) if focus_distance != focal_length else 200.0)
+                                                  1.0 / (1.0 / focal_length - 1.0 / focus_distance) if focus_distance != focal_length else 200.0)
 
                 self.optical_params = BlurParams(
                     focal_length_mm=focal_length,
@@ -938,9 +938,9 @@ class RealCropInference:
         ax.set_title('Per-Range MAE', fontsize=12, fontweight='bold')
         ax.grid(True, alpha=0.3, axis='y')
         for bar, mae_val, n in zip(bars, bin_stats['mae'], bin_stats['n']):
-            ax.text(bar.get_x() + bar.get_width() /2, bar.get_height() + 0.01,
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
                     f'{mae_val:.2f}', ha='center', va='bottom', fontsize=9, fontweight='bold')
-            ax.text(bar.get_x() + bar.get_width() /2, bar.get_height() /2,
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() / 2,
                     f'n={n}', ha='center', va='center', fontsize=8, color='white', fontweight='bold')
         if len(bin_stats) > 0 and bin_stats['mae'].max() > 0:
             ax.set_ylim(top=bin_stats['mae'].max() * 1.25)

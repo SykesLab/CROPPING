@@ -1694,7 +1694,7 @@ class SyntheticBlurGenerator:
             pad_w = (target - w) // 2
             image = np.pad(
                 image,
-                ((pad_h, target -h -pad_h), (pad_w, target -w -pad_w)),
+                ((pad_h, target - h - pad_h), (pad_w, target - w - pad_w)),
                 mode='constant',
                 constant_values=1.0  # White background
             )
