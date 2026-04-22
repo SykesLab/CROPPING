@@ -415,6 +415,9 @@ class Trainer:
             logger.warning(f"⚠ Checkpoint not found: {resume_from}, starting from scratch")
 
         target_epoch = start_epoch + epochs - 1
+        bins = self._get_bins()
+        bin_labels = [f"{low:.1f}-{high:.1f}" for low, high in bins]
+
         for epoch in range(start_epoch, target_epoch + 1):
             # Update learning rate
             lr = self._update_lr(optimizer, epoch, self.lr)
@@ -424,7 +427,6 @@ class Trainer:
             train_loss = 0.0
 
             # Binned MAE tracking for training
-            bins = self._get_bins()
             train_bin_errors = [[] for _ in bins]
 
             pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{target_epoch}")
@@ -522,8 +524,6 @@ class Trainer:
             self.curve_history['train_bin_maes'].append(list(train_bin_maes))
             self.curve_history['val_bin_maes'].append(list(val_bin_maes))
 
-            # Format bin labels dynamically
-            bin_labels = [f"{low:.1f}-{high:.1f}" for low, high in bins]
             logger.info(f"Epoch {epoch}: train_loss={train_loss:.4f}, val_loss={val_loss:.4f}")
             logger.info(f"  Train Weighted MAE: {train_weighted_mae:.2f} px | Val Weighted MAE: {val_weighted_mae:.2f} px")
             logger.info(f"  Train Binned: [{bin_labels[0]}: {train_bin_maes[0]:.2f}, {bin_labels[1]}: {train_bin_maes[1]:.2f}, {bin_labels[2]}: {train_bin_maes[2]:.2f}, {bin_labels[3]}: {train_bin_maes[3]:.2f}] px")
