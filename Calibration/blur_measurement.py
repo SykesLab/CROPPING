@@ -98,7 +98,7 @@ def _fit_erf_multi_start(
                 maxfev=2000
             )
 
-                fitted = erf_edge(r_valid, *popt)
+            fitted = erf_edge(r_valid, *popt)
             residual = np.sum((intensities - fitted) ** 2)
             ss_tot = np.sum((intensities - np.mean(intensities)) ** 2)
             r_squared = 1 - (residual / ss_tot) if ss_tot > 0 else 0
