@@ -5782,13 +5782,15 @@ class TrainingGUI:
 
                     self.msg_queue.put(('status', f"Processing {material_dir.name}..."))
 
-                    df = inference.process_material_folder(
+                    kwargs = dict(
                         material_dir=material_dir,
                         output_base=output_dir,
-
                         save_visualizations=save_viz,
-                        viz_sample_rate=viz_rate
+                        viz_sample_rate=viz_rate,
                     )
+                    if focus_threshold is not None:
+                        kwargs['blur_threshold'] = focus_threshold
+                    df = inference.process_material_folder(**kwargs)
 
                     if len(df) > 0:
                         all_results.append(df)
@@ -5801,12 +5803,15 @@ class TrainingGUI:
                 all_results = []
                 self.msg_queue.put(('status', f"Processing {input_dir.name}..."))
 
-                df = inference.process_material_folder(
+                kwargs = dict(
                     material_dir=input_dir,
                     output_base=output_dir,
                     save_visualizations=save_viz,
-                    viz_sample_rate=viz_rate
+                    viz_sample_rate=viz_rate,
                 )
+                if focus_threshold is not None:
+                    kwargs['blur_threshold'] = focus_threshold
+                df = inference.process_material_folder(**kwargs)
 
                 if len(df) > 0:
                     all_results.append(df)
