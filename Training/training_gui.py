@@ -1393,70 +1393,34 @@ This gives the model examples with known ground truth to learn from."""
             self._update_val_split_state()
 
     def _set_checkpoint_info_message(self, checkpoint_path: str):
-        """Set appropriate info message based on checkpoint type and current mode."""
+        """Load LR from checkpoint and show a status line."""
         from pathlib import Path
         checkpoint_name = Path(checkpoint_path).name
-
-        mode = self.train_mode_var.get()
-        if not mode:
-            self.checkpoint_info_var.set(f"ℹ️ Using: {checkpoint_name}")
-            return
 
         try:
             import torch
             checkpoint = torch.load(checkpoint_path, map_location='cpu', weights_only=True)
-
-            # Determine checkpoint type
             has_dme = 'dme_state_dict' in checkpoint or 'model_state_dict' in checkpoint
 
-            # Auto-load LR from checkpoint when optimizer state will be used
-            if mode == 'dme' and has_dme and 'optimizer_state_dict' in checkpoint:
+            # Auto-load LR from checkpoint optimizer state
+            if has_dme and 'optimizer_state_dict' in checkpoint:
                 opt_lr = checkpoint['optimizer_state_dict']['param_groups'][0]['lr']
-                self.lr_var.set(f"{opt_lr:.2e}")  # Format like "2.00e-05"
+                self.lr_var.set(f"{opt_lr:.2e}")
 
-            if mode == 'dme':
-                if has_dme:
-                    self.checkpoint_info_var.set(
-                        f"ℹ️ Will resume DME training from {checkpoint_name}")
-                else:
-                    self.checkpoint_info_var.set(
-                        f"⚠️ Checkpoint format not recognized: {checkpoint_name}")
-
-            elif mode == 'full':
-                if has_dme:
-                    self.checkpoint_info_var.set(f"ℹ️ Will resume DME from {checkpoint_name}")
-                else:
-                    self.checkpoint_info_var.set(
-                        f"⚠️ Checkpoint format not recognized: {checkpoint_name}")
+            if has_dme:
+                self.checkpoint_info_var.set(f"ℹ Will resume DME training from {checkpoint_name}")
+            else:
+                self.checkpoint_info_var.set(f"⚠ Checkpoint format not recognized: {checkpoint_name}")
 
         except Exception as e:
-            self.checkpoint_info_var.set(f"⚠️ Could not analyze {checkpoint_name}: {str(e)}")
+            self.checkpoint_info_var.set(f"⚠ Could not analyze {checkpoint_name}: {e}")
 
     def _clear_checkpoint(self):
         """Clear checkpoint selection to train from scratch."""
         self.checkpoint_path_var.set("")
-
-        # Set mode-aware display and info message
-        mode = self.train_mode_var.get()
-        if mode == 'dd':
-            # For DD mode, auto-detect DME checkpoint
-            output_dir = Path(self.output_dir_var.get())
-            checkpoints_dir = output_dir / 'checkpoints'
-            dme_checkpoint = checkpoints_dir / 'dme_best.pth'
-
-            if dme_checkpoint.exists():
-                self.checkpoint_display_var.set(dme_checkpoint.name)
-                self.checkpoint_info_var.set(
-                    f"ℹ️ Will train DD from scratch using DME from {dme_checkpoint.name}")
-            else:
-                self.checkpoint_display_var.set("None")
-                self.checkpoint_info_var.set(
-                    "⚠️ No DME checkpoint found - DD training may not work properly")
-        else:
-            self.checkpoint_display_var.set("None")
-            self.checkpoint_info_var.set(
-                "ℹ️ Will train from scratch (will overwrite checkpoints if they already exist)")
-
+        self.checkpoint_display_var.set("None")
+        self.checkpoint_info_var.set(
+            "ℹ Will train from scratch (overwrites any existing checkpoints in this run folder)")
         self._update_val_split_state()
 
     def _scan_checkpoint_metrics(self):
@@ -1466,22 +1430,9 @@ This gives the model examples with known ground truth to learn from."""
         # Clear previous metrics
         self.checkpoint_metrics_var.set("")
 
-        # Check if checkpoint is selected
         if not checkpoint_path or checkpoint_path == "":
-            # Try to find auto-detected checkpoint for DD mode
-            mode = self.train_mode_var.get()
-            if mode == 'dd':
-                output_dir = Path(self.output_dir_var.get())
-                checkpoints_dir = output_dir / 'checkpoints'
-                dme_checkpoint = checkpoints_dir / 'dme_best.pth'
-                if dme_checkpoint.exists():
-                    checkpoint_path = str(dme_checkpoint)
-                else:
-                    self.checkpoint_metrics_var.set("⚠️ No checkpoint selected or found")
-                    return
-            else:
-                self.checkpoint_metrics_var.set("⚠️ No checkpoint selected")
-                return
+            self.checkpoint_metrics_var.set("⚠ No checkpoint selected")
+            return
 
         # Check if file exists
         if not Path(checkpoint_path).exists():
@@ -3228,6 +3179,242 @@ This gives the model examples with known ground truth to learn from."""
             self.lr_entry.config(state='normal')
         else:
             self.lr_entry.config(state='disabled')
+
+    # ─────────────────────────────────────────────────────────────────────
+    # Advanced training settings dialog
+    # ─────────────────────────────────────────────────────────────────────
+
+    # Defaults used by the "Reset to defaults" button
+    _ADV_DEFAULTS = {
+        'optimizer': 'adam',
+        'adam_beta1': '0.9',
+        'adam_beta2': '0.999',
+        'weight_decay': '0.0',
+        'lr_schedule': 'step',
+        'lr_decay_start': '200',
+        'lr_decay_rate': '0.005',
+        'lr_min': '1e-6',
+        'grad_clip': '0.0',
+        'log_eps': '0.01',
+        'seed': '42',
+        'cuda_blocking': False,
+        'save_only_best': False,
+    }
+
+    # Setting keys locked when resuming from a checkpoint
+    _ADV_LOCKED_KEYS = {'optimizer', 'log_eps', 'seed'}
+
+    def _open_advanced_settings(self):
+        """Open the Advanced settings modal dialog."""
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Advanced training settings")
+        dlg.transient(self.root)
+        dlg.grab_set()
+        dlg.resizable(False, False)
+
+        # Snapshot so Cancel can revert
+        snapshot = {
+            'optimizer': self.optimizer_var.get(),
+            'adam_beta1': self.adam_beta1_var.get(),
+            'adam_beta2': self.adam_beta2_var.get(),
+            'weight_decay': self.weight_decay_var.get(),
+            'lr_schedule': self.lr_schedule_var.get(),
+            'lr_decay_start': self.lr_decay_start_var.get(),
+            'lr_decay_rate': self.lr_decay_rate_var.get(),
+            'lr_min': self.lr_min_var.get(),
+            'grad_clip': self.grad_clip_var.get(),
+            'log_eps': self.log_eps_var.get(),
+            'seed': self.seed_var.get(),
+            'cuda_blocking': self.cuda_launch_blocking_var.get(),
+            'save_only_best': self.save_only_best_var.get(),
+        }
+
+        # Top banner — only shown when resuming from a checkpoint
+        is_resuming = bool(self.checkpoint_path_var.get())
+        if is_resuming:
+            banner = ttk.Label(
+                dlg,
+                text=(f"Resuming from checkpoint — locked fields are shown in grey. "
+                      f"Changing them would break optimizer state or loss continuity."),
+                foreground='#cc8800', font=('TkDefaultFont', 9, 'bold'),
+                wraplength=520, justify='left', padding=(8, 6))
+            banner.pack(fill='x', padx=10, pady=(10, 0))
+
+        widgets: dict = {}  # key → widget to enable/disable
+
+        # Optimizer
+        opt_f = ttk.LabelFrame(dlg, text="Optimizer   [LOCKED*]", padding=8)
+        opt_f.pack(fill='x', padx=10, pady=(8, 2))
+        r = ttk.Frame(opt_f); r.pack(fill='x', pady=2)
+        ttk.Label(r, text="Type:", width=14).pack(side='left')
+        widgets['optimizer'] = ttk.Combobox(r, textvariable=self.optimizer_var,
+                                             values=["adam", "adamw", "sgd"],
+                                             state="readonly", width=10)
+        widgets['optimizer'].pack(side='left')
+        r = ttk.Frame(opt_f); r.pack(fill='x', pady=2)
+        ttk.Label(r, text="β1 / momentum:", width=14).pack(side='left')
+        widgets['adam_beta1'] = ttk.Entry(r, textvariable=self.adam_beta1_var, width=8)
+        widgets['adam_beta1'].pack(side='left', padx=(0, 8))
+        ttk.Label(r, text="β2:", width=4).pack(side='left')
+        widgets['adam_beta2'] = ttk.Entry(r, textvariable=self.adam_beta2_var, width=8)
+        widgets['adam_beta2'].pack(side='left')
+        r = ttk.Frame(opt_f); r.pack(fill='x', pady=2)
+        ttk.Label(r, text="Weight decay:", width=14).pack(side='left')
+        widgets['weight_decay'] = ttk.Entry(r, textvariable=self.weight_decay_var, width=10)
+        widgets['weight_decay'].pack(side='left')
+
+        # LR schedule
+        sched_f = ttk.LabelFrame(dlg, text="LR schedule", padding=8)
+        sched_f.pack(fill='x', padx=10, pady=2)
+        r = ttk.Frame(sched_f); r.pack(fill='x', pady=2)
+        ttk.Label(r, text="Type:", width=14).pack(side='left')
+        widgets['lr_schedule'] = ttk.Combobox(
+            r, textvariable=self.lr_schedule_var,
+            values=["none", "step", "exponential", "cosine"],
+            state="readonly", width=12)
+        widgets['lr_schedule'].pack(side='left')
+        r = ttk.Frame(sched_f); r.pack(fill='x', pady=2)
+        ttk.Label(r, text="Decay start (epoch):", width=18).pack(side='left')
+        widgets['lr_decay_start'] = ttk.Entry(r, textvariable=self.lr_decay_start_var, width=8)
+        widgets['lr_decay_start'].pack(side='left')
+        r = ttk.Frame(sched_f); r.pack(fill='x', pady=2)
+        ttk.Label(r, text="Decay rate:", width=14).pack(side='left')
+        widgets['lr_decay_rate'] = ttk.Entry(r, textvariable=self.lr_decay_rate_var, width=10)
+        widgets['lr_decay_rate'].pack(side='left')
+        ttk.Label(r, text="Min LR:", width=8).pack(side='left', padx=(8, 0))
+        widgets['lr_min'] = ttk.Entry(r, textvariable=self.lr_min_var, width=10)
+        widgets['lr_min'].pack(side='left')
+
+        # Regularisation
+        reg_f = ttk.LabelFrame(dlg, text="Regularisation", padding=8)
+        reg_f.pack(fill='x', padx=10, pady=2)
+        r = ttk.Frame(reg_f); r.pack(fill='x', pady=2)
+        ttk.Label(r, text="Grad clip norm:", width=14).pack(side='left')
+        widgets['grad_clip'] = ttk.Entry(r, textvariable=self.grad_clip_var, width=10)
+        widgets['grad_clip'].pack(side='left')
+        ttk.Label(r, text="  (0 = disabled)", foreground='gray',
+                  font=('TkDefaultFont', 8)).pack(side='left')
+
+        # Loss & reproducibility
+        loss_f = ttk.LabelFrame(dlg, text="Loss & reproducibility   [LOCKED*]", padding=8)
+        loss_f.pack(fill='x', padx=10, pady=2)
+        r = ttk.Frame(loss_f); r.pack(fill='x', pady=2)
+        ttk.Label(r, text="Log eps:", width=14).pack(side='left')
+        widgets['log_eps'] = ttk.Entry(r, textvariable=self.log_eps_var, width=10)
+        widgets['log_eps'].pack(side='left')
+        r = ttk.Frame(loss_f); r.pack(fill='x', pady=2)
+        ttk.Label(r, text="Random seed:", width=14).pack(side='left')
+        widgets['seed'] = ttk.Entry(r, textvariable=self.seed_var, width=10)
+        widgets['seed'].pack(side='left')
+
+        # Debug & saving
+        dbg_f = ttk.LabelFrame(dlg, text="Debug & saving", padding=8)
+        dbg_f.pack(fill='x', padx=10, pady=2)
+        widgets['cuda_blocking'] = ttk.Checkbutton(
+            dbg_f, text="CUDA launch blocking (slow, exact error locations)",
+            variable=self.cuda_launch_blocking_var)
+        widgets['cuda_blocking'].pack(anchor='w', pady=1)
+        widgets['save_only_best'] = ttk.Checkbutton(
+            dbg_f, text="Save only best checkpoint (skip per-epoch saves)",
+            variable=self.save_only_best_var)
+        widgets['save_only_best'].pack(anchor='w', pady=1)
+
+        ttk.Label(dlg, text="* locked when resuming from a checkpoint",
+                  foreground='gray', font=('TkDefaultFont', 8)
+                  ).pack(anchor='w', padx=14, pady=(4, 0))
+
+        # Lock fields if resuming
+        if is_resuming:
+            self._apply_resume_locks(widgets)
+
+        # Buttons
+        btn_row = ttk.Frame(dlg)
+        btn_row.pack(fill='x', padx=10, pady=10)
+
+        def on_reset():
+            for key, default in self._ADV_DEFAULTS.items():
+                if is_resuming and key in self._ADV_LOCKED_KEYS:
+                    continue
+                var = self._adv_var(key)
+                if var is not None:
+                    var.set(default)
+
+        def on_cancel():
+            for key, val in snapshot.items():
+                var = self._adv_var(key)
+                if var is not None:
+                    var.set(val)
+            dlg.destroy()
+
+        ttk.Button(btn_row, text="Reset to defaults", command=on_reset).pack(side='left')
+        ttk.Button(btn_row, text="Cancel", command=on_cancel).pack(side='right', padx=4)
+        ttk.Button(btn_row, text="OK", command=dlg.destroy).pack(side='right')
+
+        dlg.protocol("WM_DELETE_WINDOW", on_cancel)
+        dlg.update_idletasks()
+        # Centre on parent
+        x = self.root.winfo_rootx() + (self.root.winfo_width() - dlg.winfo_width()) // 2
+        y = self.root.winfo_rooty() + (self.root.winfo_height() - dlg.winfo_height()) // 2
+        dlg.geometry(f"+{max(x, 0)}+{max(y, 0)}")
+        dlg.wait_window()
+
+    def _adv_var(self, key: str):
+        """Map advanced setting key → its tk.Variable."""
+        return {
+            'optimizer': self.optimizer_var,
+            'adam_beta1': self.adam_beta1_var,
+            'adam_beta2': self.adam_beta2_var,
+            'weight_decay': self.weight_decay_var,
+            'lr_schedule': self.lr_schedule_var,
+            'lr_decay_start': self.lr_decay_start_var,
+            'lr_decay_rate': self.lr_decay_rate_var,
+            'lr_min': self.lr_min_var,
+            'grad_clip': self.grad_clip_var,
+            'log_eps': self.log_eps_var,
+            'seed': self.seed_var,
+            'cuda_blocking': self.cuda_launch_blocking_var,
+            'save_only_best': self.save_only_best_var,
+        }.get(key)
+
+    def _apply_resume_locks(self, widgets: dict) -> None:
+        """Load checkpoint's training_config.yaml and lock/populate LOCKED fields."""
+        ckpt = self.checkpoint_path_var.get()
+        if not ckpt:
+            return
+        # Config lives in the run folder root: runs/<name>/training_config.yaml
+        # or legacy: training_output/training_config.yaml.
+        ckpt_path = Path(ckpt)
+        candidates = [
+            ckpt_path.parent.parent / 'training_config.yaml',
+            ckpt_path.parent.parent / 'optical_config.yaml',
+        ]
+        cfg = None
+        for cand in candidates:
+            if cand.is_file():
+                try:
+                    with open(cand) as f:
+                        cfg = yaml.safe_load(f) or {}
+                    break
+                except Exception:
+                    pass
+        train_cfg = (cfg or {}).get('training', {}) if cfg else {}
+
+        # Map locked keys → (var, config key, cast)
+        mapping = {
+            'optimizer': (self.optimizer_var, 'optimizer', str),
+            'log_eps': (self.log_eps_var, 'log_eps', lambda x: str(x)),
+            'seed': (self.seed_var, 'seed', lambda x: str(x)),
+        }
+        for key in self._ADV_LOCKED_KEYS:
+            var, cfg_key, cast = mapping[key]
+            if cfg_key in train_cfg:
+                var.set(cast(train_cfg[cfg_key]))
+            w = widgets.get(key)
+            if w is not None:
+                try:
+                    w.configure(state='disabled')
+                except tk.TclError:
+                    pass
 
     def _load_min_blur_from_config(self):
         """Load min_blur_px from training_config.yaml and update validation tab."""
@@ -5858,35 +6045,6 @@ This gives the model examples with known ground truth to learn from."""
         """Stop validation test."""
         self.msg_queue.put(('log', "⚠ Stopping test..."))
         # Future: Add stop flag
-
-    def _run_full_pipeline(self):
-        """Run full pipeline: generate + train."""
-        if not self._validate_paths():
-            return
-
-        if not self.folder_configs:
-            messagebox.showwarning(
-                "Warning", "No optical configs saved. Please scan and configure first.")
-            return
-
-        self._set_training_state(True)
-        self._log("\n" + "=" * 50)
-        self._log("Starting full training pipeline...")
-
-        def full_thread():
-            try:
-                self._run_generation()
-                if not self.stop_training:
-                    self._run_training()
-                self.msg_queue.put(('training_complete', None))
-            except Exception as e:
-                import traceback
-                error_msg = f"{e}\n{traceback.format_exc()}"
-                print(f"\nERROR: {error_msg}", flush=True)  # Echo to terminal
-                self.msg_queue.put(('error', error_msg))
-
-        self.training_thread = threading.Thread(target=full_thread, daemon=True)
-        self.training_thread.start()
 
     def _stop_training(self):
         """Stop training."""
