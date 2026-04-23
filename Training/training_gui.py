@@ -492,6 +492,10 @@ class TrainingGUI:
         self.stop_training = False
         self._training_running = False
 
+        # Inference state — preprocessing optionally sets a run dir for inference
+        # to dump output into; None means use the structured / fallback path.
+        self._inf_run_dir: Optional[str] = None
+
         # Message queue for thread communication
         self.msg_queue = queue.Queue()
 
@@ -848,14 +852,15 @@ class TrainingGUI:
 
         row = ttk.Frame(output_dir_frame)
         row.pack(fill='x', pady=2)
-        ttk.Label(row, text="Training output root:", width=20).pack(side='left')
-        self.output_dir_var = tk.StringVar(value=str(Path.cwd() / "training_output"))
+        ttk.Label(row, text="Training output root:", width=24).pack(side='left')
+        self.output_dir_var = tk.StringVar(
+            value=str(Path(__file__).resolve().parent / "training_output"))
         ttk.Entry(row, textvariable=self.output_dir_var, width=65).pack(side='left', padx=5)
         ttk.Button(row, text="Browse", command=self._browse_output_dir).pack(side='left')
 
         row_name = ttk.Frame(output_dir_frame)
         row_name.pack(fill='x', pady=2)
-        ttk.Label(row_name, text="Dataset name (optional):", width=20).pack(side='left')
+        ttk.Label(row_name, text="Dataset name (optional):", width=24).pack(side='left')
         self.dataset_name_var = tk.StringVar(value="")
         ttk.Entry(row_name, textvariable=self.dataset_name_var, width=65).pack(side='left', padx=5)
         ttk.Label(output_dir_frame,
@@ -937,27 +942,13 @@ class TrainingGUI:
         # Initially disable beta params
         self._on_blur_distribution_change()
 
-        # Info text (in left column)
-        info_frame = ttk.LabelFrame(left_column, text="Info", padding=10)
-        info_frame.pack(fill='x', pady=5)
-
-        info_text = """Generation creates synthetic training data by:
-1. Taking your sharp crop images
-2. Applying known amounts of blur (based on config)
-3. Sampling blur values from chosen distribution (uniform/weighted)
-4. Saving triplets: (blurred, sharp, blur_map)
-
-Outputs (saved to synthetic_data/):
-  • blur/ - Blurred images
-  • sharp/ - Ground truth sharp images
-  • blur_map/ - Blur maps (normalized)
-  • metadata.csv - Blur values, defocus distances
-  • blur_distribution.png - Histogram visualization
-  • config.yaml - Generation parameters
-
-This gives the model examples with known ground truth to learn from."""
-
-        ttk.Label(info_frame, text=info_text, justify='left').pack(anchor='w')
+        # Info button (opens a small popup explaining what this tab does)
+        ttk.Button(
+            left_column,
+            text="?  What does this tab do?",
+            command=self._show_generation_info,
+            width=28,
+        ).pack(anchor='w', pady=(5, 0))
 
         # Progress (in left column)
         progress_frame = ttk.LabelFrame(left_column, text="Progress", padding=10)
@@ -1555,6 +1546,11 @@ This gives the model examples with known ground truth to learn from."""
         ttk.Label(model_info_row, textvariable=self.inf_model_info_var, foreground='gray',
                   font=('', 8)).pack(anchor='w', padx=(120, 0))
 
+        # Calibration editor launcher (post-hoc edit ρ/σ₀ in any checkpoint)
+        ttk.Button(model_frame, text="Calibration editor...",
+                   command=self._open_calibration_editor).pack(
+            anchor='w', padx=(120, 0), pady=(6, 0))
+
         # Image Source (raw images or cine → preprocess → crops)
         self.inf_source_frame = ttk.LabelFrame(parent, text="Image Source", padding=10)
         self.inf_source_frame.pack(fill='x', pady=5)
@@ -1796,40 +1792,6 @@ This gives the model examples with known ground truth to learn from."""
         ttk.Label(viz_rate_row, text="(1 per N crops)", font=(
             'TkDefaultFont', 8), foreground='gray').pack(side='left')
 
-        # Right column - analysis
-        analysis_opts = ttk.LabelFrame(right_opts, text="Analysis & Comparison", padding=5)
-        analysis_opts.pack(fill='x', pady=2)
-
-        self.inf_by_material_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            analysis_opts,
-            text="Compare by Material",
-            variable=self.inf_by_material_var
-        ).pack(anchor='w')
-
-        ttk.Label(
-            analysis_opts,
-            text="(Creates distributions, boxplots, statistics)",
-            font=('TkDefaultFont', 8),
-            foreground='gray',
-            wraplength=300
-        ).pack(anchor='w', padx=(20, 0))
-
-        self.inf_coc_histogram_var = tk.BooleanVar(value=True)
-        self.inf_coc_histogram_cb = ttk.Checkbutton(
-            analysis_opts,
-            text="CoC Distribution Histograms",
-            variable=self.inf_coc_histogram_var
-        )
-        self.inf_coc_histogram_cb.pack(anchor='w', pady=(5, 0))
-
-        self.inf_defocus_scatter_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            analysis_opts,
-            text="Defocus Scatter Plots",
-            variable=self.inf_defocus_scatter_var
-        ).pack(anchor='w')
-
         # Cross-camera scale (direct mode)
         scale_frame = ttk.LabelFrame(right_opts, text="Cross-Camera Scale (Direct Mode)", padding=5)
         scale_frame.pack(fill='x', pady=(5, 2))
@@ -1908,6 +1870,59 @@ This gives the model examples with known ground truth to learn from."""
         self.inf_results_text = scrolledtext.ScrolledText(
             results_frame, height=8, state='disabled', wrap='word')
         self.inf_results_text.pack(fill='both', expand=True)
+
+        # Comparison & correction — populated when inference has ground-truth labels
+        self.inf_comparison_frame = ttk.LabelFrame(
+            parent, text="Comparison & correction", padding=10)
+        # Not packed here — shown by _compute_and_show_comparison when it has data
+
+        stats_row = ttk.Frame(self.inf_comparison_frame)
+        stats_row.pack(fill='x', pady=(0, 6))
+        self.inf_comp_n_var = tk.StringVar(value="")
+        self.inf_comp_r2_var = tk.StringVar(value="")
+        self.inf_comp_rmse_var = tk.StringVar(value="")
+        self.inf_comp_mae_var = tk.StringVar(value="")
+        self.inf_comp_bias_var = tk.StringVar(value="")
+        for var, label in (
+            (self.inf_comp_n_var, "n"),
+            (self.inf_comp_r2_var, "R²"),
+            (self.inf_comp_rmse_var, "RMSE"),
+            (self.inf_comp_mae_var, "MAE"),
+            (self.inf_comp_bias_var, "bias"),
+        ):
+            col = ttk.Frame(stats_row)
+            col.pack(side='left', padx=10)
+            ttk.Label(col, text=label, font=('TkDefaultFont', 8),
+                      foreground='gray').pack(anchor='w')
+            ttk.Label(col, textvariable=var,
+                      font=('Consolas', 10, 'bold')).pack(anchor='w')
+
+        ttk.Label(self.inf_comparison_frame,
+                  text="Linear fit  pred = slope · true + intercept:",
+                  font=('TkDefaultFont', 9)).pack(anchor='w', pady=(4, 0))
+        self.inf_comp_fit_var = tk.StringVar(value="")
+        ttk.Label(self.inf_comparison_frame, textvariable=self.inf_comp_fit_var,
+                  font=('Consolas', 9)).pack(anchor='w')
+
+        ttk.Label(self.inf_comparison_frame,
+                  text="Implied checkpoint correction  ẑ_corr = a·ẑ + b:",
+                  font=('TkDefaultFont', 9)).pack(anchor='w', pady=(4, 0))
+        self.inf_comp_corr_var = tk.StringVar(value="")
+        ttk.Label(self.inf_comparison_frame, textvariable=self.inf_comp_corr_var,
+                  font=('Consolas', 9)).pack(anchor='w')
+
+        btn_row = ttk.Frame(self.inf_comparison_frame)
+        btn_row.pack(fill='x', pady=(6, 0))
+        ttk.Button(btn_row, text="Open plot",
+                   command=self._open_comparison_plot).pack(side='left', padx=2)
+        self.inf_bake_btn = ttk.Button(
+            btn_row, text="Bake correction into checkpoint...",
+            command=self._open_editor_with_fit, state='disabled')
+        self.inf_bake_btn.pack(side='left', padx=2)
+
+        # Stash the most recent inference output / fit so the bake button can use them
+        self._inf_last_output_dir = None
+        self._inf_last_correction = None  # (a, b)
 
     def _create_validation_tab(self):
         """Create validation & testing tab."""
@@ -2322,6 +2337,33 @@ This gives the model examples with known ground truth to learn from."""
             # Auto-load min_blur_px from config for validation tab
             self._load_min_blur_from_config()
 
+    def _show_generation_info(self):
+        """Pop up a short explanation of what the generation tab produces."""
+        info_text = (
+            "Generation creates synthetic training data by:\n"
+            "  1. Taking your sharp crop images\n"
+            "  2. Applying known amounts of blur (based on config)\n"
+            "  3. Sampling blur values from the chosen distribution\n"
+            "  4. Saving triplets: (blurred, sharp, blur_map)\n"
+            "\n"
+            "Outputs (datasets/<timestamp>_<name>/):\n"
+            "  • blur/                     blurred images\n"
+            "  • sharp/                    ground-truth sharp images\n"
+            "  • blur_map/                 blur maps (normalised)\n"
+            "  • metadata.csv              blur values, defocus distances\n"
+            "  • blur_distribution.png     histogram of sampled blurs\n"
+            "  • generation_config.yaml    parameters used\n"
+            "  • dataset_summary.json      sample count, ranges, mode"
+        )
+
+        win = tk.Toplevel(self.root)
+        win.title("About this tab")
+        win.transient(self.root)
+        win.resizable(False, False)
+        ttk.Label(win, text=info_text, justify='left',
+                  font=('TkFixedFont', 9)).pack(padx=15, pady=(15, 10), anchor='w')
+        ttk.Button(win, text="Close", command=win.destroy).pack(pady=(0, 12))
+
     # ── Dataset selection helpers (Tab 3) ────────────────────────────────
 
     def _refresh_datasets(self):
@@ -2454,6 +2496,30 @@ This gives the model examples with known ground truth to learn from."""
         with open(gen_cfg_path) as f:
             config = yaml.safe_load(f) or {}
 
+        # Merge dataset_summary.json — carries values computed at generation
+        # time (blur_range_px) and calibration values that aren't in the YAML
+        # (rho_direct, sigma_0, scale_calib_px_per_mm).
+        summary_path = data_dir / 'dataset_summary.json'
+        if summary_path.is_file():
+            import json
+            with open(summary_path) as f:
+                summary = json.load(f)
+            config.setdefault('data', {})
+            config.setdefault('training', {})
+            if 'blur_range_px' in summary:
+                config['data']['blur_range_px'] = summary['blur_range_px']
+            if 'image_size_px' in summary:
+                config['data'].setdefault('image_size_px', summary['image_size_px'])
+            for key in ('rho_direct', 'sigma_0', 'scale_calib_px_per_mm', 'training_mode'):
+                if summary.get(key) is not None:
+                    config['training'].setdefault(key, summary[key])
+        else:
+            messagebox.showerror(
+                "Missing dataset_summary.json",
+                f"Could not find dataset_summary.json in {data_dir}.\n"
+                "Regenerate the dataset.")
+            return None
+
         return data_dir, run_dir, config
 
     def _apply_gui_training_settings(self, config: dict) -> None:
@@ -2482,10 +2548,11 @@ This gives the model examples with known ground truth to learn from."""
         """Browse and load direct calibration YAML file (USER CONSTRAINT: explicit browse only)."""
         from pathlib import Path
 
+        repo_root = Path(__file__).resolve().parent.parent
         file_path = filedialog.askopenfilename(
             title="Select Direct Calibration Results",
             filetypes=[("YAML files", "*.yaml *.yml"), ("All files", "*.*")],
-            initialdir=Path.cwd() / "calibration" / "calibration_output"
+            initialdir=repo_root / "Calibration" / "calibration_output"
         )
 
         if not file_path:
@@ -2609,6 +2676,150 @@ This gives the model examples with known ground truth to learn from."""
         if path:
             self.inf_model_var.set(path)
             self._log(f"Inference model set: {path}")
+
+    def _open_calibration_editor(self):
+        """Open the calibration editor dialog, prefilled with the current Tab 5 model."""
+        from calibration_editor_dialog import CalibrationEditorDialog
+        current = self.inf_model_var.get().strip()
+        initial = Path(current) if current and Path(current).is_file() else None
+
+        def on_saved(out_path: Path):
+            self.inf_model_var.set(str(out_path))
+            self._log(f"Calibration editor saved: {out_path}")
+
+        CalibrationEditorDialog(
+            self.root,
+            training_output_root=Path(self.output_dir_var.get()),
+            initial_checkpoint=initial,
+            on_saved=on_saved,
+        )
+
+    def _compute_and_show_comparison(self, output_dir: Path):
+        """Populate the Comparison frame from an inference output folder.
+
+        Reads blur_results.csv, parses true z from filenames, fits the
+        pred-vs-true line, converts it to the (a, b) that would correct
+        the checkpoint, and stashes it for the Bake button.
+        """
+        import re
+        import numpy as np
+        import pandas as pd
+        from scipy import stats as sstats
+
+        output_dir = Path(output_dir)
+        candidates = [output_dir / 'blur_results.csv', output_dir / 'all_results.csv']
+        csv_path = next((p for p in candidates if p.is_file()), None)
+        if csv_path is None:
+            return
+
+        df = pd.read_csv(csv_path)
+        if 'filename' not in df.columns or 'defocus_mm' not in df.columns:
+            return
+
+        def _parse_true_z(name):
+            m = re.search(r'z([+-]?\d+\.?\d*)mm', str(name))
+            return float(m.group(1)) if m else None
+
+        df['true_z'] = df['filename'].apply(_parse_true_z)
+        df = df[df['true_z'].notna()].copy()
+        if len(df) < 5:
+            return
+        df['true_defocus'] = df['true_z'].abs()
+        df['pred_defocus'] = df['defocus_mm']
+        df['residual'] = df['pred_defocus'] - df['true_defocus']
+
+        # Prefer frames inside the calibration-valid range — derived from the
+        # checkpoint's own training distribution so the window matches the
+        # model under test, not a hardcoded camera-specific constant.
+        from physics import calib_valid_defocus_mm
+        model_path = self.inf_model_var.get().strip()
+        model_cfg = {}
+        if model_path and Path(model_path).is_file():
+            try:
+                from calibration_editor import load_checkpoint
+                model_cfg = load_checkpoint(Path(model_path)).get('config', {})
+            except Exception as e:
+                self._log(f"Could not load model config for valid range: {e}")
+        z_min, z_max = calib_valid_defocus_mm(model_cfg)
+        df_fit = df[(df['true_defocus'] >= z_min)
+                    & (df['true_defocus'] <= z_max)].copy()
+        if len(df_fit) < 5:
+            df_fit = df
+
+        slope, intercept, r_value, _, _ = sstats.linregress(
+            df_fit['true_defocus'], df_fit['pred_defocus'])
+        rmse = float(np.sqrt((df_fit['residual'] ** 2).mean()))
+        mae = float(df_fit['residual'].abs().mean())
+        bias = float(df_fit['residual'].mean())
+
+        from calibration_editor import CalibrationError, correction_from_fit
+        try:
+            a, b = correction_from_fit(slope, intercept)
+        except CalibrationError:
+            a, b = 1.0, 0.0
+
+        self.inf_comp_n_var.set(f"{len(df_fit)}")
+        self.inf_comp_r2_var.set(f"{r_value**2:.3f}")
+        self.inf_comp_rmse_var.set(f"{rmse:.3f} mm")
+        self.inf_comp_mae_var.set(f"{mae:.3f} mm")
+        self.inf_comp_bias_var.set(f"{bias:+.3f} mm")
+        self.inf_comp_fit_var.set(
+            f"  slope = {slope:.4f}   intercept = {intercept:+.4f} mm   "
+            f"R² = {r_value**2:.3f}")
+        self.inf_comp_corr_var.set(
+            f"  a = {a:.4f}   b = {b:+.4f} mm   (bakes into new ρ, σ₀)")
+
+        self._inf_last_output_dir = output_dir
+        self._inf_last_correction = (a, b)
+        self.inf_bake_btn.config(state='normal')
+
+        # Make the frame visible (pack is a no-op if already packed)
+        self.inf_comparison_frame.pack(fill='x', pady=5)
+
+    def _open_comparison_plot(self):
+        """Open the summary plot PNG from the last inference output folder."""
+        if self._inf_last_output_dir is None:
+            return
+        plot_path = self._inf_last_output_dir / 'summary_analysis.png'
+        if not plot_path.is_file():
+            messagebox.showinfo(
+                "No plot",
+                f"No summary plot found in {self._inf_last_output_dir}")
+            return
+        import os
+        import subprocess
+        import sys
+        try:
+            if sys.platform == 'win32':
+                os.startfile(str(plot_path))
+            elif sys.platform == 'darwin':
+                subprocess.run(['open', str(plot_path)])
+            else:
+                subprocess.run(['xdg-open', str(plot_path)])
+        except Exception as e:
+            messagebox.showerror("Cannot open", f"{e}")
+
+    def _open_editor_with_fit(self):
+        """Open the calibration editor pre-loaded with the current model + fit a/b."""
+        if self._inf_last_correction is None:
+            return
+        a, b = self._inf_last_correction
+        from calibration_editor_dialog import CalibrationEditorDialog
+        current = self.inf_model_var.get().strip()
+        initial = Path(current) if current and Path(current).is_file() else None
+
+        def on_saved(out_path: Path):
+            self.inf_model_var.set(str(out_path))
+            self._log(f"Baked correction into: {out_path}")
+
+        CalibrationEditorDialog(
+            self.root,
+            training_output_root=Path(self.output_dir_var.get()),
+            initial_checkpoint=initial,
+            prefill_a=a,
+            prefill_b=b,
+            on_saved=on_saved,
+        )
 
     # -----------------------------------------------------------------------
     # Inference Image Source — backing methods
@@ -3748,15 +3959,14 @@ This gives the model examples with known ground truth to learn from."""
         recommended = checkpoints_dir / 'dme_best.pth'
 
         if recommended.exists():
-            # Make path relative to current directory
+            # Shorten display path by making it relative to the repo root
+            repo_root = Path(__file__).resolve().parent.parent
             try:
-                rel_path = recommended.relative_to(Path.cwd())
+                rel_path = recommended.relative_to(repo_root)
                 self.val_model_var.set(str(rel_path))
-                self.val_checkpoint_info_var.set(f"Auto-selected: {recommended.name}")
             except ValueError:
-                # Can't make relative, use absolute
                 self.val_model_var.set(str(recommended))
-                self.val_checkpoint_info_var.set(f"Auto-selected: {recommended.name}")
+            self.val_checkpoint_info_var.set(f"Auto-selected: {recommended.name}")
 
     def _scan_validation_data(self):
         """Scan synthetic_data directory and count available samples."""
@@ -4061,10 +4271,11 @@ This gives the model examples with known ground truth to learn from."""
 
     def _load_from_calibration(self):
         """Load optical parameters from a calibration results YAML file."""
+        repo_root = Path(__file__).resolve().parent.parent
         file_path = filedialog.askopenfilename(
             title="Select Calibration Results YAML",
             filetypes=[("YAML files", "*.yaml *.yml"), ("All files", "*.*")],
-            initialdir=Path.cwd()
+            initialdir=repo_root / "Calibration" / "calibration_output"
         )
 
         if not file_path:
@@ -4266,10 +4477,6 @@ This gives the model examples with known ground truth to learn from."""
             self.val_save_worst_checkbox_2.configure(text=f"Save Worst Cases (by {blur} error %)")
         if hasattr(self, 'val_mode_dme_rb'):
             self.val_mode_dme_rb.configure(text=f"DME Only ({sigma} Estimation)")
-
-        # --- Tab 5 (Inference) labels ---
-        if hasattr(self, 'inf_coc_histogram_cb'):
-            self.inf_coc_histogram_cb.configure(text=f"{blur} Distribution Histograms")
 
     def _on_training_mode_change(self):
         """Handle training mode change between optical and direct."""
@@ -5406,15 +5613,41 @@ This gives the model examples with known ground truth to learn from."""
             model_path = self.inf_model_var.get()
             input_dir = Path(self.inf_input_var.get())
 
-            # Use existing run dir from preprocessing if available, else create new one
-            if hasattr(self, '_inf_run_dir') and self._inf_run_dir:
+            # Resolve output folder — prefer the structured validation layout
+            # (training_output/real_crop_validation/<run>/test_<ts>_<variant>/)
+            # when we can identify the run from the checkpoint path. Fall back
+            # to the preprocessing run dir, or a free-form folder under
+            # inf_output_var, otherwise.
+            from run_paths import (detect_run_name, detect_variant,
+                                   make_test_folder_name,
+                                   real_crop_validation_dir)
+            run_name = detect_run_name(Path(model_path)) if model_path else None
+            variant = detect_variant(Path(model_path)) if model_path else 'original'
+            if run_name:
+                training_root = Path(self.output_dir_var.get())
+                output_dir = (real_crop_validation_dir(training_root, run_name)
+                              / make_test_folder_name(variant))
+            elif self._inf_run_dir:
                 output_dir = Path(self._inf_run_dir)
-                output_dir.mkdir(parents=True, exist_ok=True)
             else:
                 base_output = Path(self.inf_output_var.get())
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 output_dir = base_output / f"inference_{timestamp}"
-                output_dir.mkdir(parents=True, exist_ok=True)
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            # Drop a small metadata file so each test folder carries its own provenance
+            import json
+            from datetime import datetime as _dt
+            test_metadata = {
+                'run_name': run_name,
+                'variant': variant if run_name else None,
+                'checkpoint': str(model_path),
+                'input_dir': str(input_dir),
+                'device': 'cuda' if self.inf_use_gpu_var.get() else 'cpu',
+                'started_at': _dt.now().isoformat(timespec='seconds'),
+            }
+            with open(output_dir / 'test_metadata.json', 'w') as _f:
+                json.dump(test_metadata, _f, indent=2)
 
             device = 'cuda' if self.inf_use_gpu_var.get() else 'cpu'
 
@@ -5608,7 +5841,7 @@ This gives the model examples with known ground truth to learn from."""
 
             self.msg_queue.put(('inf_progress', 100))
             self.msg_queue.put(('status', "Inference complete!"))
-            self.msg_queue.put(('inference_complete', None))
+            self.msg_queue.put(('inference_complete', str(output_dir)))
 
         except Exception as e:
             import traceback
@@ -6091,6 +6324,11 @@ This gives the model examples with known ground truth to learn from."""
                 elif msg_type == 'inference_complete':
                     self.run_inference_btn.config(state='normal')
                     self.stop_inference_btn.config(state='disabled')
+                    if data:
+                        try:
+                            self._compute_and_show_comparison(Path(data))
+                        except Exception as e:
+                            self._log(f"Comparison computation failed: {e}")
                     if self.inf_status_var.get() == "Inference complete!":
                         messagebox.showinfo(
                             "Complete", "Inference finished! Check the results summary below.")
