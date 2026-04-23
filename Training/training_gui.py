@@ -1792,6 +1792,16 @@ class TrainingGUI:
         ttk.Label(viz_rate_row, text="(1 per N crops)", font=(
             'TkDefaultFont', 8), foreground='gray').pack(side='left')
 
+        focus_row = ttk.Frame(output_opts)
+        focus_row.pack(fill='x', pady=(5, 2))
+        ttk.Label(focus_row, text="  In-focus threshold:", width=18).pack(side='left')
+        self.inf_focus_threshold_var = tk.StringVar(value="")
+        ttk.Entry(
+            focus_row, textvariable=self.inf_focus_threshold_var, width=8).pack(
+            side='left', padx=(0, 5))
+        ttk.Label(focus_row, text="px  (autofills from model)", font=(
+            'TkDefaultFont', 8), foreground='gray').pack(side='left')
+
         # Cross-camera scale (direct mode)
         scale_frame = ttk.LabelFrame(right_opts, text="Cross-Camera Scale (Direct Mode)", padding=5)
         scale_frame.pack(fill='x', pady=(5, 2))
@@ -2440,6 +2450,12 @@ class TrainingGUI:
         target_var = self.inf_model_var if target == 'inf' else self.val_model_var
         target_var.set(str(ckpt))
         self._log(f"Set checkpoint to: {ckpt}")
+        # Auto-scan when filling the inference field so threshold autopopulates
+        if target == 'inf':
+            try:
+                self._scan_inference_checkpoint()
+            except Exception as e:
+                self._log(f"Auto-scan failed: {e}")
 
     def _fill_latest_dataset(self):
         """Set the validation data field to the most recent dataset."""
@@ -2676,6 +2692,11 @@ class TrainingGUI:
         if path:
             self.inf_model_var.set(path)
             self._log(f"Inference model set: {path}")
+            # Auto-scan so info + in-focus threshold autopopulate
+            try:
+                self._scan_inference_checkpoint()
+            except Exception as e:
+                self._log(f"Auto-scan failed: {e}")
 
     def _open_calibration_editor(self):
         """Open the calibration editor dialog, prefilled with the current Tab 5 model."""
@@ -2701,7 +2722,6 @@ class TrainingGUI:
         pred-vs-true line, converts it to the (a, b) that would correct
         the checkpoint, and stashes it for the Bake button.
         """
-        import re
         import numpy as np
         import pandas as pd
         from scipy import stats as sstats
@@ -2716,11 +2736,8 @@ class TrainingGUI:
         if 'filename' not in df.columns or 'defocus_mm' not in df.columns:
             return
 
-        def _parse_true_z(name):
-            m = re.search(r'z([+-]?\d+\.?\d*)mm', str(name))
-            return float(m.group(1)) if m else None
-
-        df['true_z'] = df['filename'].apply(_parse_true_z)
+        from run_paths import parse_true_z_from_filename
+        df['true_z'] = df['filename'].apply(parse_true_z_from_filename)
         df = df[df['true_z'].notna()].copy()
         if len(df) < 5:
             return
@@ -3259,6 +3276,14 @@ class TrainingGUI:
             info_text = " | ".join(info_parts)
             self.inf_model_info_var.set(info_text)
             self._log(f"Scanned checkpoint: {checkpoint_path.name} - {info_text}")
+
+            # Auto-populate the in-focus threshold from the model's min blur
+            # (keep any existing user override — don't clobber it)
+            if not self.inf_focus_threshold_var.get().strip():
+                cfg = checkpoint.get('config', {})
+                blur_range = cfg.get('data', {}).get('blur_range_px')
+                if blur_range and len(blur_range) >= 1:
+                    self.inf_focus_threshold_var.set(f"{float(blur_range[0]):.3f}")
 
             # Store last scanned mode for use in log messages
             self._last_scanned_mode = training_mode
@@ -5702,9 +5727,22 @@ class TrainingGUI:
             save_viz = self.inf_save_viz_var.get()
             viz_rate = int(self.inf_viz_rate_var.get()) if self.inf_viz_rate_var.get() else 10
 
+            # In-focus threshold: user-supplied value, or leave engine default if blank/invalid
+            focus_threshold = None
+            ft_raw = self.inf_focus_threshold_var.get().strip()
+            if ft_raw:
+                try:
+                    focus_threshold = float(ft_raw)
+                except ValueError:
+                    self.msg_queue.put(
+                        ('log', f"WARNING: Invalid in-focus threshold '{ft_raw}' — using engine default"))
+
             self.msg_queue.put(('log', f"\nOptions:"))
             self.msg_queue.put(
                 ('log', f"  Save visualizations: {save_viz} (1 per {viz_rate} crops)"))
+            if focus_threshold is not None:
+                self.msg_queue.put(
+                    ('log', f"  In-focus threshold: {focus_threshold:.3f} px"))
 
             # Find material folders OR check for images directly in input_dir
             material_dirs = [d for d in input_dir.iterdir() if d.is_dir()]
