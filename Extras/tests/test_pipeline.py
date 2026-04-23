@@ -433,6 +433,20 @@ class TestRunPaths:
         assert re.match(r"^test_\d{8}_\d{6}_v_1_beta$",
                         make_test_folder_name("v/1:beta"))
 
+    def test_parse_true_z_from_filename(self):
+        from run_paths import parse_true_z_from_filename
+        # Typical patterns the inference engine emits
+        assert parse_true_z_from_filename("sphere4_z-6.20mm.png") == -6.20
+        assert parse_true_z_from_filename("frame_042_z+1.50mm.png") == 1.50
+        assert parse_true_z_from_filename("crop_z0.00mm.png") == 0.0
+        assert parse_true_z_from_filename("x_z5mm.png") == 5.0  # no decimal
+        # No match → None
+        assert parse_true_z_from_filename("just_a_name.png") is None
+        assert parse_true_z_from_filename("z123_no_mm_suffix.png") is None
+        # Works on Path objects too
+        from pathlib import Path
+        assert parse_true_z_from_filename(Path("a/b/z-3.14mm.png")) == -3.14
+
     def test_detect_run_name_and_variant(self, tmp_path):
         from run_paths import detect_run_name, detect_variant
         # Build fake checkpoint paths under the two recognised layouts

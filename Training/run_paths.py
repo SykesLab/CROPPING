@@ -26,6 +26,19 @@ TIMESTAMP_FMT = "%Y%m%d_%H%M%S"
 # Folder-name pattern: YYYYMMDD_HHMMSS_<rest>
 _RUN_FOLDER_RE = re.compile(r"^\d{8}_\d{6}(_.+)?$")
 
+# Crop/frame filenames encode their true z-position as 'z<signed_value>mm',
+# e.g. 'sphere4_z-6.20mm.png' or 'frame_042_z+1.50mm.png'.
+DEFOCUS_FILENAME_PATTERN = re.compile(r"z([+-]?\d+\.?\d*)mm")
+
+
+def parse_true_z_from_filename(name) -> Optional[float]:
+    """Extract the true z-position (mm, signed) from a filename.
+
+    Returns None if the filename doesn't match the expected pattern.
+    """
+    m = DEFOCUS_FILENAME_PATTERN.search(str(name))
+    return float(m.group(1)) if m else None
+
 
 def sanitise_run_name(name: str) -> str:
     """Replace illegal path characters with underscores; fall back to 'unnamed'."""

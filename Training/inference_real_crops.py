@@ -34,7 +34,6 @@ from typing import Dict, List, Tuple, Optional
 import pandas as pd
 from tqdm import tqdm
 import argparse
-import re
 import matplotlib.pyplot as plt
 import matplotlib
 matplotlib.use('Agg')
@@ -48,7 +47,12 @@ if _repo_root not in _sys.path:
 
 from model import DefocusNet
 from synthetic_blur import BlurParams, BlurCalculator
-from physics import ScalingParams, invert_prediction, defocus_uncertainty
+from physics import (
+    ConfigError,
+    ScalingParams,
+    defocus_uncertainty,
+    invert_prediction,
+)
 
 
 class DiameterMeasurer:
@@ -239,34 +243,54 @@ class RealCropInference:
                         optics_cfg[key] = self.inference_optical_params[key]
 
                 blur_cfg = self.config.get('blur', {})
-                rho = blur_cfg.get('rho', 0.25)
+                required = ['focal_length_mm', 'focus_distance_mm',
+                            'aperture_diameter_mm', 'pixel_size_mm']
+                missing = [k for k in required if k not in optics_cfg]
+                if missing:
+                    raise ConfigError(
+                        "Optical-mode inference requires these camera parameters, "
+                        f"but they are missing from both the checkpoint config and "
+                        f"the inference overrides: {missing}. Pass them via "
+                        "inference_optical_params or add them to the checkpoint.")
+                if 'rho' not in blur_cfg:
+                    raise ConfigError(
+                        "Optical-mode inference requires blur.rho in the checkpoint "
+                        "config — this is the calibrated blur-scaling constant and "
+                        "cannot be inferred safely.")
 
-                focal_length = optics_cfg.get('focal_length_mm', 70.0)
-                focus_distance = optics_cfg.get('focus_distance_mm', 200.0)
-                imaging_distance = optics_cfg.get(
-                    'imaging_distance_mm', 1.0 / (1.0 / focal_length - 1.0 / focus_distance)
-                    if focus_distance != focal_length else 200.0)
+                focal_length = float(optics_cfg['focal_length_mm'])
+                focus_distance = float(optics_cfg['focus_distance_mm'])
+                if 'imaging_distance_mm' in optics_cfg:
+                    imaging_distance = float(optics_cfg['imaging_distance_mm'])
+                elif focus_distance != focal_length:
+                    imaging_distance = 1.0 / (1.0 / focal_length - 1.0 / focus_distance)
+                else:
+                    raise ConfigError(
+                        "Optical-mode inference needs imaging_distance_mm in config, "
+                        "or focus_distance_mm != focal_length_mm so it can be derived "
+                        "from the thin-lens equation.")
 
                 self.optical_params = BlurParams(
                     focal_length_mm=focal_length,
                     focus_distance_mm=focus_distance,
                     imaging_distance_mm=imaging_distance,
-                    aperture_diameter_mm=optics_cfg.get('aperture_diameter_mm', 17.5),
-                    pixel_size_mm=optics_cfg.get('pixel_size_mm', 0.02),
-                    rho=rho
+                    aperture_diameter_mm=float(optics_cfg['aperture_diameter_mm']),
+                    pixel_size_mm=float(optics_cfg['pixel_size_mm']),
+                    rho=float(blur_cfg['rho']),
                 )
-                logger.info(f"Using custom inference camera settings")
+                logger.info("Using custom inference camera settings")
             else:
                 self.optical_params = BlurParams.from_config(self.config)
             self.blur_calc = BlurCalculator(self.optical_params)
 
         # Get max blur for denormalization (at model scale)
-        # Priority: checkpoint max_blur/max_coc > config > fallback
+        # Priority: checkpoint max_blur/max_coc > data.blur_range_px >
+        # derived from optical defocus range. Refuse if none apply — a
+        # silent default here would silently rescale every prediction.
         ckpt_max = checkpoint.get('max_blur', checkpoint.get('max_coc'))
         if ckpt_max is not None:
             self.max_blur = ckpt_max
         else:
-            # Fallback to config (for backwards compatibility)
             if 'training_config' in self.config:
                 data_cfg = self.config['training_config'].get('data', {})
             else:
@@ -274,12 +298,18 @@ class RealCropInference:
 
             if 'blur_range_px' in data_cfg:
                 self.max_blur = data_cfg['blur_range_px'][1]
-            elif 'defocus_range_mm' in data_cfg:
+            elif 'defocus_range_mm' in data_cfg and self.blur_calc is not None:
                 defocus_range = tuple(data_cfg['defocus_range_mm'])
                 blur_range = self.blur_calc.get_blur_range(defocus_range)
                 self.max_blur = blur_range[1]
             else:
-                self.max_blur = 20  # Fallback default
+                raise ConfigError(
+                    "Cannot determine max_blur for label denormalisation: "
+                    "checkpoint lacks max_blur/max_coc, and the config has "
+                    "no data.blur_range_px or optical defocus_range_mm to "
+                    "derive it from. Refusing to invent a default — "
+                    "retrain with the current trainer (which writes max_blur "
+                    "into every checkpoint).")
 
         # Get model size from config (what the model was trained with)
         # Model outputs blur at this scale, needs to be scaled to native resolution
@@ -759,7 +789,7 @@ class RealCropInference:
         if len(all_results) > 0:
             combined_df = pd.concat(all_results, ignore_index=True)
 
-                summary_path = output_base / 'summary_all_materials.csv'
+            summary_path = output_base / 'summary_all_materials.csv'
             combined_df.to_csv(summary_path, index=False)
             logger.info(f"Saved combined summary to: {summary_path}")
 
@@ -792,10 +822,8 @@ class RealCropInference:
     @staticmethod
     def _parse_true_z(filename: str) -> Optional[float]:
         """Extract true z from filename pattern like '7_mm_10_z-6.20mm.png'."""
-        match = re.search(r'z([+-]?\d+\.?\d*)mm', filename)
-        if match:
-            return float(match.group(1))
-        return None
+        from run_paths import parse_true_z_from_filename
+        return parse_true_z_from_filename(filename)
 
     def _create_summary_plots(self, df: pd.DataFrame, output_dir: Path):
         """Create summary visualizations.
