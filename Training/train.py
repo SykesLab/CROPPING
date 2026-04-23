@@ -911,6 +911,10 @@ class Trainer:
         logger.info("Training DME-subnet (scalar head)")
         logger.info("=" * 60)
 
+        # Dump the resolved config so every model folder carries a readable
+        # record of what produced it.
+        self._save_training_config_yaml()
+
         # Use explicit checkpoint if provided, otherwise auto-detect
         if force_fresh_start:
             logger.info("Training from scratch (no checkpoint loaded)")
@@ -1117,10 +1121,16 @@ class Trainer:
             except Exception:
                 pass
 
-        cfg = self.config.get('training', {})
         torch_version = getattr(torch, '__version__', 'unknown')
         cuda_available = bool(getattr(torch, 'cuda', None) and torch.cuda.is_available())
 
+        # Hyperparameters are the source-of-truth in training_config.yaml next
+        # to this file — don't duplicate them here. Keep only the fields that
+        # make metadata useful without opening the config:
+        #   * provenance / status / timing
+        #   * training_mode + dataset summary (cheap to keep, enables jq-style
+        #     filtering across many runs without parsing each config.yaml)
+        #   * runtime environment (not in config.yaml at all)
         meta = {
             'run_name': run_name or existing.get('run_name') or run_dir.name,
             'run_id': run_dir.name,
@@ -1131,23 +1141,6 @@ class Trainer:
             'training_mode': self.training_mode,
             'dataset_path': str(self.data_dir),
             'dataset_name': self.data_dir.name,
-            'hyperparameters': {
-                'epochs': self.epochs_dme,
-                'batch_size': self.batch_size,
-                'lr': self.lr,
-                'optimizer': self.optimizer_type,
-                'adam_beta1': self.adam_beta1,
-                'adam_beta2': self.adam_beta2,
-                'weight_decay': self.weight_decay,
-                'lr_schedule': self.lr_schedule,
-                'lr_decay_start_epoch': self.lr_decay_start,
-                'lr_decay_rate': self.lr_decay_rate,
-                'lr_min': self.lr_min,
-                'grad_clip_norm': self.grad_clip_norm,
-                'log_eps': self.log_eps,
-                'seed': cfg.get('seed', 42),
-                'stratified': self.stratified,
-            },
             'environment': {
                 'python': _platform.python_version(),
                 'torch': torch_version,

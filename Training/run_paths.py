@@ -8,11 +8,12 @@ Folder layout::
             metadata.csv  generation_config.yaml  dataset_summary.json
 
         models/<YYYYMMDD_HHMMSS>_<name>/
-            checkpoints/        ← .pth files
-            logs/               ← tensorboard
-            run_metadata.json   ┐
-            training_config.yaml│ siblings of checkpoints/
-            training_history.yaml┘
+            checkpoints/              ← .pth files
+            logs/                     ← tensorboard events +
+                run_metadata.json        per-run artifacts live here
+                training_history.yaml
+                training_curves.png
+            training_config.yaml      ← resolved config (model root)
             tests/
                 synthetic/<test_<ts>>/
                 real_crop/<test_<ts>>/
