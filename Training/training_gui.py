@@ -1237,6 +1237,35 @@ This gives the model examples with known ground truth to learn from."""
             width=15
         ).pack(side='left')
 
+        # Dataset & run selection
+        self.dataset_frame = ttk.LabelFrame(self.tab_train, text="Dataset & Run", padding=10)
+        self.dataset_frame.pack(fill='x', pady=5)
+
+        ds_row = ttk.Frame(self.dataset_frame)
+        ds_row.pack(fill='x', pady=2)
+        ttk.Label(ds_row, text="Dataset:", width=14).pack(side='left')
+        self.dataset_path_var = tk.StringVar(value="")
+        self.dataset_combo = ttk.Combobox(ds_row, textvariable=self.dataset_path_var,
+                                           width=70, state='readonly')
+        self.dataset_combo.pack(side='left', padx=5)
+        self.dataset_combo.bind('<<ComboboxSelected>>', lambda _e: self._on_dataset_select())
+        ttk.Button(ds_row, text="Refresh", command=self._refresh_datasets, width=8).pack(side='left')
+        ttk.Button(ds_row, text="Browse...", command=self._browse_dataset, width=10).pack(side='left',
+                                                                                             padx=2)
+
+        self.dataset_info_var = tk.StringVar(value="No dataset selected")
+        ttk.Label(self.dataset_frame, textvariable=self.dataset_info_var,
+                  font=('TkDefaultFont', 8), foreground='gray').pack(anchor='w', pady=(2, 4))
+
+        run_row = ttk.Frame(self.dataset_frame)
+        run_row.pack(fill='x', pady=2)
+        ttk.Label(run_row, text="Run name (optional):", width=20).pack(side='left')
+        self.run_name_var = tk.StringVar(value="")
+        ttk.Entry(run_row, textvariable=self.run_name_var, width=40).pack(side='left', padx=5)
+        ttk.Label(self.dataset_frame,
+                  text="Run output: <root>/runs/<timestamp>_<name>/",
+                  font=('TkDefaultFont', 8), foreground='gray').pack(anchor='w', pady=(2, 0))
+
         # Settings frame (initially disabled)
         self.settings_frame = ttk.LabelFrame(self.tab_train, text="Settings", padding=10)
         self.settings_frame.pack(fill='x', pady=5)
@@ -2628,9 +2657,78 @@ This gives the model examples with known ground truth to learn from."""
             self.output_dir = Path(path)
             self.output_dir_var.set(path)
             self._log(f"Output dir set: {path}")
+            self._refresh_datasets()
 
             # Auto-load min_blur_px from config for validation tab
             self._load_min_blur_from_config()
+
+    # ── Dataset selection helpers (Tab 3) ────────────────────────────────
+
+    def _refresh_datasets(self):
+        """Re-scan training_output/datasets/ and populate the dropdown."""
+        from run_paths import list_datasets, find_latest_dataset
+        try:
+            root = Path(self.output_dir_var.get())
+        except Exception:
+            return
+        datasets = list_datasets(root)
+        # Include legacy <root>/synthetic_data/ as a virtual entry if it exists
+        legacy = root / "synthetic_data"
+        legacy_listed = legacy.is_dir() and (legacy / "metadata.csv").is_file()
+
+        values = [str(p) for p in datasets]
+        if legacy_listed:
+            values.append(str(legacy) + "  (legacy)")
+        self.dataset_combo['values'] = values
+
+        # Auto-select latest if nothing chosen yet
+        if values and not self.dataset_path_var.get():
+            self.dataset_path_var.set(values[0])
+            self._on_dataset_select()
+        elif self.dataset_path_var.get() in values:
+            self._on_dataset_select()
+        else:
+            self.dataset_info_var.set("No dataset selected" if not values else "Pick a dataset")
+
+    def _browse_dataset(self):
+        """Pick a dataset folder manually."""
+        path = filedialog.askdirectory(title="Select dataset folder (must contain metadata.csv + blur/)")
+        if path:
+            self.dataset_path_var.set(path)
+            current = list(self.dataset_combo['values'])
+            if path not in current:
+                self.dataset_combo['values'] = current + [path]
+            self._on_dataset_select()
+
+    def _on_dataset_select(self):
+        """Validate the selected dataset and update info label."""
+        from run_paths import validate_dataset
+        raw = self.dataset_path_var.get()
+        if not raw:
+            self.dataset_info_var.set("No dataset selected")
+            return
+        # Strip trailing legacy marker
+        path = Path(raw.replace("  (legacy)", "").strip())
+        ok, msg = validate_dataset(path)
+        if not ok:
+            self.dataset_info_var.set(f"Invalid: {msg}")
+            return
+        # Try to read dataset_summary.json for richer info
+        summary_path = path / "dataset_summary.json"
+        if summary_path.is_file():
+            try:
+                import json
+                with open(summary_path) as f:
+                    s = json.load(f)
+                blur_lo, blur_hi = s.get('blur_range_px', [0, 0])
+                self.dataset_info_var.set(
+                    f"OK | n={s.get('n_samples', '?')}, blur=[{blur_lo:.2f}, {blur_hi:.2f}] px, "
+                    f"mode={s.get('training_mode', '?')}"
+                )
+            except Exception:
+                self.dataset_info_var.set("OK")
+        else:
+            self.dataset_info_var.set("OK (no dataset_summary.json — legacy dataset)")
 
     def _browse_direct_calibration(self):
         """Browse and load direct calibration YAML file (USER CONSTRAINT: explicit browse only)."""
@@ -4725,8 +4823,18 @@ This gives the model examples with known ground truth to learn from."""
 
     def _run_generation(self):
         """Run data generation (in thread)."""
-        output_dir = Path(self.output_dir_var.get())
-        output_dir.mkdir(parents=True, exist_ok=True)
+        from run_paths import datasets_root, make_run_folder_name
+
+        output_root = Path(self.output_dir_var.get())
+        output_root.mkdir(parents=True, exist_ok=True)
+
+        # Build the dataset folder: <root>/datasets/<timestamp>_<name>/
+        dataset_name = self.dataset_name_var.get().strip()
+        ds_folder_name = make_run_folder_name(dataset_name or None, default='dataset')
+        data_dir = datasets_root(output_root) / ds_folder_name
+        data_dir.mkdir(parents=True, exist_ok=True)
+        # output_dir kept as the dataset folder so existing code that writes config there works
+        output_dir = data_dir
 
         num_samples = int(self.num_samples_var.get())
         sharp_crops_dir = Path(self.sharp_crops_var.get()) if self.sharp_crops_var.get() else None
@@ -4802,7 +4910,7 @@ This gives the model examples with known ground truth to learn from."""
             pass
 
         # Save config using current GUI values
-        config_path = output_dir / 'training_config.yaml'
+        config_path = output_dir / 'generation_config.yaml'
         config_dict = {
             'optics': {
                 'focal_length_mm': gui_focal_length,
@@ -4986,9 +5094,9 @@ This gives the model examples with known ground truth to learn from."""
                 min_blur_px=min_blur_px
             )
 
-            data_dir = output_dir / 'synthetic_data'
+            # Data files (blur/, sharp/, blur_map/, metadata.csv) go directly into the dataset folder
+            data_dir = output_dir
 
-            # Get camera filter
             camera_filter = self.camera_filter_var.get() if hasattr(self, 'camera_filter_var') else "all"
 
             gen_metadata = generator.generate_dataset(
@@ -4999,9 +5107,8 @@ This gives the model examples with known ground truth to learn from."""
                 erf_validation=self.erf_validation_var.get(),
                 erf_validation_count=erf_validation_count,)
 
-            # Save diameter bin info to training_config.yaml if stratified sampling was used
             if gen_metadata['diameter_bins_used'] and gen_metadata['diameter_bin_boundaries'] is not None:
-                config_path = output_dir / 'training_config.yaml'
+                config_path = output_dir / 'generation_config.yaml'
                 with open(config_path, 'r') as f:
                     config_dict = yaml.safe_load(f)
 
@@ -6241,6 +6348,11 @@ This gives the model examples with known ground truth to learn from."""
 
     def run(self):
         """Start the GUI."""
+        # Populate dataset dropdown once everything is built
+        try:
+            self._refresh_datasets()
+        except Exception:
+            pass
         self.root.mainloop()
 
 
