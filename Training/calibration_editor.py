@@ -184,13 +184,18 @@ def save_corrected_checkpoint(
     return snapshot
 
 
-def next_edit_filename(edits_dir: Path, base_stem: str = "dme_best") -> Path:
-    """Return the next unused ``<stem>_v<N>.pth`` path inside edits_dir."""
+def next_edit_dirname(edits_dir: Path) -> str:
+    """Return the next unused ``v<N>`` sub-folder name inside ``edits_dir``.
+
+    Each edit lives in its own folder (holding the edited checkpoint plus
+    per-edit test results). User-named folders (like ``tuned_for_camG``)
+    don't consume a v-number slot — numbering only tracks ``v<N>`` names.
+    """
     edits_dir = Path(edits_dir)
     n = 1
-    while (edits_dir / f"{base_stem}_v{n}.pth").exists():
+    while (edits_dir / f"v{n}").exists():
         n += 1
-    return edits_dir / f"{base_stem}_v{n}.pth"
+    return f"v{n}"
 
 
 def _now_iso() -> str:

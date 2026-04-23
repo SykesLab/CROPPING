@@ -3,8 +3,9 @@
 Opened from Tab 5 in the training GUI. Can be launched blank (user picks a
 checkpoint) or with prefilled values (e.g. from a post-hoc fit on Tab 5).
 
-Safety: refuses to overwrite checkpoints under runs/. Always writes new
-edits to training_output/real_crop_validation/<run_name>/edits/.
+Safety: refuses to overwrite the trained checkpoint (anything under
+``models/<m>/checkpoints/``). Always writes new edits to
+``training_output/models/<m>/edits/<edit_name>/dme_best.pth``.
 """
 
 import tkinter as tk
@@ -15,7 +16,7 @@ from typing import Callable, Optional
 from calibration_editor import (
     CalibrationError, CalibrationSnapshot,
     apply_linear_correction,
-    load_checkpoint, next_edit_filename, read_calibration, read_history,
+    load_checkpoint, next_edit_dirname, read_calibration, read_history,
     save_corrected_checkpoint,
 )
 
@@ -50,6 +51,7 @@ class CalibrationEditorDialog(tk.Toplevel):
         self.rho_var = tk.StringVar()
         self.sigma_0_var = tk.StringVar()
         self.note_var = tk.StringVar()
+        self.edit_name_var = tk.StringVar()
         self.info_var = tk.StringVar(value="(no checkpoint loaded)")
         self.preview_var = tk.StringVar(value="")
         self.a_var = tk.StringVar(value="1.0")
@@ -141,6 +143,14 @@ class CalibrationEditorDialog(tk.Toplevel):
 
         row = ttk.Frame(self)
         row.pack(fill='x', **pad)
+        ttk.Label(row, text="Edit name:", width=12).pack(side='left')
+        ttk.Entry(row, textvariable=self.edit_name_var, width=30).pack(
+            side='left', padx=(0, 8))
+        ttk.Label(row, text="(optional — empty → auto v1/v2/…)",
+                  font=('TkDefaultFont', 8), foreground='gray').pack(side='left')
+
+        row = ttk.Frame(self)
+        row.pack(fill='x', **pad)
         ttk.Label(row, text="Note:", width=12).pack(side='left')
         ttk.Entry(row, textvariable=self.note_var, width=70).pack(side='left')
 
@@ -199,8 +209,8 @@ class CalibrationEditorDialog(tk.Toplevel):
                 timestamp='(from config)',
                 note='Current checkpoint values — no edit history yet'))
 
-        from run_paths import detect_run_name
-        self._run_name = detect_run_name(path)
+        from run_paths import detect_model_name
+        self._run_name = detect_model_name(path)
         self.rho_var.set(f"{rho:.6g}")
         self.sigma_0_var.set(f"{sigma_0:.6g}")
 
@@ -346,17 +356,36 @@ class CalibrationEditorDialog(tk.Toplevel):
         rho, sigma_0, note = edit
         if self._run_name is None:
             messagebox.showerror(
-                "Cannot infer run",
-                "Could not infer the run name from the checkpoint path "
+                "Cannot infer model",
+                "Could not infer the model folder from the checkpoint path "
                 f"({self._checkpoint_path}).\nExpected a path under "
-                "runs/<run_name>/checkpoints/ or "
-                "real_crop_validation/<run_name>/edits/.",
+                "models/<model_name>/checkpoints/ or "
+                "models/<model_name>/edits/<edit>/.",
                 parent=self)
             return
-        from run_paths import edits_dir
-        target_dir = edits_dir(self.training_output_root, self._run_name)
+
+        from run_paths import model_edits_dir, sanitise_run_name
+        edits_root = model_edits_dir(self.training_output_root, self._run_name)
+        edits_root.mkdir(parents=True, exist_ok=True)
+
+        # Pick the edit folder name: user-provided, else auto-number
+        requested = self.edit_name_var.get().strip()
+        if requested:
+            edit_folder_name = sanitise_run_name(requested)
+        else:
+            edit_folder_name = next_edit_dirname(edits_root)
+
+        target_dir = edits_root / edit_folder_name
+        if target_dir.exists() and any(target_dir.iterdir()):
+            if not messagebox.askyesno(
+                "Overwrite existing edit?",
+                f"Edit folder {edit_folder_name!r} already exists and is not "
+                "empty. Overwriting its dme_best.pth. OK to proceed?",
+                parent=self,
+            ):
+                return
         target_dir.mkdir(parents=True, exist_ok=True)
-        out_path = next_edit_filename(target_dir)
+        out_path = target_dir / "dme_best.pth"
 
         try:
             snap = save_corrected_checkpoint(
@@ -387,13 +416,16 @@ class CalibrationEditorDialog(tk.Toplevel):
             messagebox.showerror("No checkpoint",
                                  "Load a checkpoint first.", parent=self)
             return
+        # Refuse if this file is the trained checkpoint
+        # (under models/<m>/checkpoints/ — as opposed to an existing edit)
+        from run_paths import CHECKPOINTS_SUBDIR, EDITS_SUBDIR
         parts = self._checkpoint_path.resolve().parts
-        if 'runs' in parts:
+        if CHECKPOINTS_SUBDIR in parts and EDITS_SUBDIR not in parts:
             messagebox.showerror(
                 "Refuse to overwrite source",
-                "This checkpoint lives under runs/, which holds your trained "
-                "models. Use 'Save as new...' instead — the trained checkpoint "
-                "must not be mutated.", parent=self)
+                f"This checkpoint lives under {CHECKPOINTS_SUBDIR}/, which "
+                "holds your trained model. Use 'Save as new...' instead — "
+                "the trained checkpoint must not be mutated.", parent=self)
             return
         if not messagebox.askyesno(
             "Confirm overwrite",
