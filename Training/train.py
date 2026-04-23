@@ -76,8 +76,11 @@ class Trainer:
         """
         self.config = config
         self.data_dir = Path(data_dir)
-        # output_dir is the run folder; checkpoints/ and logs/ live inside it.
-        # training_history.yaml, training_curves.png, run_metadata.json sit at the root.
+        # output_dir is the model folder. checkpoints/ holds .pth files;
+        # logs/ holds tensorboard events plus the per-run metadata and
+        # history artifacts (run_metadata.json, training_history.yaml,
+        # training_curves.png). training_config.yaml sits at the root
+        # since the trainer resolves it from inputs on startup.
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
         self.checkpoints_dir = self.output_dir / 'checkpoints'
@@ -146,7 +149,7 @@ class Trainer:
         self.writer = SummaryWriter(self.logs_dir)
 
         # Training history tracking
-        self.history_file = self.output_dir / 'training_history.yaml'
+        self.history_file = self.logs_dir / 'training_history.yaml'
         self.training_history = self._load_training_history()
 
         # Session timestamp for unique checkpoint names
@@ -724,7 +727,7 @@ class Trainer:
                      fontsize=13, fontweight='bold')
         plt.tight_layout()
 
-        out_path = self.output_dir / 'training_curves.png'
+        out_path = self.logs_dir / 'training_curves.png'
         fig.savefig(out_path, dpi=200, bbox_inches='tight')
         plt.close(fig)
         logger.info(f"  → Saved training curves: {out_path}")
