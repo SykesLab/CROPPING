@@ -1287,6 +1287,93 @@ This gives the model examples with known ground truth to learn from."""
         )
         lr_note.pack(anchor='w', padx=(0, 0))
 
+        # Optimizer (left column, below DME settings)
+        self.optimizer_frame = ttk.LabelFrame(left_col, text="Optimizer", padding=5)
+        self.optimizer_frame.pack(fill='x', pady=2)
+
+        opt_row = ttk.Frame(self.optimizer_frame)
+        opt_row.pack(fill='x', pady=2)
+        ttk.Label(opt_row, text="Type:", width=14).pack(side='left')
+        self.optimizer_var = tk.StringVar(value="adam")
+        ttk.Combobox(opt_row, textvariable=self.optimizer_var,
+                     values=["adam", "adamw", "sgd"], state="readonly",
+                     width=10).pack(side='left')
+
+        beta_row = ttk.Frame(self.optimizer_frame)
+        beta_row.pack(fill='x', pady=2)
+        ttk.Label(beta_row, text="β1 / momentum:", width=14).pack(side='left')
+        self.adam_beta1_var = tk.StringVar(value="0.9")
+        ttk.Entry(beta_row, textvariable=self.adam_beta1_var, width=8).pack(side='left', padx=(0, 8))
+        ttk.Label(beta_row, text="β2:", width=4).pack(side='left')
+        self.adam_beta2_var = tk.StringVar(value="0.999")
+        ttk.Entry(beta_row, textvariable=self.adam_beta2_var, width=8).pack(side='left')
+
+        wd_row = ttk.Frame(self.optimizer_frame)
+        wd_row.pack(fill='x', pady=2)
+        ttk.Label(wd_row, text="Weight decay:", width=14).pack(side='left')
+        self.weight_decay_var = tk.StringVar(value="0.0")
+        ttk.Entry(wd_row, textvariable=self.weight_decay_var, width=10).pack(side='left')
+
+        ttk.Label(self.optimizer_frame,
+                  text="Use AdamW for L2 regularisation; SGD if Adam is unstable.",
+                  font=('TkDefaultFont', 8), foreground='gray').pack(anchor='w', pady=(2, 0))
+
+        # LR scheduler (right column, below LR)
+        self.scheduler_frame = ttk.LabelFrame(right_col, text="LR Schedule", padding=5)
+        self.scheduler_frame.pack(fill='x', pady=2)
+
+        sched_row = ttk.Frame(self.scheduler_frame)
+        sched_row.pack(fill='x', pady=2)
+        ttk.Label(sched_row, text="Type:", width=14).pack(side='left')
+        self.lr_schedule_var = tk.StringVar(value="step")
+        ttk.Combobox(sched_row, textvariable=self.lr_schedule_var,
+                     values=["none", "step", "exponential", "cosine"], state="readonly",
+                     width=12).pack(side='left')
+
+        decay_row = ttk.Frame(self.scheduler_frame)
+        decay_row.pack(fill='x', pady=2)
+        ttk.Label(decay_row, text="Decay start (epoch):", width=18).pack(side='left')
+        self.lr_decay_start_var = tk.StringVar(value="200")
+        ttk.Entry(decay_row, textvariable=self.lr_decay_start_var, width=8).pack(side='left')
+
+        rate_row = ttk.Frame(self.scheduler_frame)
+        rate_row.pack(fill='x', pady=2)
+        ttk.Label(rate_row, text="Decay rate:", width=14).pack(side='left')
+        self.lr_decay_rate_var = tk.StringVar(value="0.005")
+        ttk.Entry(rate_row, textvariable=self.lr_decay_rate_var, width=10).pack(side='left')
+        ttk.Label(rate_row, text="Min LR:", width=8).pack(side='left', padx=(8, 0))
+        self.lr_min_var = tk.StringVar(value="1e-6")
+        ttk.Entry(rate_row, textvariable=self.lr_min_var, width=10).pack(side='left')
+
+        # Regularisation (left column, below optimizer)
+        self.reg_frame = ttk.LabelFrame(left_col, text="Regularisation", padding=5)
+        self.reg_frame.pack(fill='x', pady=2)
+
+        clip_row = ttk.Frame(self.reg_frame)
+        clip_row.pack(fill='x', pady=2)
+        ttk.Label(clip_row, text="Grad clip norm:", width=14).pack(side='left')
+        self.grad_clip_var = tk.StringVar(value="0.0")
+        ttk.Entry(clip_row, textvariable=self.grad_clip_var, width=10).pack(side='left')
+        ttk.Label(self.reg_frame,
+                  text="0 = disabled. Try 1.0 if loss spikes.",
+                  font=('TkDefaultFont', 8), foreground='gray').pack(anchor='w', pady=(2, 0))
+
+        # Loss / reproducibility (left column)
+        self.loss_frame = ttk.LabelFrame(left_col, text="Loss & Reproducibility", padding=5)
+        self.loss_frame.pack(fill='x', pady=2)
+
+        eps_row = ttk.Frame(self.loss_frame)
+        eps_row.pack(fill='x', pady=2)
+        ttk.Label(eps_row, text="Log eps:", width=14).pack(side='left')
+        self.log_eps_var = tk.StringVar(value="0.01")
+        ttk.Entry(eps_row, textvariable=self.log_eps_var, width=10).pack(side='left')
+
+        seed_row = ttk.Frame(self.loss_frame)
+        seed_row.pack(fill='x', pady=2)
+        ttk.Label(seed_row, text="Random seed:", width=14).pack(side='left')
+        self.seed_var = tk.StringVar(value="42")
+        ttk.Entry(seed_row, textvariable=self.seed_var, width=10).pack(side='left')
+
         # GPU setting (right column)
         self.gpu_frame = ttk.LabelFrame(right_col, text="Device", padding=5)
         self.gpu_frame.pack(fill='x', pady=2)
@@ -5215,13 +5302,27 @@ This gives the model examples with known ground truth to learn from."""
             config = yaml.safe_load(f)
 
         # Update training params from GUI
-        config['training']['epochs_dme'] = int(self.epochs_dme_var.get())
-        config['training']['batch_size'] = int(self.batch_size_var.get())
-        config['training']['lr'] = float(self.lr_var.get())
-        config['training']['override_checkpoint_lr'] = self.override_lr_var.get()
-        config['training']['stratified'] = (self.val_split_var.get() == "stratified")
-        config['training']['save_only_best'] = self.save_only_best_var.get()
-        # num_workers removed - doesn't work from GUI on Windows
+        cfg = config['training']
+        cfg['epochs_dme'] = int(self.epochs_dme_var.get())
+        cfg['batch_size'] = int(self.batch_size_var.get())
+        cfg['lr'] = float(self.lr_var.get())
+        cfg['override_checkpoint_lr'] = self.override_lr_var.get()
+        cfg['stratified'] = (self.val_split_var.get() == "stratified")
+        cfg['save_only_best'] = self.save_only_best_var.get()
+        # Optimizer
+        cfg['optimizer'] = self.optimizer_var.get()
+        cfg['adam_beta1'] = float(self.adam_beta1_var.get())
+        cfg['adam_beta2'] = float(self.adam_beta2_var.get())
+        cfg['weight_decay'] = float(self.weight_decay_var.get())
+        # LR schedule
+        cfg['lr_schedule'] = self.lr_schedule_var.get()
+        cfg['lr_decay_start_epoch'] = int(self.lr_decay_start_var.get())
+        cfg['lr_decay_rate'] = float(self.lr_decay_rate_var.get())
+        cfg['lr_min'] = float(self.lr_min_var.get())
+        # Regularisation + loss
+        cfg['grad_clip_norm'] = float(self.grad_clip_var.get())
+        cfg['log_eps'] = float(self.log_eps_var.get())
+        cfg['seed'] = int(self.seed_var.get())
 
         # Save updated config
         with open(config_path, 'w') as f:
@@ -5282,12 +5383,23 @@ This gives the model examples with known ground truth to learn from."""
             config = yaml.safe_load(f)
 
         # Update training params from GUI
-        config['training']['epochs_dme'] = int(self.epochs_dme_var.get())
-        config['training']['batch_size'] = int(self.batch_size_var.get())
-        config['training']['lr'] = float(self.lr_var.get())
-        config['training']['override_checkpoint_lr'] = self.override_lr_var.get()
-        config['training']['stratified'] = (self.val_split_var.get() == "stratified")
-        # num_workers removed - doesn't work from GUI on Windows
+        cfg = config['training']
+        cfg['epochs_dme'] = int(self.epochs_dme_var.get())
+        cfg['batch_size'] = int(self.batch_size_var.get())
+        cfg['lr'] = float(self.lr_var.get())
+        cfg['override_checkpoint_lr'] = self.override_lr_var.get()
+        cfg['stratified'] = (self.val_split_var.get() == "stratified")
+        cfg['optimizer'] = self.optimizer_var.get()
+        cfg['adam_beta1'] = float(self.adam_beta1_var.get())
+        cfg['adam_beta2'] = float(self.adam_beta2_var.get())
+        cfg['weight_decay'] = float(self.weight_decay_var.get())
+        cfg['lr_schedule'] = self.lr_schedule_var.get()
+        cfg['lr_decay_start_epoch'] = int(self.lr_decay_start_var.get())
+        cfg['lr_decay_rate'] = float(self.lr_decay_rate_var.get())
+        cfg['lr_min'] = float(self.lr_min_var.get())
+        cfg['grad_clip_norm'] = float(self.grad_clip_var.get())
+        cfg['log_eps'] = float(self.log_eps_var.get())
+        cfg['seed'] = int(self.seed_var.get())
 
         # Save updated config
         with open(config_path, 'w') as f:
