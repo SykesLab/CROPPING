@@ -42,15 +42,26 @@ _NUM_WORKERS = 0 if platform.system() == "Windows" else 4
 
 logger = logging.getLogger(__name__)
 
-# Ensure per-epoch training stats reach the console when nobody upstream has
-# configured logging (e.g. GUI-launched runs). Skip if the root logger already
-# has handlers so we don't clobber an app-level config.
-if not logging.getLogger().handlers and not logger.handlers:
-    _handler = logging.StreamHandler()
-    _handler.setFormatter(logging.Formatter('%(message)s'))
-    logger.addHandler(_handler)
-    logger.setLevel(logging.INFO)
-    logger.propagate = False
+
+def _ensure_logger_visible() -> None:
+    """Guarantee per-epoch training stats reach stderr.
+
+    Called at the start of training (not at module-import time) so the check
+    is robust against import order — i.e. it doesn't matter if some other
+    module reconfigured logging between when ``train.py`` was imported and
+    when training actually starts.
+
+    Adds a plain stderr StreamHandler to this module's logger if neither the
+    module logger nor the root logger has any handlers wired up yet, and
+    pins the level to INFO so per-epoch info() calls always emit.
+    """
+    if not logger.handlers and not logging.getLogger().handlers:
+        h = logging.StreamHandler()
+        h.setFormatter(logging.Formatter('%(message)s'))
+        logger.addHandler(h)
+        logger.propagate = False
+    if logger.getEffectiveLevel() > logging.INFO:
+        logger.setLevel(logging.INFO)
 
 
 class Trainer:
@@ -825,6 +836,7 @@ class Trainer:
         Args:
             resume_from: Path to checkpoint to resume from.
         """
+        _ensure_logger_visible()
         logger.info("\nLoading data...")
 
         self._validate_data()
@@ -891,6 +903,7 @@ class Trainer:
             explicit_checkpoint: Explicit path to checkpoint file (overrides auto-detection)
             force_fresh_start: If True, train from scratch regardless of available checkpoints
         """
+        _ensure_logger_visible()
         logger.info("\nLoading data for DME training...")
         self._validate_data()
 
@@ -911,9 +924,10 @@ class Trainer:
         logger.info("Training DME-subnet (scalar head)")
         logger.info("=" * 60)
 
-        # Dump the resolved config so every model folder carries a readable
-        # record of what produced it.
+        # Dump the resolved config + initial run_metadata so every model
+        # folder carries a readable record of what produced it.
         self._save_training_config_yaml()
+        self.write_run_metadata(status='started')
 
         # Use explicit checkpoint if provided, otherwise auto-detect
         if force_fresh_start:
@@ -934,7 +948,22 @@ class Trainer:
             resume_checkpoint = self._find_latest_checkpoint(
                 'dme', preference=checkpoint_preference)
 
-        self.train_dme(dme_train, dme_val, self.epochs_dme, resume_from=resume_checkpoint)
+        # Wrap train_dme in lifecycle handling so run_metadata always reaches
+        # a terminal status ('completed' / 'interrupted' / 'failed'), never
+        # stays frozen at 'started'.
+        final_status = 'failed'
+        try:
+            self.train_dme(dme_train, dme_val, self.epochs_dme,
+                           resume_from=resume_checkpoint)
+            final_status = 'completed'
+        except KeyboardInterrupt:
+            final_status = 'interrupted'
+            raise
+        finally:
+            try:
+                self.write_run_metadata(status=final_status)
+            except Exception as e:
+                logger.warning(f"Failed to write run_metadata.json: {e}")
 
     def _find_latest_checkpoint(self, mode: str = 'dme', preference: str = 'best') -> Optional[str]:
         """

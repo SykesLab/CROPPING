@@ -1147,7 +1147,11 @@ class TrainingGUI:
 
         self.checkpoint_path_var = tk.StringVar(value="")
         self.checkpoint_display_var = tk.StringVar(value="Auto-detect")
-        self.checkpoint_path_var.trace_add('write', lambda *args: self._update_val_split_state())
+
+        def _on_checkpoint_var_change(*_):
+            self._update_val_split_state()
+            self._on_resume_checkpoint_changed()
+        self.checkpoint_path_var.trace_add('write', _on_checkpoint_var_change)
 
         ckpt_row = ttk.Frame(ckpt_frame)
         ckpt_row.pack(fill='x')
@@ -1198,10 +1202,15 @@ class TrainingGUI:
         run_row.pack(fill='x', pady=2)
         ttk.Label(run_row, text="Run name (optional):", width=20).pack(side='left')
         self.run_name_var = tk.StringVar(value="")
-        ttk.Entry(run_row, textvariable=self.run_name_var, width=40).pack(side='left', padx=5)
-        ttk.Label(self.dataset_frame,
-                  text="Run output: <root>/runs/<timestamp>_<name>/",
-                  font=('TkDefaultFont', 8), foreground='gray').pack(anchor='w', pady=(2, 0))
+        self.run_name_entry = ttk.Entry(
+            run_row, textvariable=self.run_name_var, width=40)
+        self.run_name_entry.pack(side='left', padx=5)
+        self._run_name_was_auto = False  # True when filled by checkpoint selection
+        self.run_name_hint_var = tk.StringVar(
+            value="Run output: <root>/models/<timestamp>_<name>/")
+        ttk.Label(self.dataset_frame, textvariable=self.run_name_hint_var,
+                  font=('TkDefaultFont', 8), foreground='gray').pack(
+            anchor='w', pady=(2, 0))
 
         # ── Basic training settings ───────────────────────────────────────
         self.settings_frame = ttk.LabelFrame(self.tab_train, text="Training settings", padding=10)
@@ -1418,6 +1427,36 @@ class TrainingGUI:
         self.checkpoint_info_var.set(
             "ℹ Will train from scratch (overwrites any existing checkpoints in this run folder)")
         self._update_val_split_state()
+
+    def _on_resume_checkpoint_changed(self):
+        """When a resume checkpoint is selected, lock the run name to the source
+        model and pin training output to the same folder. When cleared, unlock."""
+        from run_paths import detect_model_name
+
+        ckpt_raw = self.checkpoint_path_var.get().strip()
+        if ckpt_raw and Path(ckpt_raw).is_file():
+            model_name = detect_model_name(Path(ckpt_raw))
+        else:
+            model_name = None
+
+        if model_name:
+            # Strip leading <YYYYMMDD>_<HHMMSS>_ to get the user-friendly part
+            parts = model_name.split('_', 2)
+            friendly = parts[2] if len(parts) >= 3 else model_name
+            self.run_name_var.set(friendly)
+            self._run_name_was_auto = True
+            self.run_name_entry.config(state='readonly')
+            self.run_name_hint_var.set(
+                f"Resuming → output will go to <root>/models/{model_name}/ "
+                "(run name locked to source)")
+        else:
+            # Re-enable; clear the value if we were the ones who set it
+            if self._run_name_was_auto:
+                self.run_name_var.set("")
+                self._run_name_was_auto = False
+            self.run_name_entry.config(state='normal')
+            self.run_name_hint_var.set(
+                "Run output: <root>/models/<timestamp>_<name>/")
 
     def _scan_checkpoint_metrics(self):
         """Scan the loaded checkpoint and display its metrics."""
@@ -2495,8 +2534,9 @@ class TrainingGUI:
         Pulls the dataset from the Tab 3 dropdown and creates the timestamped
         run folder.
         """
-        from run_paths import (find_latest_dataset, make_run_folder_name,
-                                models_root, validate_dataset)
+        from run_paths import (detect_model_name, find_latest_dataset,
+                                make_run_folder_name, model_dir, models_root,
+                                validate_dataset)
 
         output_root = Path(self.output_dir_var.get())
 
@@ -2517,10 +2557,25 @@ class TrainingGUI:
             messagebox.showwarning("Invalid dataset", f"{data_dir}\n{msg}")
             return None
 
-        # Build model folder
-        run_name = self.run_name_var.get().strip()
-        run_dir = models_root(output_root) / make_run_folder_name(run_name or None, default='model')
-        run_dir.mkdir(parents=True, exist_ok=True)
+        # If resuming from an existing checkpoint that lives under
+        # models/<m>/..., write the new training output back into the SAME
+        # model folder — don't fork a new timestamped one.
+        ckpt_raw = self.checkpoint_path_var.get().strip()
+        existing_model_dir = None
+        if ckpt_raw and Path(ckpt_raw).is_file():
+            model_name = detect_model_name(Path(ckpt_raw))
+            if model_name:
+                candidate = model_dir(output_root, model_name)
+                if candidate.is_dir():
+                    existing_model_dir = candidate
+
+        if existing_model_dir is not None:
+            run_dir = existing_model_dir
+        else:
+            run_name = self.run_name_var.get().strip()
+            run_dir = (models_root(output_root)
+                       / make_run_folder_name(run_name or None, default='model'))
+            run_dir.mkdir(parents=True, exist_ok=True)
 
         # Load the generation config that was used to build this dataset
         gen_cfg_path = data_dir / 'generation_config.yaml'
