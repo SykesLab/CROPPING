@@ -5311,13 +5311,8 @@ This gives the model examples with known ground truth to learn from."""
         if not self._validate_paths():
             return
 
-        output_dir = Path(self.output_dir_var.get())
-        data_dir = output_dir / 'synthetic_data'
-
-        if not data_dir.exists():
-            messagebox.showwarning(
-                "Warning", "Synthetic data not found. Please generate data first.")
-            return
+        # Dataset validation happens in _resolve_training_paths(), called from
+        # _run_dme_only_training on the worker thread.
 
         self._set_training_state(True)
         self._log("\n" + "=" * 50)
