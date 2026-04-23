@@ -246,7 +246,8 @@ def invert_prediction(
     defocus_mm, clamped = sigma_native_to_defocus(
         sigma_native, params.rho_eff, params.sigma_0_eff
     )
-    saturated = pred_norm < 0.01 or pred_norm > 0.99
+    saturated = (pred_norm < SATURATION_THRESHOLD
+                 or pred_norm > (1.0 - SATURATION_THRESHOLD))
 
     return InversionResult(
         pred_norm=pred_norm,
