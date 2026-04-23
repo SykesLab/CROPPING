@@ -5938,8 +5938,6 @@ This gives the model examples with known ground truth to learn from."""
         """Update UI state during training."""
         state = 'disabled' if is_training else 'normal'
         self.generate_btn.config(state=state)
-        self.mode_full_btn.config(state=state)
-        self.mode_dme_btn.config(state=state)
         self.start_train_btn.config(state=state)
         self.stop_btn.config(state='normal' if is_training else 'disabled')
 
