@@ -830,7 +830,24 @@ class Trainer:
             stratified=self.stratified
         )
 
-        self.train_dme(dme_train, dme_val, self.epochs_dme, resume_from=resume_from)
+        # Save the resolved config and an initial run_metadata.json
+        self._save_training_config_yaml()
+        self.write_run_metadata(status='started')
+
+        try:
+            self.train_dme(dme_train, dme_val, self.epochs_dme, resume_from=resume_from)
+            final_status = 'completed'
+        except KeyboardInterrupt:
+            final_status = 'interrupted'
+            raise
+        except Exception:
+            final_status = 'failed'
+            raise
+        finally:
+            try:
+                self.write_run_metadata(status=final_status if 'final_status' in locals() else 'failed')
+            except Exception as e:
+                logger.warning(f"Failed to write run_metadata.json: {e}")
 
         logger.info("\n" + "=" * 60)
         logger.info("Training complete!")
@@ -838,6 +855,14 @@ class Trainer:
         logger.info("=" * 60)
 
         self.writer.close()
+
+    def _save_training_config_yaml(self) -> None:
+        """Persist the full resolved config as <run_dir>/training_config.yaml."""
+        try:
+            with open(self.output_dir / 'training_config.yaml', 'w') as f:
+                yaml.dump(self.config, f, default_flow_style=False, sort_keys=False)
+        except Exception as e:
+            logger.warning(f"Failed to save training_config.yaml: {e}")
 
     def train_dme_only(
         self,

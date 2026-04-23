@@ -841,16 +841,25 @@ class TrainingGUI:
     def _create_generate_tab(self):
         """Create synthetic data generation tab."""
 
-        # Output Directory section (at top)
-        output_dir_frame = ttk.LabelFrame(self.tab_generate, text="Output Directory", padding=10)
+        # Output root + dataset name
+        output_dir_frame = ttk.LabelFrame(self.tab_generate, text="Output Location", padding=10)
         output_dir_frame.pack(fill='x', padx=5, pady=(5, 10))
 
         row = ttk.Frame(output_dir_frame)
         row.pack(fill='x', pady=2)
-        ttk.Label(row, text="Output Dir:", width=15).pack(side='left')
+        ttk.Label(row, text="Training output root:", width=20).pack(side='left')
         self.output_dir_var = tk.StringVar(value=str(Path.cwd() / "training_output"))
-        ttk.Entry(row, textvariable=self.output_dir_var, width=70).pack(side='left', padx=5)
+        ttk.Entry(row, textvariable=self.output_dir_var, width=65).pack(side='left', padx=5)
         ttk.Button(row, text="Browse", command=self._browse_output_dir).pack(side='left')
+
+        row_name = ttk.Frame(output_dir_frame)
+        row_name.pack(fill='x', pady=2)
+        ttk.Label(row_name, text="Dataset name (optional):", width=20).pack(side='left')
+        self.dataset_name_var = tk.StringVar(value="")
+        ttk.Entry(row_name, textvariable=self.dataset_name_var, width=65).pack(side='left', padx=5)
+        ttk.Label(output_dir_frame,
+                  text="Datasets are saved as <root>/datasets/<timestamp>_<name>/",
+                  font=('TkDefaultFont', 8), foreground='gray').pack(anchor='w', pady=(2, 0))
 
         # Create two-column layout
         main_container = ttk.Frame(self.tab_generate)
