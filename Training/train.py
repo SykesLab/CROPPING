@@ -66,8 +66,14 @@ class Trainer:
         """
         self.config = config
         self.data_dir = Path(data_dir)
+        # output_dir is the run folder; checkpoints/ and logs/ live inside it.
+        # training_history.yaml, training_curves.png, run_metadata.json sit at the root.
         self.output_dir = Path(output_dir)
         self.output_dir.mkdir(parents=True, exist_ok=True)
+        self.checkpoints_dir = self.output_dir / 'checkpoints'
+        self.checkpoints_dir.mkdir(exist_ok=True)
+        self.logs_dir = self.output_dir / 'logs'
+        self.logs_dir.mkdir(exist_ok=True)
 
         training_mode = config.get('training', {}).get('training_mode', 'optical')
         config_warnings = validate_training_config(config, training_mode)
@@ -127,7 +133,7 @@ class Trainer:
         self.dme_loss_fn = DMELoss(max_blur=self.max_blur, eps=self.log_eps)
 
         # Tensorboard
-        self.writer = SummaryWriter(self.output_dir / 'logs')
+        self.writer = SummaryWriter(self.logs_dir)
 
         # Training history tracking
         self.history_file = self.output_dir / 'training_history.yaml'
@@ -745,7 +751,7 @@ class Trainer:
         if optimizer is not None:
             checkpoint['optimizer_state_dict'] = optimizer.state_dict()
 
-        path = self.output_dir / filename
+        path = self.checkpoints_dir / filename
         torch.save(checkpoint, path)
         logger.info(f"Saved checkpoint: {path}")
 
@@ -828,7 +834,7 @@ class Trainer:
 
         logger.info("\n" + "=" * 60)
         logger.info("Training complete!")
-        logger.info(f"Best model saved to: {self.output_dir / 'dme_best.pth'}")
+        logger.info(f"Best model saved to: {self.checkpoints_dir / 'dme_best.pth'}")
         logger.info("=" * 60)
 
         self.writer.close()
@@ -911,7 +917,7 @@ class Trainer:
             return None
 
         # Determine checkpoint paths
-        best_checkpoint = self.output_dir / 'dme_best.pth'
+        best_checkpoint = self.checkpoints_dir / 'dme_best.pth'
         epoch_pattern = 'dme_epoch_*.pth'
 
         checkpoint_to_use = None
@@ -919,7 +925,7 @@ class Trainer:
         # Find checkpoint based on preference
         if preference == 'latest':
             # Find most recent epoch checkpoint
-            epoch_checkpoints = list(self.output_dir.glob(epoch_pattern))
+            epoch_checkpoints = list(self.checkpoints_dir.glob(epoch_pattern))
             if epoch_checkpoints:
                 # Sort by epoch number (extract from filename)
                 def get_epoch_num(path):
@@ -943,7 +949,7 @@ class Trainer:
             else:
                 backup_patterns = ['dme_best_old.pth', 'dme_best_backup.pth', 'dme_best_v*.pth']
                 for pattern in backup_patterns:
-                    matches = list(self.output_dir.glob(pattern))
+                    matches = list(self.checkpoints_dir.glob(pattern))
                     if matches:
                         checkpoint_to_use = max(matches, key=lambda p: p.stat().st_mtime)
                         break
@@ -966,7 +972,7 @@ class Trainer:
             return str(checkpoint_to_use)
 
         # Fallback: look for any epoch checkpoint
-        stage_checkpoints = list(self.output_dir.glob(epoch_pattern))
+        stage_checkpoints = list(self.checkpoints_dir.glob(epoch_pattern))
         if stage_checkpoints:
             latest = max(stage_checkpoints, key=lambda p: p.stat().st_mtime)
             logger.info(f"No best checkpoint, using latest: {latest.name}")
