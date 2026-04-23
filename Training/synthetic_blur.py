@@ -1662,7 +1662,37 @@ class SyntheticBlurGenerator:
                 log(f"  Total: {len(diameter_values)}")
                 log("  Note: No stratified sampling (weighted by input availability)")
 
-        # Return generation metadata
+        # Write dataset_summary.json — small machine+human readable record
+        import json
+        from datetime import datetime
+        blur_col = 'sigma_px' if 'sigma_px' in df.columns else 'coc_px'
+        summary = {
+            'generated_at': datetime.now().isoformat(timespec='seconds'),
+            'n_samples': int(len(df)),
+            'image_size_px': int(self.image_size),
+            'training_mode': self.params.training_mode,
+            'blur_column': blur_col,
+            'blur_range_px': [float(df[blur_col].min()), float(df[blur_col].max())],
+            'distribution': self.blur_distribution,
+            'beta_alpha': float(self.beta_alpha) if self.beta_alpha is not None else None,
+            'beta_beta': float(self.beta_beta) if self.beta_beta is not None else None,
+            'min_blur_px': float(self.min_blur_px) if self.min_blur_px is not None else None,
+            'defocus_range_mm': [float(self.defocus_range[0]), float(self.defocus_range[1])],
+            'rho_direct': float(self.params.rho_direct) if self.params.rho_direct else None,
+            'sigma_0': float(self.params.sigma_0) if self.params.sigma_0 is not None else None,
+            'scale_calib_px_per_mm': (
+                float(self.params.scale_calib_px_per_mm)
+                if self.params.scale_calib_px_per_mm else None
+            ),
+            'diameter_bins_used': bool(use_binning),
+        }
+        if 'diameter_px' in df.columns:
+            summary['diameter_range_px'] = [
+                float(df['diameter_px'].min()), float(df['diameter_px'].max())
+            ]
+        with open(output_dir / 'dataset_summary.json', 'w') as f:
+            json.dump(summary, f, indent=2)
+
         return {
             'diameter_bins_used': use_binning,
             'diameter_bin_boundaries': bin_boundaries if use_binning else None
