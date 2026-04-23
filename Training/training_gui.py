@@ -2361,7 +2361,7 @@ class TrainingGUI:
             # Auto-load min_blur_px from config for validation tab
             self._load_min_blur_from_config()
             # Refresh both output-path previews (they depend on output_dir_var)
-            self._refresh_output_preview('real')
+            self._refresh_output_preview('real_crop')
             self._refresh_output_preview('synthetic')
 
     def _show_generation_info(self):
@@ -2475,7 +2475,7 @@ class TrainingGUI:
                 self._load_min_blur_from_config()
         except Exception as e:
             self._log(f"Auto-populate failed: {e}")
-        self._refresh_output_preview('real' if target == 'inf' else 'synthetic')
+        self._refresh_output_preview('real_crop' if target == 'inf' else 'synthetic')
 
     def _fill_latest_dataset(self):
         """Set the validation data field to the most recent dataset."""
@@ -2496,7 +2496,7 @@ class TrainingGUI:
         run folder.
         """
         from run_paths import (find_latest_dataset, make_run_folder_name,
-                                runs_root, validate_dataset)
+                                models_root, validate_dataset)
 
         output_root = Path(self.output_dir_var.get())
 
@@ -2517,9 +2517,9 @@ class TrainingGUI:
             messagebox.showwarning("Invalid dataset", f"{data_dir}\n{msg}")
             return None
 
-        # Build run folder
+        # Build model folder
         run_name = self.run_name_var.get().strip()
-        run_dir = runs_root(output_root) / make_run_folder_name(run_name or None, default='run')
+        run_dir = models_root(output_root) / make_run_folder_name(run_name or None, default='model')
         run_dir.mkdir(parents=True, exist_ok=True)
 
         # Load the generation config that was used to build this dataset
@@ -2706,42 +2706,43 @@ class TrainingGUI:
     def _refresh_output_preview(self, kind: str):
         """Recompute the 'Results go to: ...' label for Tab 4 or Tab 5.
 
-        kind='real'      → Tab 5 (inference) → real_crop_validation/<run>/
-        kind='synthetic' → Tab 4 (validation) → synthetic_validation/<run>/
-        """
-        from run_paths import (detect_run_name, detect_variant,
-                               real_crop_validation_dir,
-                               synthetic_validation_dir, TEST_PREFIX)
+        kind='real_crop' → Tab 5 (inference) test outputs
+        kind='synthetic' → Tab 4 (validation) test outputs
 
-        if kind == 'real':
+        Both land under models/<m>/tests/<kind>/test_<ts>/ for the trained
+        checkpoint, or under models/<m>/edits/<edit>/tests/<kind>/test_<ts>/
+        for an edited variant.
+        """
+        from run_paths import (detect_model_name, detect_variant,
+                               tests_dir, TEST_PREFIX)
+
+        if kind == 'real_crop':
             model_path = self.inf_model_var.get().strip()
             fallback_var = self.inf_output_var
             preview_var = self.inf_output_preview_var
-            dir_fn = real_crop_validation_dir
         else:
             model_path = self.val_model_var.get().strip()
             fallback_var = self.val_output_var
             preview_var = self.val_output_preview_var
-            dir_fn = synthetic_validation_dir
 
         if not model_path or not Path(model_path).is_file():
             preview_var.set(
                 "Results go to: (select a checkpoint to see the derived path)")
             return
 
-        run_name = detect_run_name(Path(model_path))
+        model_name = detect_model_name(Path(model_path))
         variant = detect_variant(Path(model_path))
-        if run_name:
+        if model_name:
             training_root = Path(self.output_dir_var.get())
-            folder = dir_fn(training_root, run_name) / \
-                f"{TEST_PREFIX}_<ts>_{variant}"
+            edit_name = None if variant == 'original' else variant
+            folder = tests_dir(training_root, model_name, kind,
+                               edit_name=edit_name) / f"{TEST_PREFIX}_<ts>"
             preview_var.set(f"Results go to: {folder}")
         else:
             fallback_root = Path(fallback_var.get()) if fallback_var.get() else Path('?')
             preview_var.set(
-                "Results go to: (checkpoint not under runs/ or "
-                "real_crop_validation/ — falling back to "
-                f"{fallback_root}/<subfolder>_<ts>/)")
+                "Results go to: (checkpoint not under models/ — "
+                f"falling back to {fallback_root}/<subfolder>_<ts>/)")
 
     def _browse_inference_model(self):
         """Browse for inference model checkpoint."""
@@ -2757,7 +2758,7 @@ class TrainingGUI:
                 self._scan_inference_checkpoint()
             except Exception as e:
                 self._log(f"Auto-scan failed: {e}")
-            self._refresh_output_preview('real')
+            self._refresh_output_preview('real_crop')
 
     def _open_calibration_editor(self):
         """Open the calibration editor dialog, prefilled with the current Tab 5 model."""
@@ -5721,20 +5722,22 @@ class TrainingGUI:
             model_path = self.inf_model_var.get()
             input_dir = Path(self.inf_input_var.get())
 
-            # Resolve output folder — prefer the structured validation layout
-            # (training_output/real_crop_validation/<run>/test_<ts>_<variant>/)
-            # when we can identify the run from the checkpoint path. Fall back
-            # to the preprocessing run dir, or a free-form folder under
+            # Resolve output folder — prefer the structured per-model layout
+            # (models/<m>/tests/real_crop/test_<ts>/ for the trained model, or
+            # models/<m>/edits/<edit>/tests/real_crop/test_<ts>/ for an edit)
+            # when we can identify the model from the checkpoint path. Fall
+            # back to the preprocessing run dir, or a free-form folder under
             # inf_output_var, otherwise.
-            from run_paths import (detect_run_name, detect_variant,
-                                   make_test_folder_name,
-                                   real_crop_validation_dir)
-            run_name = detect_run_name(Path(model_path)) if model_path else None
+            from run_paths import (detect_model_name, detect_variant,
+                                   make_test_folder_name, tests_dir)
+            model_name = detect_model_name(Path(model_path)) if model_path else None
             variant = detect_variant(Path(model_path)) if model_path else 'original'
-            if run_name:
+            if model_name:
                 training_root = Path(self.output_dir_var.get())
-                output_dir = (real_crop_validation_dir(training_root, run_name)
-                              / make_test_folder_name(variant))
+                edit_name = None if variant == 'original' else variant
+                output_dir = (tests_dir(training_root, model_name, 'real_crop',
+                                        edit_name=edit_name)
+                              / make_test_folder_name())
             elif self._inf_run_dir:
                 output_dir = Path(self._inf_run_dir)
             else:
@@ -5747,8 +5750,8 @@ class TrainingGUI:
             import json
             from datetime import datetime as _dt
             test_metadata = {
-                'run_name': run_name,
-                'variant': variant if run_name else None,
+                'model_name': model_name,
+                'variant': variant if model_name else None,
                 'checkpoint': str(model_path),
                 'input_dir': str(input_dir),
                 'device': 'cuda' if self.inf_use_gpu_var.get() else 'cpu',
@@ -6202,16 +6205,18 @@ class TrainingGUI:
             device = 'cuda' if self.val_use_gpu_var.get() else 'cpu'
 
             # Resolve output folder — same structured-layout idea as Tab 5,
-            # but under synthetic_validation/<run>/test_<ts>_<variant>/.
-            from run_paths import (detect_run_name, detect_variant,
-                                   make_test_folder_name,
-                                   synthetic_validation_dir)
-            run_name = detect_run_name(Path(model_path)) if model_path else None
+            # but under models/<m>/tests/synthetic/test_<ts>/ (original) or
+            # models/<m>/edits/<edit>/tests/synthetic/test_<ts>/ (edit).
+            from run_paths import (detect_model_name, detect_variant,
+                                   make_test_folder_name, tests_dir)
+            model_name = detect_model_name(Path(model_path)) if model_path else None
             variant = detect_variant(Path(model_path)) if model_path else 'original'
-            if run_name:
+            if model_name:
                 training_root = Path(self.output_dir_var.get())
-                output_path = (synthetic_validation_dir(training_root, run_name)
-                               / make_test_folder_name(variant))
+                edit_name = None if variant == 'original' else variant
+                output_path = (tests_dir(training_root, model_name, 'synthetic',
+                                          edit_name=edit_name)
+                               / make_test_folder_name())
             else:
                 output_path = Path(self.val_output_var.get())
             output_path.mkdir(parents=True, exist_ok=True)
@@ -6220,8 +6225,8 @@ class TrainingGUI:
             import json
             from datetime import datetime as _dt
             test_metadata = {
-                'run_name': run_name,
-                'variant': variant if run_name else None,
+                'model_name': model_name,
+                'variant': variant if model_name else None,
                 'checkpoint': str(model_path),
                 'data_dir': str(data_path),
                 'mode': self.val_mode_var.get(),
