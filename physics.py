@@ -28,6 +28,37 @@ from typing import Dict, List, Optional, Tuple
 
 SATURATION_THRESHOLD = 0.01  # predictions within this of 0 or 1 are flagged
 
+# Conservative fallback for the defocus window when a checkpoint doesn't carry
+# enough info to derive its own valid range (see ``calib_valid_defocus_mm``).
+# Tuned for Camera G but intentionally wide; prefer the derived range.
+CALIB_VALID_DEFOCUS_MM_FALLBACK = (0.5, 8.0)
+
+
+def calib_valid_defocus_mm(config: Dict) -> Tuple[float, float]:
+    """Defocus-magnitude window over which a pred-vs-truth fit is reliable.
+
+    Derived from the model's actual training blur range via the direct-mode
+    calibration:
+        z_min = max(0, (blur_min - σ₀) / ρ)
+        z_max = (blur_max - σ₀) / ρ
+
+    ``config`` is the dict stored in ``checkpoint['config']`` (same shape as
+    ``generation_config.yaml`` / ``training_config.yaml``). If the keys needed
+    for the derivation are missing, falls back to
+    ``CALIB_VALID_DEFOCUS_MM_FALLBACK``.
+    """
+    data = config.get('data', {}) if config else {}
+    training = config.get('training', {}) if config else {}
+    blur_range = data.get('blur_range_px')
+    rho = training.get('rho_direct')
+    if not blur_range or rho is None or rho <= 0:
+        return CALIB_VALID_DEFOCUS_MM_FALLBACK
+    sigma_0 = training.get('sigma_0') or 0.0
+    blur_min, blur_max = float(blur_range[0]), float(blur_range[1])
+    z_min = max(0.0, (blur_min - float(sigma_0)) / float(rho))
+    z_max = (blur_max - float(sigma_0)) / float(rho)
+    return (z_min, z_max)
+
 
 @dataclass
 class ScalingParams:
