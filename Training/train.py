@@ -1044,6 +1044,110 @@ class Trainer:
             if 'val_mae_px' in checkpoint:
                 logger.info(f"  val_mae_px was: {checkpoint['val_mae_px']:.2f}")
 
+    def write_run_metadata(self, status: str, started_at: Optional[str] = None,
+                           run_name: Optional[str] = None) -> None:
+        """Write run_metadata.json describing this training run.
+
+        Called at the start (status='started') and end (status='completed' or
+        'interrupted' or 'failed') of training. Each call rewrites the file.
+        """
+        import json
+        import platform as _platform
+        from datetime import datetime
+
+        run_dir = self.output_dir
+        meta_path = run_dir / 'run_metadata.json'
+
+        # Preserve started_at across calls
+        existing = {}
+        if meta_path.is_file():
+            try:
+                with open(meta_path) as f:
+                    existing = json.load(f)
+            except Exception:
+                existing = {}
+
+        if started_at is None:
+            started_at = existing.get('started_at') or datetime.now().isoformat(timespec='seconds')
+        completed_at = datetime.now().isoformat(timespec='seconds') if status != 'started' else None
+        duration_min = None
+        if completed_at:
+            try:
+                t0 = datetime.fromisoformat(started_at)
+                t1 = datetime.fromisoformat(completed_at)
+                duration_min = round((t1 - t0).total_seconds() / 60.0, 2)
+            except Exception:
+                pass
+
+        cfg = self.config.get('training', {})
+        torch_version = getattr(torch, '__version__', 'unknown')
+        cuda_available = bool(getattr(torch, 'cuda', None) and torch.cuda.is_available())
+
+        meta = {
+            'run_name': run_name or existing.get('run_name') or run_dir.name,
+            'run_id': run_dir.name,
+            'started_at': started_at,
+            'completed_at': completed_at,
+            'duration_minutes': duration_min,
+            'status': status,
+            'training_mode': self.training_mode,
+            'dataset_path': str(self.data_dir),
+            'dataset_name': self.data_dir.name,
+            'hyperparameters': {
+                'epochs': self.epochs_dme,
+                'batch_size': self.batch_size,
+                'lr': self.lr,
+                'optimizer': self.optimizer_type,
+                'adam_beta1': self.adam_beta1,
+                'adam_beta2': self.adam_beta2,
+                'weight_decay': self.weight_decay,
+                'lr_schedule': self.lr_schedule,
+                'lr_decay_start_epoch': self.lr_decay_start,
+                'lr_decay_rate': self.lr_decay_rate,
+                'lr_min': self.lr_min,
+                'grad_clip_norm': self.grad_clip_norm,
+                'log_eps': self.log_eps,
+                'seed': cfg.get('seed', 42),
+                'stratified': self.stratified,
+            },
+            'environment': {
+                'python': _platform.python_version(),
+                'torch': torch_version,
+                'cuda_available': cuda_available,
+                'platform': f"{_platform.system()}-{_platform.machine()}",
+            },
+        }
+
+        # Pull dataset summary if present
+        summary_path = self.data_dir / 'dataset_summary.json'
+        if summary_path.is_file():
+            try:
+                with open(summary_path) as f:
+                    ds = json.load(f)
+                meta['dataset_n_samples'] = ds.get('n_samples')
+                meta['dataset_blur_range_px'] = ds.get('blur_range_px')
+            except Exception:
+                pass
+
+        if status != 'started':
+            meta['results'] = {
+                'best_val_mae_px': (
+                    float(self.best_dme_mae_px)
+                    if self.best_dme_mae_px != float('inf') else None
+                ),
+                'best_val_loss': (
+                    float(self.best_val_loss)
+                    if self.best_val_loss != float('inf') else None
+                ),
+                'epochs_trained': self.current_session.get('epochs_trained', 0),
+                'best_epoch': self.current_session.get('best_epoch'),
+            }
+            ckpts = sorted(self.checkpoints_dir.glob('*.pth'))
+            meta['checkpoints'] = [str(p.relative_to(run_dir)) for p in ckpts]
+
+        with open(meta_path, 'w') as f:
+            json.dump(meta, f, indent=2, default=str)
+
 
 # =============================================================================
 # CLI
