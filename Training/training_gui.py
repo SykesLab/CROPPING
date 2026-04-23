@@ -490,6 +490,7 @@ class TrainingGUI:
         # Training state
         self.training_thread: Optional[threading.Thread] = None
         self.stop_training = False
+        self._training_running = False
 
         # Message queue for thread communication
         self.msg_queue = queue.Queue()
@@ -3229,28 +3230,28 @@ This gives the model examples with known ground truth to learn from."""
             'save_only_best': self.save_only_best_var.get(),
         }
 
-        # Top banner — only shown when resuming from a checkpoint
-        is_resuming = bool(self.checkpoint_path_var.get())
-        if is_resuming:
-            banner = ttk.Label(
-                dlg,
-                text=(f"Resuming from checkpoint — locked fields are shown in grey. "
-                      f"Changing them would break optimizer state or loss continuity."),
-                foreground='#cc8800', font=('TkDefaultFont', 9, 'bold'),
-                wraplength=520, justify='left', padding=(8, 6))
-            banner.pack(fill='x', padx=10, pady=(10, 0))
+        is_running = self._training_running
+        widgets: dict = {}  # key → widget (for enable/disable)
+        LOCK_NOTE = "Cannot change once training starts"
 
-        widgets: dict = {}  # key → widget to enable/disable
+        def _lock_note(parent):
+            """Info label shown under locked fields — hidden while training is running."""
+            lbl = ttk.Label(parent, text=LOCK_NOTE,
+                            foreground='#cc8800', font=('TkDefaultFont', 8, 'italic'))
+            if not is_running:
+                lbl.pack(anchor='w', padx=(0, 0))
+            return lbl
 
         # Optimizer
-        opt_f = ttk.LabelFrame(dlg, text="Optimizer   [LOCKED*]", padding=8)
-        opt_f.pack(fill='x', padx=10, pady=(8, 2))
+        opt_f = ttk.LabelFrame(dlg, text="Optimizer", padding=8)
+        opt_f.pack(fill='x', padx=10, pady=(10, 2))
         r = ttk.Frame(opt_f); r.pack(fill='x', pady=2)
         ttk.Label(r, text="Type:", width=14).pack(side='left')
         widgets['optimizer'] = ttk.Combobox(r, textvariable=self.optimizer_var,
                                              values=["adam", "adamw", "sgd"],
                                              state="readonly", width=10)
         widgets['optimizer'].pack(side='left')
+        _lock_note(opt_f)
         r = ttk.Frame(opt_f); r.pack(fill='x', pady=2)
         ttk.Label(r, text="β1 / momentum:", width=14).pack(side='left')
         widgets['adam_beta1'] = ttk.Entry(r, textvariable=self.adam_beta1_var, width=8)
@@ -3296,16 +3297,18 @@ This gives the model examples with known ground truth to learn from."""
                   font=('TkDefaultFont', 8)).pack(side='left')
 
         # Loss & reproducibility
-        loss_f = ttk.LabelFrame(dlg, text="Loss & reproducibility   [LOCKED*]", padding=8)
+        loss_f = ttk.LabelFrame(dlg, text="Loss & reproducibility", padding=8)
         loss_f.pack(fill='x', padx=10, pady=2)
         r = ttk.Frame(loss_f); r.pack(fill='x', pady=2)
         ttk.Label(r, text="Log eps:", width=14).pack(side='left')
         widgets['log_eps'] = ttk.Entry(r, textvariable=self.log_eps_var, width=10)
         widgets['log_eps'].pack(side='left')
+        _lock_note(loss_f)
         r = ttk.Frame(loss_f); r.pack(fill='x', pady=2)
         ttk.Label(r, text="Random seed:", width=14).pack(side='left')
         widgets['seed'] = ttk.Entry(r, textvariable=self.seed_var, width=10)
         widgets['seed'].pack(side='left')
+        _lock_note(loss_f)
 
         # Debug & saving
         dbg_f = ttk.LabelFrame(dlg, text="Debug & saving", padding=8)
@@ -3319,13 +3322,15 @@ This gives the model examples with known ground truth to learn from."""
             variable=self.save_only_best_var)
         widgets['save_only_best'].pack(anchor='w', pady=1)
 
-        ttk.Label(dlg, text="* locked when resuming from a checkpoint",
-                  foreground='gray', font=('TkDefaultFont', 8)
-                  ).pack(anchor='w', padx=14, pady=(4, 0))
-
-        # Lock fields if resuming
-        if is_resuming:
-            self._apply_resume_locks(widgets)
+        # Disable locked widgets while training is running
+        if is_running:
+            for key in self._ADV_LOCKED_KEYS:
+                w = widgets.get(key)
+                if w is not None:
+                    try:
+                        w.configure(state='disabled')
+                    except tk.TclError:
+                        pass
 
         # Buttons
         btn_row = ttk.Frame(dlg)
@@ -3333,7 +3338,7 @@ This gives the model examples with known ground truth to learn from."""
 
         def on_reset():
             for key, default in self._ADV_DEFAULTS.items():
-                if is_resuming and key in self._ADV_LOCKED_KEYS:
+                if is_running and key in self._ADV_LOCKED_KEYS:
                     continue
                 var = self._adv_var(key)
                 if var is not None:
@@ -3375,46 +3380,6 @@ This gives the model examples with known ground truth to learn from."""
             'cuda_blocking': self.cuda_launch_blocking_var,
             'save_only_best': self.save_only_best_var,
         }.get(key)
-
-    def _apply_resume_locks(self, widgets: dict) -> None:
-        """Load checkpoint's training_config.yaml and lock/populate LOCKED fields."""
-        ckpt = self.checkpoint_path_var.get()
-        if not ckpt:
-            return
-        # Config lives in the run folder root: runs/<name>/training_config.yaml
-        # or legacy: training_output/training_config.yaml.
-        ckpt_path = Path(ckpt)
-        candidates = [
-            ckpt_path.parent.parent / 'training_config.yaml',
-            ckpt_path.parent.parent / 'optical_config.yaml',
-        ]
-        cfg = None
-        for cand in candidates:
-            if cand.is_file():
-                try:
-                    with open(cand) as f:
-                        cfg = yaml.safe_load(f) or {}
-                    break
-                except Exception:
-                    pass
-        train_cfg = (cfg or {}).get('training', {}) if cfg else {}
-
-        # Map locked keys → (var, config key, cast)
-        mapping = {
-            'optimizer': (self.optimizer_var, 'optimizer', str),
-            'log_eps': (self.log_eps_var, 'log_eps', lambda x: str(x)),
-            'seed': (self.seed_var, 'seed', lambda x: str(x)),
-        }
-        for key in self._ADV_LOCKED_KEYS:
-            var, cfg_key, cast = mapping[key]
-            if cfg_key in train_cfg:
-                var.set(cast(train_cfg[cfg_key]))
-            w = widgets.get(key)
-            if w is not None:
-                try:
-                    w.configure(state='disabled')
-                except tk.TclError:
-                    pass
 
     def _load_min_blur_from_config(self):
         """Load min_blur_px from training_config.yaml and update validation tab."""
@@ -6090,6 +6055,7 @@ This gives the model examples with known ground truth to learn from."""
 
     def _set_training_state(self, is_training: bool):
         """Update UI state during training."""
+        self._training_running = is_training
         state = 'disabled' if is_training else 'normal'
         self.generate_btn.config(state=state)
         self.start_train_btn.config(state=state)
