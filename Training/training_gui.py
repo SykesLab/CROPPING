@@ -1392,10 +1392,6 @@ This gives the model examples with known ground truth to learn from."""
 
             self._update_val_split_state()
 
-            # Check if we should grey out separate DME checkbox
-            if self.train_mode_var.get() == 'dd':
-                self._check_resume_checkpoint_type()
-
     def _set_checkpoint_info_message(self, checkpoint_path: str):
         """Set appropriate info message based on checkpoint type and current mode."""
         from pathlib import Path
