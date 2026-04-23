@@ -1146,96 +1146,41 @@ This gives the model examples with known ground truth to learn from."""
         self.reverse_calc_results.pack()
 
     def _create_train_tab(self):
-        """Create model training tab with mode selection."""
+        """Create model training tab. DME-only — single training mode."""
 
-        # Mode selection frame
-        mode_frame = ttk.LabelFrame(self.tab_train, text="Select Training Mode", padding=10)
-        mode_frame.pack(fill='x', pady=5)
-
-        self.train_mode_var = tk.StringVar(value="")
-
-        mode_btn_frame = ttk.Frame(mode_frame)
-        mode_btn_frame.pack(fill='x')
-
-        self.mode_full_btn = ttk.Button(
-            mode_btn_frame, text="Train Full Model",
-            command=lambda: self._select_train_mode("full")
-        )
-        self.mode_full_btn.pack(side='left', padx=5, pady=5)
-
-        self.mode_dme_btn = ttk.Button(
-            mode_btn_frame, text="Train DME Only",
-            command=lambda: self._select_train_mode("dme")
-        )
-        self.mode_dme_btn.pack(side='left', padx=5, pady=5)
-
-        # Checkpoint selection (right side)
-        checkpoint_frame = ttk.Frame(mode_btn_frame)
-        checkpoint_frame.pack(side='right', padx=5)
-
-        ttk.Label(
-            checkpoint_frame, text="Resume from:", font=('', 9)).pack(
-            side='left', padx=(0, 5))
+        # ── Resume from checkpoint ───────────────────────────────────────
+        ckpt_frame = ttk.LabelFrame(self.tab_train, text="Resume from checkpoint (optional)",
+                                    padding=10)
+        ckpt_frame.pack(fill='x', pady=5)
 
         self.checkpoint_path_var = tk.StringVar(value="")
         self.checkpoint_display_var = tk.StringVar(value="Auto-detect")
-
-        # Add trace to update validation split state when checkpoint changes
         self.checkpoint_path_var.trace_add('write', lambda *args: self._update_val_split_state())
 
-        checkpoint_entry = ttk.Entry(
-            checkpoint_frame,
-            textvariable=self.checkpoint_display_var,
-            width=20,
-            state='readonly'
-        )
-        checkpoint_entry.pack(side='left', padx=(0, 5))
+        ckpt_row = ttk.Frame(ckpt_frame)
+        ckpt_row.pack(fill='x')
+        ttk.Label(ckpt_row, text="Checkpoint:", width=12).pack(side='left')
+        ttk.Entry(ckpt_row, textvariable=self.checkpoint_display_var,
+                  width=40, state='readonly').pack(side='left', padx=(0, 5))
+        ttk.Button(ckpt_row, text="Browse...", command=self._browse_checkpoint,
+                   width=10).pack(side='left', padx=(0, 4))
+        ttk.Button(ckpt_row, text="Clear", command=self._clear_checkpoint,
+                   width=6).pack(side='left', padx=(0, 4))
+        ttk.Button(ckpt_row, text="Scan", command=self._scan_checkpoint_metrics,
+                   width=8).pack(side='left')
 
-        ttk.Button(
-            checkpoint_frame,
-            text="Browse...",
-            command=self._browse_checkpoint,
-            width=10
-        ).pack(side='left', padx=(0, 5))
-
-        ttk.Button(
-            checkpoint_frame,
-            text="Clear",
-            command=self._clear_checkpoint,
-            width=6
-        ).pack(side='left')
-
-        # Info row: mode description (left) and scan checkpoint (right) - all on same line
-        info_row = ttk.Frame(mode_frame)
-        info_row.pack(fill='x', pady=(2, 0))
-
-        # Left side: Mode description and checkpoint info stacked
-        left_info = ttk.Frame(info_row)
-        left_info.pack(side='left', fill='x', expand=True)
-
-        self.mode_desc_var = tk.StringVar(value="Select a training mode above")
-        ttk.Label(left_info, textvariable=self.mode_desc_var,
-                  foreground='gray', font=('', 8)).pack(anchor='w')
-
+        info_row = ttk.Frame(ckpt_frame)
+        info_row.pack(fill='x', pady=(4, 0))
         self.checkpoint_info_var = tk.StringVar(value="")
         self.checkpoint_info_label = ttk.Label(
-            left_info, textvariable=self.checkpoint_info_var, foreground='blue', font=('', 8))
-        self.checkpoint_info_label.pack(anchor='w')
-
-        # Right side: Scan checkpoint button and metrics
-        scan_inner = ttk.Frame(info_row)
-        scan_inner.pack(side='right', padx=5)
-
+            info_row, textvariable=self.checkpoint_info_var, foreground='blue', font=('', 8))
+        self.checkpoint_info_label.pack(side='left')
         self.checkpoint_metrics_var = tk.StringVar(value="")
-        ttk.Label(scan_inner, textvariable=self.checkpoint_metrics_var,
-                  foreground='gray', font=('', 8)).pack(side='left', padx=(0, 5))
+        ttk.Label(info_row, textvariable=self.checkpoint_metrics_var,
+                  foreground='gray', font=('', 8)).pack(side='right')
 
-        ttk.Button(
-            scan_inner,
-            text="Scan Checkpoint",
-            command=self._scan_checkpoint_metrics,
-            width=15
-        ).pack(side='left')
+        # mode_desc_var kept for backward compat with existing methods that touch it
+        self.mode_desc_var = tk.StringVar(value="DME training (scalar blur head)")
 
         # Dataset & run selection
         self.dataset_frame = ttk.LabelFrame(self.tab_train, text="Dataset & Run", padding=10)
@@ -1266,199 +1211,56 @@ This gives the model examples with known ground truth to learn from."""
                   text="Run output: <root>/runs/<timestamp>_<name>/",
                   font=('TkDefaultFont', 8), foreground='gray').pack(anchor='w', pady=(2, 0))
 
-        # Settings frame (initially disabled)
-        self.settings_frame = ttk.LabelFrame(self.tab_train, text="Settings", padding=10)
+        # ── Basic training settings ───────────────────────────────────────
+        self.settings_frame = ttk.LabelFrame(self.tab_train, text="Training settings", padding=10)
         self.settings_frame.pack(fill='x', pady=5)
 
-        # Create two columns
-        left_col = ttk.Frame(self.settings_frame)
-        left_col.pack(side='left', fill='both', expand=True)
-
-        right_col = ttk.Frame(self.settings_frame)
-        right_col.pack(side='left', fill='both', expand=True, padx=(20, 0))
-
-        # DME settings (left column)
-        self.dme_settings_frame = ttk.LabelFrame(left_col, text="DME Settings", padding=5)
-        self.dme_settings_frame.pack(fill='x', pady=2)
-
-        row1 = ttk.Frame(self.dme_settings_frame)
-        row1.pack(fill='x', pady=2)
-        ttk.Label(row1, text="Epochs to Train:", width=14).pack(side='left')
+        basic_row1 = ttk.Frame(self.settings_frame)
+        basic_row1.pack(fill='x', pady=2)
+        ttk.Label(basic_row1, text="Epochs:", width=10).pack(side='left')
         self.epochs_dme_var = tk.StringVar(value="50")
-        self.epochs_dme_entry = ttk.Entry(row1, textvariable=self.epochs_dme_var, width=10)
-        self.epochs_dme_entry.pack(side='left')
-
-        row2 = ttk.Frame(self.dme_settings_frame)
-        row2.pack(fill='x', pady=2)
-        ttk.Label(row2, text="Batch Size:", width=12).pack(side='left')
+        self.epochs_dme_entry = ttk.Entry(basic_row1, textvariable=self.epochs_dme_var, width=10)
+        self.epochs_dme_entry.pack(side='left', padx=(0, 20))
+        ttk.Label(basic_row1, text="Batch size:", width=12).pack(side='left')
         self.batch_size_var = tk.StringVar(value="128")
-        self.batch_dme_entry = ttk.Entry(row2, textvariable=self.batch_size_var, width=10)
+        self.batch_dme_entry = ttk.Entry(basic_row1, textvariable=self.batch_size_var, width=10)
         self.batch_dme_entry.pack(side='left')
 
-        # Learning rate (right column)
-        self.lr_frame = ttk.LabelFrame(right_col, text="Learning Rate", padding=5)
-        self.lr_frame.pack(fill='x', pady=2)
-
-        # Override checkbox
+        basic_row2 = ttk.Frame(self.settings_frame)
+        basic_row2.pack(fill='x', pady=2)
+        ttk.Label(basic_row2, text="Learning rate:", width=14).pack(side='left')
+        self.lr_var = tk.StringVar(value="0.0002")
+        self.lr_entry = ttk.Entry(basic_row2, textvariable=self.lr_var, width=12, state='disabled')
+        self.lr_entry.pack(side='left', padx=(0, 8))
         self.override_lr_var = tk.BooleanVar(value=False)
         self.override_lr_checkbox = ttk.Checkbutton(
-            self.lr_frame,
-            text="Override checkpoint LR",
-            variable=self.override_lr_var,
-            command=self._on_override_lr_toggle
-        )
-        self.override_lr_checkbox.pack(anchor='w', pady=(0, 5))
+            basic_row2, text="Override checkpoint LR",
+            variable=self.override_lr_var, command=self._on_override_lr_toggle)
+        self.override_lr_checkbox.pack(side='left')
 
-        lr_row = ttk.Frame(self.lr_frame)
-        lr_row.pack(fill='x', pady=2)
-        ttk.Label(lr_row, text="Learning Rate:", width=14).pack(side='left')
-        self.lr_var = tk.StringVar(value="0.0002")
-        self.lr_entry = ttk.Entry(lr_row, textvariable=self.lr_var, width=12, state='disabled')
-        self.lr_entry.pack(side='left', padx=(0, 5))
-
-        # Add helpful note
-        lr_note = ttk.Label(
-            self.lr_frame,
-            text="Default: 2e-4. Use 1e-5 to 1e-4 for fine-tuning.",
-            font=('TkDefaultFont', 8),
-            foreground='gray'
-        )
-        lr_note.pack(anchor='w', padx=(0, 0))
-
-        # Optimizer (left column, below DME settings)
-        self.optimizer_frame = ttk.LabelFrame(left_col, text="Optimizer", padding=5)
-        self.optimizer_frame.pack(fill='x', pady=2)
-
-        opt_row = ttk.Frame(self.optimizer_frame)
-        opt_row.pack(fill='x', pady=2)
-        ttk.Label(opt_row, text="Type:", width=14).pack(side='left')
-        self.optimizer_var = tk.StringVar(value="adam")
-        ttk.Combobox(opt_row, textvariable=self.optimizer_var,
-                     values=["adam", "adamw", "sgd"], state="readonly",
-                     width=10).pack(side='left')
-
-        beta_row = ttk.Frame(self.optimizer_frame)
-        beta_row.pack(fill='x', pady=2)
-        ttk.Label(beta_row, text="β1 / momentum:", width=14).pack(side='left')
-        self.adam_beta1_var = tk.StringVar(value="0.9")
-        ttk.Entry(beta_row, textvariable=self.adam_beta1_var, width=8).pack(side='left', padx=(0, 8))
-        ttk.Label(beta_row, text="β2:", width=4).pack(side='left')
-        self.adam_beta2_var = tk.StringVar(value="0.999")
-        ttk.Entry(beta_row, textvariable=self.adam_beta2_var, width=8).pack(side='left')
-
-        wd_row = ttk.Frame(self.optimizer_frame)
-        wd_row.pack(fill='x', pady=2)
-        ttk.Label(wd_row, text="Weight decay:", width=14).pack(side='left')
-        self.weight_decay_var = tk.StringVar(value="0.0")
-        ttk.Entry(wd_row, textvariable=self.weight_decay_var, width=10).pack(side='left')
-
-        ttk.Label(self.optimizer_frame,
-                  text="Use AdamW for L2 regularisation; SGD if Adam is unstable.",
-                  font=('TkDefaultFont', 8), foreground='gray').pack(anchor='w', pady=(2, 0))
-
-        # LR scheduler (right column, below LR)
-        self.scheduler_frame = ttk.LabelFrame(right_col, text="LR Schedule", padding=5)
-        self.scheduler_frame.pack(fill='x', pady=2)
-
-        sched_row = ttk.Frame(self.scheduler_frame)
-        sched_row.pack(fill='x', pady=2)
-        ttk.Label(sched_row, text="Type:", width=14).pack(side='left')
-        self.lr_schedule_var = tk.StringVar(value="step")
-        ttk.Combobox(sched_row, textvariable=self.lr_schedule_var,
-                     values=["none", "step", "exponential", "cosine"], state="readonly",
-                     width=12).pack(side='left')
-
-        decay_row = ttk.Frame(self.scheduler_frame)
-        decay_row.pack(fill='x', pady=2)
-        ttk.Label(decay_row, text="Decay start (epoch):", width=18).pack(side='left')
-        self.lr_decay_start_var = tk.StringVar(value="200")
-        ttk.Entry(decay_row, textvariable=self.lr_decay_start_var, width=8).pack(side='left')
-
-        rate_row = ttk.Frame(self.scheduler_frame)
-        rate_row.pack(fill='x', pady=2)
-        ttk.Label(rate_row, text="Decay rate:", width=14).pack(side='left')
-        self.lr_decay_rate_var = tk.StringVar(value="0.005")
-        ttk.Entry(rate_row, textvariable=self.lr_decay_rate_var, width=10).pack(side='left')
-        ttk.Label(rate_row, text="Min LR:", width=8).pack(side='left', padx=(8, 0))
-        self.lr_min_var = tk.StringVar(value="1e-6")
-        ttk.Entry(rate_row, textvariable=self.lr_min_var, width=10).pack(side='left')
-
-        # Regularisation (left column, below optimizer)
-        self.reg_frame = ttk.LabelFrame(left_col, text="Regularisation", padding=5)
-        self.reg_frame.pack(fill='x', pady=2)
-
-        clip_row = ttk.Frame(self.reg_frame)
-        clip_row.pack(fill='x', pady=2)
-        ttk.Label(clip_row, text="Grad clip norm:", width=14).pack(side='left')
-        self.grad_clip_var = tk.StringVar(value="0.0")
-        ttk.Entry(clip_row, textvariable=self.grad_clip_var, width=10).pack(side='left')
-        ttk.Label(self.reg_frame,
-                  text="0 = disabled. Try 1.0 if loss spikes.",
-                  font=('TkDefaultFont', 8), foreground='gray').pack(anchor='w', pady=(2, 0))
-
-        # Loss / reproducibility (left column)
-        self.loss_frame = ttk.LabelFrame(left_col, text="Loss & Reproducibility", padding=5)
-        self.loss_frame.pack(fill='x', pady=2)
-
-        eps_row = ttk.Frame(self.loss_frame)
-        eps_row.pack(fill='x', pady=2)
-        ttk.Label(eps_row, text="Log eps:", width=14).pack(side='left')
-        self.log_eps_var = tk.StringVar(value="0.01")
-        ttk.Entry(eps_row, textvariable=self.log_eps_var, width=10).pack(side='left')
-
-        seed_row = ttk.Frame(self.loss_frame)
-        seed_row.pack(fill='x', pady=2)
-        ttk.Label(seed_row, text="Random seed:", width=14).pack(side='left')
-        self.seed_var = tk.StringVar(value="42")
-        ttk.Entry(seed_row, textvariable=self.seed_var, width=10).pack(side='left')
-
-        # GPU setting (right column)
-        self.gpu_frame = ttk.LabelFrame(right_col, text="Device", padding=5)
-        self.gpu_frame.pack(fill='x', pady=2)
-
+        basic_row3 = ttk.Frame(self.settings_frame)
+        basic_row3.pack(fill='x', pady=2)
         self.use_gpu_var = tk.BooleanVar(value=True)
-        self.gpu_checkbox = ttk.Checkbutton(
-            self.gpu_frame, text="Use GPU (if available)",
-            variable=self.use_gpu_var
-        )
-        self.gpu_checkbox.pack(anchor='w')
+        self.gpu_checkbox = ttk.Checkbutton(basic_row3, text="Use GPU (if available)",
+                                             variable=self.use_gpu_var)
+        self.gpu_checkbox.pack(side='left')
+        ttk.Button(basic_row3, text="Advanced settings...",
+                   command=self._open_advanced_settings).pack(side='right', padx=5)
 
+        # ── Hidden vars for advanced settings (populated by dialog) ──────
+        self.optimizer_var = tk.StringVar(value="adam")
+        self.adam_beta1_var = tk.StringVar(value="0.9")
+        self.adam_beta2_var = tk.StringVar(value="0.999")
+        self.weight_decay_var = tk.StringVar(value="0.0")
+        self.lr_schedule_var = tk.StringVar(value="step")
+        self.lr_decay_start_var = tk.StringVar(value="200")
+        self.lr_decay_rate_var = tk.StringVar(value="0.005")
+        self.lr_min_var = tk.StringVar(value="1e-6")
+        self.grad_clip_var = tk.StringVar(value="0.0")
+        self.log_eps_var = tk.StringVar(value="0.01")
+        self.seed_var = tk.StringVar(value="42")
         self.cuda_launch_blocking_var = tk.BooleanVar(value=False)
-        self.cuda_blocking_checkbox = ttk.Checkbutton(
-            self.gpu_frame, text="CUDA Launch Blocking (debugging)",
-            variable=self.cuda_launch_blocking_var
-        )
-        self.cuda_blocking_checkbox.pack(anchor='w')
-
-        # Add tooltip/explanation
-        blocking_help = ttk.Label(
-            self.gpu_frame,
-            text="(Forces sequential execution - slower but shows exact error locations)",
-            font=('TkDefaultFont', 8),
-            foreground='gray'
-        )
-        blocking_help.pack(anchor='w', padx=(20, 0))
-
-        # Checkpoint saving options (right column)
-        self.checkpoint_frame = ttk.LabelFrame(right_col, text="Checkpoint Saving", padding=5)
-        self.checkpoint_frame.pack(fill='x', pady=2)
-
         self.save_only_best_var = tk.BooleanVar(value=False)
-        self.save_only_best_checkbox = ttk.Checkbutton(
-            self.checkpoint_frame,
-            text="Save only best checkpoints (skip per-epoch)",
-            variable=self.save_only_best_var
-        )
-        self.save_only_best_checkbox.pack(anchor='w')
-
-        # Add tooltip/explanation
-        save_help = ttk.Label(
-            self.checkpoint_frame,
-            text="(Saves disk space: ~20 MB per DD epoch, ~160 KB per DME epoch)",
-            font=('TkDefaultFont', 8),
-            foreground='gray'
-        )
-        save_help.pack(anchor='w', padx=(20, 0))
 
         # Validation Split Strategy
         self.val_split_frame = ttk.LabelFrame(
