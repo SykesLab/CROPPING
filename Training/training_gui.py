@@ -1459,15 +1459,34 @@ class TrainingGUI:
                 "Run output: <root>/models/<timestamp>_<name>/")
 
     def _scan_checkpoint_metrics(self):
-        """Scan the loaded checkpoint and display its metrics."""
+        """Scan the resume checkpoint. In Auto-detect mode, search for the
+        latest model's dme_best.pth and select it; otherwise just inspect
+        the explicitly-chosen checkpoint."""
         checkpoint_path = self.checkpoint_path_var.get()
 
         # Clear previous metrics
         self.checkpoint_metrics_var.set("")
 
-        if not checkpoint_path or checkpoint_path == "":
-            self.checkpoint_metrics_var.set("⚠ No checkpoint selected")
-            return
+        # Auto-detect: hunt for the latest model's best checkpoint
+        if not checkpoint_path:
+            from run_paths import find_latest_model
+            output_root = Path(self.output_dir_var.get())
+            latest = find_latest_model(output_root)
+            if latest is None:
+                self.checkpoint_metrics_var.set(
+                    f"⚠ No models found under {output_root}/models/")
+                return
+            candidate = latest / "checkpoints" / "dme_best.pth"
+            if not candidate.is_file():
+                self.checkpoint_metrics_var.set(
+                    f"⚠ Latest model {latest.name} has no dme_best.pth yet")
+                return
+            self.checkpoint_path_var.set(str(candidate))
+            self.checkpoint_display_var.set(candidate.name)
+            self._set_checkpoint_info_message(str(candidate))
+            checkpoint_path = str(candidate)
+            # The trace on checkpoint_path_var fires the resume-folder lock
+            # (auto-populates run name, switches output to the source folder)
 
         # Check if file exists
         if not Path(checkpoint_path).exists():
@@ -3565,16 +3584,19 @@ class TrainingGUI:
             'cuda_blocking': self.cuda_launch_blocking_var.get(),
         }
 
-        is_running = self._training_running
-        widgets: dict = {}  # key → widget (for enable/disable)
-        LOCK_NOTE = "Cannot change once training starts"
+        # These settings are tied to checkpoint state — changing them mid-resume
+        # would break optimizer state / loss continuity / data shuffle. Lock
+        # them whenever a checkpoint is selected for resume.
+        is_resuming = bool(self.checkpoint_path_var.get().strip())
+        widgets: dict = {}
+        LOCK_NOTE = ("Locked while resuming from a checkpoint"
+                     if is_resuming
+                     else "Locks when you select a resume checkpoint")
 
         def _lock_note(parent):
-            """Info label shown under locked fields — hidden while training is running."""
             lbl = ttk.Label(parent, text=LOCK_NOTE,
                             foreground='#cc8800', font=('TkDefaultFont', 8, 'italic'))
-            if not is_running:
-                lbl.pack(anchor='w', padx=(0, 0))
+            lbl.pack(anchor='w', padx=(0, 0))
             return lbl
 
         # Optimizer
@@ -3653,8 +3675,8 @@ class TrainingGUI:
             variable=self.cuda_launch_blocking_var)
         widgets['cuda_blocking'].pack(anchor='w', pady=1)
 
-        # Disable locked widgets while training is running
-        if is_running:
+        # Disable locked widgets while resuming from a checkpoint
+        if is_resuming:
             for key in self._ADV_LOCKED_KEYS:
                 w = widgets.get(key)
                 if w is not None:
@@ -3669,7 +3691,7 @@ class TrainingGUI:
 
         def on_reset():
             for key, default in self._ADV_DEFAULTS.items():
-                if is_running and key in self._ADV_LOCKED_KEYS:
+                if is_resuming and key in self._ADV_LOCKED_KEYS:
                     continue
                 var = self._adv_var(key)
                 if var is not None:
