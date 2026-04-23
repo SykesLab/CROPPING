@@ -409,3 +409,261 @@ class TestRunPaths:
         (bad / "blur").mkdir(parents=True)
         ok, msg = validate_dataset(bad)
         assert not ok and "metadata.csv" in msg
+
+    def test_validation_paths(self, tmp_path):
+        import re
+        from run_paths import (
+            synthetic_validation_root, real_crop_validation_root,
+            synthetic_validation_dir, real_crop_validation_dir,
+            edits_dir, make_test_folder_name,
+        )
+        run = "20260423_202438_demo"
+        assert synthetic_validation_root(tmp_path).name == "synthetic_validation"
+        assert real_crop_validation_root(tmp_path).name == "real_crop_validation"
+        assert synthetic_validation_dir(tmp_path, run) == \
+            tmp_path / "synthetic_validation" / run
+        assert real_crop_validation_dir(tmp_path, run) == \
+            tmp_path / "real_crop_validation" / run
+        assert edits_dir(tmp_path, run) == \
+            tmp_path / "real_crop_validation" / run / "edits"
+        # Test-folder names
+        assert re.match(r"^test_\d{8}_\d{6}_v1$", make_test_folder_name("v1"))
+        assert re.match(r"^test_\d{8}_\d{6}_original$", make_test_folder_name())
+        # Illegal chars in variant should be sanitised
+        assert re.match(r"^test_\d{8}_\d{6}_v_1_beta$",
+                        make_test_folder_name("v/1:beta"))
+
+    def test_detect_run_name_and_variant(self, tmp_path):
+        from run_paths import detect_run_name, detect_variant
+        # Build fake checkpoint paths under the two recognised layouts
+        run = "20260423_202438_demo"
+        src = tmp_path / "runs" / run / "checkpoints" / "dme_best.pth"
+        src.parent.mkdir(parents=True)
+        src.write_bytes(b"")
+        assert detect_run_name(src) == run
+        assert detect_variant(src) == "original"
+
+        v1 = tmp_path / "real_crop_validation" / run / "edits" / "dme_best_v1.pth"
+        v1.parent.mkdir(parents=True)
+        v1.write_bytes(b"")
+        assert detect_run_name(v1) == run
+        assert detect_variant(v1) == "v1"
+
+        v7 = v1.parent / "dme_best_v7.pth"
+        v7.write_bytes(b"")
+        assert detect_variant(v7) == "v7"
+
+        # Edit with a non-standard name → fall back to stem
+        custom = v1.parent / "tuned_for_camG.pth"
+        custom.write_bytes(b"")
+        assert detect_run_name(custom) == run
+        assert detect_variant(custom) == "tuned_for_camG"
+
+        # Unrecognised location → no run name, variant from stem
+        stray = tmp_path / "elsewhere" / "somehow.pth"
+        stray.parent.mkdir(parents=True)
+        stray.write_bytes(b"")
+        assert detect_run_name(stray) is None
+        assert detect_variant(stray) == "somehow"
+
+
+# ===========================================================================
+# Test 11 — calibration_editor (bake post-hoc correction into ρ, σ₀)
+# ===========================================================================
+class TestCalibrationEditor:
+    def test_linear_correction_identity(self):
+        from calibration_editor import apply_linear_correction
+        # a=1, b=0 must be a no-op
+        rho_new, sigma_0_new = apply_linear_correction(1.4135, 0.241, 1.0, 0.0)
+        assert abs(rho_new - 1.4135) < 1e-9
+        assert abs(sigma_0_new - 0.241) < 1e-9
+
+    def test_linear_correction_typical(self):
+        from calibration_editor import apply_linear_correction
+        # Known case: a=1.034, b=-0.12  from the spec example
+        rho_new, sigma_0_new = apply_linear_correction(1.4135, 0.241, 1.034, -0.12)
+        # Verify ρ_new = ρ/a and σ₀_new = σ₀ − b·ρ/a
+        assert abs(rho_new - 1.4135 / 1.034) < 1e-9
+        assert abs(sigma_0_new - (0.241 - (-0.12) * 1.4135 / 1.034)) < 1e-9
+
+    def test_linear_correction_is_equivalent_to_linear_remap(self):
+        """Applying ẑ_corr = a·ẑ + b is equivalent to using the new constants."""
+        from calibration_editor import apply_linear_correction
+        rho, sigma_0 = 1.4135, 0.241
+        a, b = 1.034, -0.12
+        rho_n, sigma_0_n = apply_linear_correction(rho, sigma_0, a, b)
+        # Pick an arbitrary σ_pred; the two formulas should agree.
+        for sigma_pred in (0.3, 1.5, 5.0, 9.9):
+            z_orig = (sigma_pred - sigma_0) / rho
+            z_corr_maths = a * z_orig + b
+            z_new_consts = (sigma_pred - sigma_0_n) / rho_n
+            assert abs(z_corr_maths - z_new_consts) < 1e-9, sigma_pred
+
+    def test_linear_correction_degenerate(self):
+        from calibration_editor import apply_linear_correction, CalibrationError
+        with pytest.raises(CalibrationError):
+            apply_linear_correction(1.4, 0.2, 0.0, 0.0)
+
+    def test_invert_correction_roundtrip(self):
+        from calibration_editor import apply_linear_correction, invert_correction
+        rho, sigma_0 = 1.4135, 0.241
+        a, b = 1.034, -0.12
+        rho_n, sigma_0_n = apply_linear_correction(rho, sigma_0, a, b)
+        a_rec, b_rec = invert_correction(rho_n, sigma_0_n, rho, sigma_0)
+        assert abs(a_rec - a) < 1e-9
+        assert abs(b_rec - b) < 1e-9
+
+    def test_calib_valid_defocus_mm_derives_from_config(self):
+        from physics import calib_valid_defocus_mm, CALIB_VALID_DEFOCUS_MM_FALLBACK
+        # Typical case: blur range / rho / sigma_0 all present
+        cfg = {
+            'data': {'blur_range_px': [1.63, 9.89]},
+            'training': {'rho_direct': 1.4135, 'sigma_0': 0.241},
+        }
+        z_min, z_max = calib_valid_defocus_mm(cfg)
+        # (1.63 - 0.241) / 1.4135 ≈ 0.983
+        # (9.89 - 0.241) / 1.4135 ≈ 6.825
+        assert abs(z_min - 0.983) < 0.01
+        assert abs(z_max - 6.825) < 0.01
+
+        # Missing sigma_0 → treated as 0
+        cfg2 = {
+            'data': {'blur_range_px': [2.0, 10.0]},
+            'training': {'rho_direct': 2.0},
+        }
+        z_min, z_max = calib_valid_defocus_mm(cfg2)
+        assert abs(z_min - 1.0) < 1e-9 and abs(z_max - 5.0) < 1e-9
+
+        # blur_min below sigma_0 → z_min clamped to 0
+        cfg3 = {
+            'data': {'blur_range_px': [0.1, 5.0]},
+            'training': {'rho_direct': 1.0, 'sigma_0': 0.5},
+        }
+        z_min, z_max = calib_valid_defocus_mm(cfg3)
+        assert z_min == 0.0
+        assert abs(z_max - 4.5) < 1e-9
+
+        # Missing blur_range_px → fallback
+        assert calib_valid_defocus_mm({'training': {'rho_direct': 1.4}}) == \
+            CALIB_VALID_DEFOCUS_MM_FALLBACK
+        # Missing rho → fallback
+        assert calib_valid_defocus_mm({'data': {'blur_range_px': [1, 5]}}) == \
+            CALIB_VALID_DEFOCUS_MM_FALLBACK
+        # rho <= 0 → fallback
+        assert calib_valid_defocus_mm(
+            {'data': {'blur_range_px': [1, 5]}, 'training': {'rho_direct': 0}}) == \
+            CALIB_VALID_DEFOCUS_MM_FALLBACK
+        # Empty / None config → fallback
+        assert calib_valid_defocus_mm({}) == CALIB_VALID_DEFOCUS_MM_FALLBACK
+        assert calib_valid_defocus_mm(None) == CALIB_VALID_DEFOCUS_MM_FALLBACK
+
+    def test_correction_from_fit(self):
+        from calibration_editor import correction_from_fit, CalibrationError
+        # Identity fit — no correction
+        a, b = correction_from_fit(1.0, 0.0)
+        assert abs(a - 1.0) < 1e-12 and abs(b) < 1e-12
+        # Predictions 10% high, no offset → scale down
+        a, b = correction_from_fit(1.1, 0.0)
+        assert abs(a - 1 / 1.1) < 1e-12 and abs(b) < 1e-12
+        # Predictions shifted up by 0.5 mm → pure offset correction
+        a, b = correction_from_fit(1.0, 0.5)
+        assert abs(a - 1.0) < 1e-12 and abs(b + 0.5) < 1e-12
+        # Round trip: applying (a, b) to a fake "pred = slope·true + intercept"
+        # must recover true.
+        slope, intercept = 1.07, 0.15
+        a, b = correction_from_fit(slope, intercept)
+        for true in (0.5, 2.0, 5.0, 9.0):
+            pred = slope * true + intercept
+            true_recovered = a * pred + b
+            assert abs(true_recovered - true) < 1e-12, true
+        # Degenerate
+        with pytest.raises(CalibrationError):
+            correction_from_fit(0.0, 0.5)
+
+    @requires_torch
+    def test_read_write_calibration_roundtrip(self, tmp_path):
+        import torch
+        from calibration_editor import (read_calibration, write_calibration,
+                                         save_corrected_checkpoint, load_checkpoint,
+                                         read_history)
+        # Build a minimal checkpoint on disk
+        src = tmp_path / "dme_best.pth"
+        ckpt = {
+            'config': {'training': {'rho_direct': 1.4135, 'sigma_0': 0.241,
+                                     'training_mode': 'direct'}},
+            'dme_state_dict': {},
+        }
+        torch.save(ckpt, src)
+
+        # Save a corrected version — history should seed + grow
+        out = tmp_path / "edits" / "dme_best_v1.pth"
+        snap = save_corrected_checkpoint(
+            src, out, rho_new=1.3672, sigma_0_new=0.180,
+            source_label='fit', note='a=1.034 b=-0.12')
+        assert out.is_file()
+        assert snap.rho == 1.3672 and snap.sigma_0 == 0.180
+
+        # Re-load the corrected checkpoint and verify
+        loaded = load_checkpoint(out)
+        rho, sigma_0 = read_calibration(loaded)
+        assert abs(rho - 1.3672) < 1e-9 and abs(sigma_0 - 0.180) < 1e-9
+        history = read_history(loaded)
+        # History should have: [seeded training, the new fit snapshot]
+        assert len(history) == 2
+        assert history[0].source == 'training' and history[0].rho == 1.4135
+        assert history[1].source == 'fit' and history[1].rho == 1.3672
+
+        # Source must be untouched
+        src_loaded = load_checkpoint(src)
+        rho_src, _ = read_calibration(src_loaded)
+        assert rho_src == 1.4135, "source checkpoint was mutated"
+
+    @requires_torch
+    def test_chained_edit_preserves_original(self, tmp_path):
+        import torch
+        from calibration_editor import (save_corrected_checkpoint, load_checkpoint,
+                                         read_history)
+        src = tmp_path / "dme_best.pth"
+        torch.save({'config': {'training': {'rho_direct': 2.0, 'sigma_0': 0.1}},
+                    'dme_state_dict': {}}, src)
+        v1 = tmp_path / "edits" / "dme_best_v1.pth"
+        v2 = tmp_path / "edits" / "dme_best_v2.pth"
+        save_corrected_checkpoint(src, v1, 1.8, 0.15, 'fit', note='first')
+        save_corrected_checkpoint(v1, v2, 1.7, 0.18, 'manual', note='second')
+        h2 = read_history(load_checkpoint(v2))
+        assert len(h2) == 3  # training + fit + manual
+        assert [s.rho for s in h2] == [2.0, 1.8, 1.7]
+        assert [s.source for s in h2] == ['training', 'fit', 'manual']
+
+    @requires_torch
+    def test_refuses_to_overwrite_source(self, tmp_path):
+        import torch
+        from calibration_editor import save_corrected_checkpoint, CalibrationError
+        src = tmp_path / "dme_best.pth"
+        torch.save({'config': {'training': {'rho_direct': 1.4, 'sigma_0': 0.2}},
+                    'dme_state_dict': {}}, src)
+        with pytest.raises(CalibrationError):
+            save_corrected_checkpoint(src, src, 1.3, 0.18, 'manual')
+
+    def test_read_calibration_errors_on_missing(self):
+        from calibration_editor import read_calibration, CalibrationError
+        # No config.training.rho_direct
+        with pytest.raises(CalibrationError):
+            read_calibration({'config': {'training': {}}})
+        with pytest.raises(CalibrationError):
+            read_calibration({})
+
+    @requires_torch
+    def test_next_edit_filename_numbering(self, tmp_path):
+        import torch
+        from calibration_editor import next_edit_filename
+        edits = tmp_path / "edits"
+        edits.mkdir()
+        # Empty dir → v1
+        assert next_edit_filename(edits).name == "dme_best_v1.pth"
+        (edits / "dme_best_v1.pth").write_bytes(b"x")
+        assert next_edit_filename(edits).name == "dme_best_v2.pth"
+        (edits / "dme_best_v2.pth").write_bytes(b"x")
+        assert next_edit_filename(edits).name == "dme_best_v3.pth"
+        # Custom stem
+        assert next_edit_filename(edits, "custom").name == "custom_v1.pth"
