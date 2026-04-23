@@ -830,14 +830,17 @@ class RealCropInference:
         # Keep full df for sample strip, filter for analysis
         df_all = df.copy()
 
-        # Exclude frames outside calibration range:
-        #   near-focus (|z| < 0.5 mm) and plateau (|z| > 6.8 mm)
+        # Exclude frames outside the calibration-valid range
+        # (derived from the checkpoint's own training distribution)
+        from physics import calib_valid_defocus_mm
+        z_min, z_max = calib_valid_defocus_mm(self.config)
         n_before = len(df)
-        df = df[(df['true_defocus'] >= 0.5) & (df['true_defocus'] <= 6.8)].reset_index(drop=True)
+        df = df[(df['true_defocus'] >= z_min)
+                & (df['true_defocus'] <= z_max)].reset_index(drop=True)
         n_excluded = n_before - len(df)
         if n_excluded > 0:
             logger.info(f"  Excluded {n_excluded} frames outside calibration range "
-                        f"(|z| < 0.5 mm or |z| > 6.8 mm), {len(df)} remaining")
+                        f"(|z| < {z_min} mm or |z| > {z_max} mm), {len(df)} remaining")
 
         # --- Figure 1: Main 4-panel analysis ---
         fig, axes = plt.subplots(2, 2, figsize=(14, 10))
@@ -1020,10 +1023,12 @@ class RealCropInference:
         pred_def = df['pred_defocus']
         residual = df['residual']
 
+        from physics import calib_valid_defocus_mm
+        z_min, z_max = calib_valid_defocus_mm(self.config)
         lines = [
             '=' * 60,
             'Z-STACK VALIDATION SUMMARY',
-            '(filtered to calibration range: 0.5 <= |z| <= 6.8 mm)',
+            f'(filtered to calibration range: {z_min:.2f} <= |z| <= {z_max:.2f} mm)',
             '=' * 60,
             f'Samples: {len(df)}',
             f'True z range: {df["true_z"].min():.1f} to {df["true_z"].max():.1f} mm',

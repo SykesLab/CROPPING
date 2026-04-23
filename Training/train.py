@@ -42,6 +42,16 @@ _NUM_WORKERS = 0 if platform.system() == "Windows" else 4
 
 logger = logging.getLogger(__name__)
 
+# Ensure per-epoch training stats reach the console when nobody upstream has
+# configured logging (e.g. GUI-launched runs). Skip if the root logger already
+# has handlers so we don't clobber an app-level config.
+if not logging.getLogger().handlers and not logger.handlers:
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter('%(message)s'))
+    logger.addHandler(_handler)
+    logger.setLevel(logging.INFO)
+    logger.propagate = False
+
 
 class Trainer:
     """
