@@ -1756,9 +1756,16 @@ class TrainingGUI:
         row3 = ttk.Frame(paths_frame)
         row3.pack(fill='x', pady=2)
         ttk.Label(row3, text="Output Directory:", width=18).pack(side='left')
-        self.inf_output_var = tk.StringVar(value="inference_results")
+        self.inf_output_var = tk.StringVar(
+            value=str(Path(__file__).resolve().parent / "training_output" / "inference_results"))
         ttk.Entry(row3, textvariable=self.inf_output_var, width=60).pack(side='left', padx=5)
         ttk.Button(row3, text="Browse", command=self._browse_inference_output).pack(side='left')
+
+        self.inf_output_preview_var = tk.StringVar(
+            value="Results go to: (select a checkpoint to see the derived path)")
+        ttk.Label(paths_frame, textvariable=self.inf_output_preview_var,
+                  font=('TkDefaultFont', 8), foreground='blue',
+                  wraplength=700).pack(anchor='w', padx=(120, 0))
 
         # Options
         options_frame = ttk.LabelFrame(parent, text="Inference Options", padding=10)
@@ -1998,9 +2005,16 @@ class TrainingGUI:
         row3 = ttk.Frame(paths_frame)
         row3.pack(fill='x', pady=2)
         ttk.Label(row3, text="Output Directory:", width=18).pack(side='left')
-        self.val_output_var = tk.StringVar(value="test_results")
+        self.val_output_var = tk.StringVar(
+            value=str(Path(__file__).resolve().parent / "training_output" / "test_results"))
         ttk.Entry(row3, textvariable=self.val_output_var, width=50).pack(side='left', padx=5)
         ttk.Button(row3, text="Browse", command=self._browse_val_output).pack(side='left')
+
+        self.val_output_preview_var = tk.StringVar(
+            value="Results go to: (select a checkpoint to see the derived path)")
+        ttk.Label(paths_frame, textvariable=self.val_output_preview_var,
+                  font=('TkDefaultFont', 8), foreground='blue',
+                  wraplength=700).pack(anchor='w', padx=(120, 0))
 
         # Blur Filtering (right side, vertically centered)
         filter_frame = ttk.LabelFrame(self.tab_validation, text="CoC Filtering", padding=10)
@@ -2346,6 +2360,9 @@ class TrainingGUI:
 
             # Auto-load min_blur_px from config for validation tab
             self._load_min_blur_from_config()
+            # Refresh both output-path previews (they depend on output_dir_var)
+            self._refresh_output_preview('real')
+            self._refresh_output_preview('synthetic')
 
     def _show_generation_info(self):
         """Pop up a short explanation of what the generation tab produces."""
@@ -2450,12 +2467,15 @@ class TrainingGUI:
         target_var = self.inf_model_var if target == 'inf' else self.val_model_var
         target_var.set(str(ckpt))
         self._log(f"Set checkpoint to: {ckpt}")
-        # Auto-scan when filling the inference field so threshold autopopulates
-        if target == 'inf':
-            try:
+        # Auto-populate the target tab's derived fields from the checkpoint
+        try:
+            if target == 'inf':
                 self._scan_inference_checkpoint()
-            except Exception as e:
-                self._log(f"Auto-scan failed: {e}")
+            else:
+                self._load_min_blur_from_config()
+        except Exception as e:
+            self._log(f"Auto-populate failed: {e}")
+        self._refresh_output_preview('real' if target == 'inf' else 'synthetic')
 
     def _fill_latest_dataset(self):
         """Set the validation data field to the most recent dataset."""
@@ -2683,6 +2703,46 @@ class TrainingGUI:
             messagebox.showerror("Error", f"Failed to load calibration file:\n{e}")
             self._log(f"Error loading direct calibration: {e}")
 
+    def _refresh_output_preview(self, kind: str):
+        """Recompute the 'Results go to: ...' label for Tab 4 or Tab 5.
+
+        kind='real'      → Tab 5 (inference) → real_crop_validation/<run>/
+        kind='synthetic' → Tab 4 (validation) → synthetic_validation/<run>/
+        """
+        from run_paths import (detect_run_name, detect_variant,
+                               real_crop_validation_dir,
+                               synthetic_validation_dir, TEST_PREFIX)
+
+        if kind == 'real':
+            model_path = self.inf_model_var.get().strip()
+            fallback_var = self.inf_output_var
+            preview_var = self.inf_output_preview_var
+            dir_fn = real_crop_validation_dir
+        else:
+            model_path = self.val_model_var.get().strip()
+            fallback_var = self.val_output_var
+            preview_var = self.val_output_preview_var
+            dir_fn = synthetic_validation_dir
+
+        if not model_path or not Path(model_path).is_file():
+            preview_var.set(
+                "Results go to: (select a checkpoint to see the derived path)")
+            return
+
+        run_name = detect_run_name(Path(model_path))
+        variant = detect_variant(Path(model_path))
+        if run_name:
+            training_root = Path(self.output_dir_var.get())
+            folder = dir_fn(training_root, run_name) / \
+                f"{TEST_PREFIX}_<ts>_{variant}"
+            preview_var.set(f"Results go to: {folder}")
+        else:
+            fallback_root = Path(fallback_var.get()) if fallback_var.get() else Path('?')
+            preview_var.set(
+                "Results go to: (checkpoint not under runs/ or "
+                "real_crop_validation/ — falling back to "
+                f"{fallback_root}/<subfolder>_<ts>/)")
+
     def _browse_inference_model(self):
         """Browse for inference model checkpoint."""
         path = filedialog.askopenfilename(
@@ -2697,6 +2757,7 @@ class TrainingGUI:
                 self._scan_inference_checkpoint()
             except Exception as e:
                 self._log(f"Auto-scan failed: {e}")
+            self._refresh_output_preview('real')
 
     def _open_calibration_editor(self):
         """Open the calibration editor dialog, prefilled with the current Tab 5 model."""
@@ -3370,6 +3431,11 @@ class TrainingGUI:
         if path:
             self.val_model_var.set(path)
             self._log(f"Validation model set: {path}")
+            try:
+                self._load_min_blur_from_config()
+            except Exception as e:
+                self._log(f"Auto-load min_blur failed: {e}")
+            self._refresh_output_preview('synthetic')
 
     def _browse_val_data(self):
         """Browse for validation test data directory."""
@@ -3590,47 +3656,64 @@ class TrainingGUI:
         }.get(key)
 
     def _load_min_blur_from_config(self):
-        """Load min_blur_px from training_config.yaml and update validation tab."""
-        # Get the model checkpoint path from validation tab
-        model_path = Path(self.val_model_var.get())
+        """Autopopulate Tab 4's min-blur field from the selected model's trained min.
 
-        # Look for training_config.yaml (or old optical_config.yaml) near the model
-        # Typically: training_output/checkpoints/model.pth -> training_output/training_config.yaml
-        if model_path.exists():
+        Primary source: the checkpoint's ``config.data.blur_range_px[0]`` — the
+        actual smallest blur the model was trained on. That's the natural floor
+        for "don't include samples the model is extrapolating on".
+
+        Fallback: legacy ``training_config.yaml`` or ``optical_config.yaml``
+        sidecars next to the checkpoint, reading ``data.min_blur_px`` /
+        ``data.min_coc_px`` (the user-set generation floor, which is what older
+        runs recorded).
+        """
+        model_path = Path(self.val_model_var.get())
+        if not model_path.is_file():
+            return
+
+        min_blur_val = None
+        source = None
+
+        # Primary: checkpoint config
+        try:
+            from calibration_editor import load_checkpoint
+            ckpt = load_checkpoint(model_path)
+            blur_range = ckpt.get('config', {}).get('data', {}).get('blur_range_px')
+            if blur_range and len(blur_range) >= 1:
+                min_blur_val = float(blur_range[0])
+                source = 'checkpoint blur_range_px[0]'
+        except Exception as e:
+            self._log(f"Could not read blur_range from checkpoint: {e}")
+
+        # Fallback: legacy YAML sidecar
+        if min_blur_val is None:
             config_path = model_path.parent.parent / 'training_config.yaml'
             if not config_path.exists():
                 config_path = model_path.parent.parent / 'optical_config.yaml'
-        else:
-            if self.output_dir:
-                config_path = self.output_dir / 'training_config.yaml'
-                if not config_path.exists():
-                    config_path = self.output_dir / 'training_config.yaml'
-            else:
-                return
+            if config_path.exists():
+                try:
+                    import yaml
+                    with open(config_path, 'r') as f:
+                        cfg = yaml.safe_load(f) or {}
+                    data_section = cfg.get('data', {})
+                    raw = data_section.get('min_blur_px',
+                                            data_section.get('min_coc_px'))
+                    if raw is not None:
+                        min_blur_val = float(raw)
+                        source = f'{config_path.name}'
+                except Exception as e:
+                    self._log(f"Could not read min_blur from YAML: {e}")
 
-        if not config_path.exists():
+        if min_blur_val is None:
             return
 
-        try:
-            import yaml
-            with open(config_path, 'r') as f:
-                config = yaml.safe_load(f)
+        self.val_min_blur_var.set(min_blur_val)
+        if not self.val_enable_coc_filter_var.get():
+            self.val_min_blur_entry.config(state='readonly')
 
-            data_section = config.get('data', {})
-            min_blur_val = data_section.get('min_blur_px', data_section.get('min_coc_px', 0.0))
-
-            # Update the validation tab min blur value
-            self.val_min_blur_var.set(min_blur_val)
-
-            # Keep state as readonly if filter is disabled (shows value but can't edit)
-            if not self.val_enable_coc_filter_var.get():
-                self.val_min_blur_entry.config(state='readonly')
-
-            _bt = "blur" if getattr(self, 'training_mode_var',
-                                    None) and self.training_mode_var.get() == 'direct' else "CoC"
-            self._log(f"Auto-loaded min {_bt} for validation: {min_blur_val} px from {config_path}")
-        except Exception as e:
-            self._log(f"Warning: Could not load min_blur_px from config: {e}")
+        _bt = "blur" if getattr(self, 'training_mode_var', None) \
+            and self.training_mode_var.get() == 'direct' else "CoC"
+        self._log(f"Auto-loaded min {_bt} for validation: {min_blur_val:.3f} px (from {source})")
 
     # =========================================================================
     # Generate Tab UI Callbacks
@@ -6116,8 +6199,38 @@ class TrainingGUI:
 
             model_path = self.val_model_var.get()
             data_path = Path(self.val_data_var.get())
-            output_path = Path(self.val_output_var.get())
             device = 'cuda' if self.val_use_gpu_var.get() else 'cpu'
+
+            # Resolve output folder — same structured-layout idea as Tab 5,
+            # but under synthetic_validation/<run>/test_<ts>_<variant>/.
+            from run_paths import (detect_run_name, detect_variant,
+                                   make_test_folder_name,
+                                   synthetic_validation_dir)
+            run_name = detect_run_name(Path(model_path)) if model_path else None
+            variant = detect_variant(Path(model_path)) if model_path else 'original'
+            if run_name:
+                training_root = Path(self.output_dir_var.get())
+                output_path = (synthetic_validation_dir(training_root, run_name)
+                               / make_test_folder_name(variant))
+            else:
+                output_path = Path(self.val_output_var.get())
+            output_path.mkdir(parents=True, exist_ok=True)
+
+            # Provenance sidecar
+            import json
+            from datetime import datetime as _dt
+            test_metadata = {
+                'run_name': run_name,
+                'variant': variant if run_name else None,
+                'checkpoint': str(model_path),
+                'data_dir': str(data_path),
+                'mode': self.val_mode_var.get(),
+                'device': device,
+                'started_at': _dt.now().isoformat(timespec='seconds'),
+            }
+            with open(output_path / 'test_metadata.json', 'w') as _f:
+                json.dump(test_metadata, _f, indent=2)
+            self.msg_queue.put(('log', f"Validation output: {output_path}"))
 
             # Get performance settings
             batch_size = int(self.val_batch_size_var.get())
