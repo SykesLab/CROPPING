@@ -1306,7 +1306,6 @@ This gives the model examples with known ground truth to learn from."""
         self.start_train_btn = ttk.Button(
             start_frame, text="Start Training",
             command=self._start_training,
-            state='disabled'
         )
         self.start_train_btn.pack(side='left', padx=5)
 
