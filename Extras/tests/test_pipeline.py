@@ -362,3 +362,50 @@ class TestPhysicsModuleRoundTrip:
         )
         assert abs(result.sigma_model - sigma_model) < 1e-12
         assert abs(result.sigma_native - sigma_native) < 1e-12
+
+
+# ===========================================================================
+# Test 10 — run_paths utility (timestamped runs/datasets)
+# ===========================================================================
+class TestRunPaths:
+    def test_sanitise(self):
+        from run_paths import sanitise_run_name
+        assert sanitise_run_name("phantom g/2") == "phantom_g_2"
+        assert sanitise_run_name("test:bad/chars") == "test_bad_chars"
+        assert sanitise_run_name("") == "unnamed"
+        assert sanitise_run_name("   ") == "unnamed"
+        assert sanitise_run_name("...") == "unnamed"
+        assert sanitise_run_name("baseline") == "baseline"
+
+    def test_make_folder_name(self):
+        import re
+        from run_paths import make_run_folder_name
+        n = make_run_folder_name("baseline", default="run")
+        assert re.match(r"^\d{8}_\d{6}_baseline$", n), n
+        n2 = make_run_folder_name(None, default="dataset")
+        assert re.match(r"^\d{8}_\d{6}_dataset$", n2), n2
+
+    def test_list_and_validate(self, tmp_path):
+        from run_paths import (datasets_root, find_latest_dataset, list_datasets,
+                                validate_dataset)
+        # Build a fake training_output/ tree
+        ds = datasets_root(tmp_path)
+        for name in ("20260101_120000_old", "20260423_120000_new"):
+            d = ds / name
+            (d / "blur").mkdir(parents=True)
+            (d / "metadata.csv").write_text("index,sigma_px\n000000,1.0\n")
+        items = list_datasets(tmp_path)
+        assert len(items) == 2
+        assert items[0].name == "20260423_120000_new"  # newest first
+        latest = find_latest_dataset(tmp_path)
+        assert latest is not None and latest.name == "20260423_120000_new"
+
+        ok, _ = validate_dataset(items[0])
+        assert ok
+
+    def test_validate_rejects_bad(self, tmp_path):
+        from run_paths import validate_dataset
+        bad = tmp_path / "no_meta"
+        (bad / "blur").mkdir(parents=True)
+        ok, msg = validate_dataset(bad)
+        assert not ok and "metadata.csv" in msg
