@@ -2451,18 +2451,18 @@ class TrainingGUI:
 
     def _fill_latest_run_checkpoint(self, target: str = 'val'):
         """Set the checkpoint field of the validation/inference tab to the
-        dme_best.pth of the most recent run."""
-        from run_paths import find_latest_run
+        dme_best.pth of the most recent model."""
+        from run_paths import find_latest_model
         root = Path(self.output_dir_var.get())
-        latest = find_latest_run(root)
+        latest = find_latest_model(root)
         if latest is None:
-            messagebox.showinfo("No runs", f"No runs found under {root}/runs/.")
+            messagebox.showinfo("No models", f"No models found under {root}/models/.")
             return
         ckpt = latest / "checkpoints" / "dme_best.pth"
         if not ckpt.is_file():
             messagebox.showwarning(
                 "No checkpoint",
-                f"Latest run {latest.name} has no dme_best.pth yet.")
+                f"Latest model {latest.name} has no dme_best.pth yet.")
             return
         target_var = self.inf_model_var if target == 'inf' else self.val_model_var
         target_var.set(str(ckpt))
