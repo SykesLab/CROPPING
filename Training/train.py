@@ -1094,7 +1094,7 @@ class Trainer:
         from datetime import datetime
 
         run_dir = self.output_dir
-        meta_path = run_dir / 'run_metadata.json'
+        meta_path = self.logs_dir / 'run_metadata.json'
 
         # Preserve started_at across calls
         existing = {}
