@@ -1244,7 +1244,12 @@ This gives the model examples with known ground truth to learn from."""
         self.use_gpu_var = tk.BooleanVar(value=True)
         self.gpu_checkbox = ttk.Checkbutton(basic_row3, text="Use GPU (if available)",
                                              variable=self.use_gpu_var)
-        self.gpu_checkbox.pack(side='left')
+        self.gpu_checkbox.pack(side='left', padx=(0, 20))
+        self.save_only_best_var = tk.BooleanVar(value=False)
+        self.save_only_best_checkbox = ttk.Checkbutton(
+            basic_row3, text="Save only best checkpoints",
+            variable=self.save_only_best_var)
+        self.save_only_best_checkbox.pack(side='left')
         ttk.Button(basic_row3, text="Advanced settings...",
                    command=self._open_advanced_settings).pack(side='right', padx=5)
 
@@ -1261,7 +1266,6 @@ This gives the model examples with known ground truth to learn from."""
         self.log_eps_var = tk.StringVar(value="0.01")
         self.seed_var = tk.StringVar(value="42")
         self.cuda_launch_blocking_var = tk.BooleanVar(value=False)
-        self.save_only_best_var = tk.BooleanVar(value=False)
 
         # Validation Split Strategy
         self.val_split_frame = ttk.LabelFrame(
@@ -3199,7 +3203,6 @@ This gives the model examples with known ground truth to learn from."""
         'log_eps': '0.01',
         'seed': '42',
         'cuda_blocking': False,
-        'save_only_best': False,
     }
 
     # Setting keys locked when resuming from a checkpoint
@@ -3227,7 +3230,6 @@ This gives the model examples with known ground truth to learn from."""
             'log_eps': self.log_eps_var.get(),
             'seed': self.seed_var.get(),
             'cuda_blocking': self.cuda_launch_blocking_var.get(),
-            'save_only_best': self.save_only_best_var.get(),
         }
 
         is_running = self._training_running
@@ -3310,17 +3312,13 @@ This gives the model examples with known ground truth to learn from."""
         widgets['seed'].pack(side='left')
         _lock_note(loss_f)
 
-        # Debug & saving
-        dbg_f = ttk.LabelFrame(dlg, text="Debug & saving", padding=8)
+        # Debug
+        dbg_f = ttk.LabelFrame(dlg, text="Debug", padding=8)
         dbg_f.pack(fill='x', padx=10, pady=2)
         widgets['cuda_blocking'] = ttk.Checkbutton(
             dbg_f, text="CUDA launch blocking (slow, exact error locations)",
             variable=self.cuda_launch_blocking_var)
         widgets['cuda_blocking'].pack(anchor='w', pady=1)
-        widgets['save_only_best'] = ttk.Checkbutton(
-            dbg_f, text="Save only best checkpoint (skip per-epoch saves)",
-            variable=self.save_only_best_var)
-        widgets['save_only_best'].pack(anchor='w', pady=1)
 
         # Disable locked widgets while training is running
         if is_running:
@@ -3378,7 +3376,6 @@ This gives the model examples with known ground truth to learn from."""
             'log_eps': self.log_eps_var,
             'seed': self.seed_var,
             'cuda_blocking': self.cuda_launch_blocking_var,
-            'save_only_best': self.save_only_best_var,
         }.get(key)
 
     def _load_min_blur_from_config(self):
