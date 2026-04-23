@@ -1533,13 +1533,8 @@ This gives the model examples with known ground truth to learn from."""
             self.checkpoint_metrics_var.set(f"❌ Error reading checkpoint: {str(e)}")
 
     def _start_training(self):
-        """Start training based on selected mode."""
-        mode = self.train_mode_var.get()
-
-        if mode == "full":
-            self._train_model()
-        elif mode == "dme":
-            self._train_dme_only()
+        """Start DME training."""
+        self._train_dme_only()
 
     def _create_inference_tab_scrollable(self):
         """Create scrollable inference tab wrapper."""
@@ -5166,36 +5161,6 @@ This gives the model examples with known ground truth to learn from."""
         except Exception as e:
             self.msg_queue.put(('log', f"⚠ Error showing histogram: {e}"))
 
-    def _train_model(self):
-        """Train the model."""
-        if not self._validate_paths():
-            return
-
-        output_dir = Path(self.output_dir_var.get())
-        data_dir = output_dir / 'synthetic_data'
-
-        if not data_dir.exists():
-            messagebox.showwarning(
-                "Warning", "Synthetic data not found. Please generate data first.")
-            return
-
-        self._set_training_state(True)
-        self._log("\n" + "=" * 50)
-        self._log("Starting model training...")
-
-        def train_thread():
-            try:
-                self._run_training()
-                self.msg_queue.put(('training_complete', None))
-            except Exception as e:
-                import traceback
-                error_msg = f"{e}\n{traceback.format_exc()}"
-                print(f"\nERROR: {error_msg}", flush=True)  # Echo to terminal
-                self.msg_queue.put(('error', error_msg))
-
-        self.training_thread = threading.Thread(target=train_thread, daemon=True)
-        self.training_thread.start()
-
     def _train_dme_only(self):
         """Train only the DME subnet."""
         if not self._validate_paths():
@@ -5272,52 +5237,6 @@ This gives the model examples with known ground truth to learn from."""
             )
 
             self.msg_queue.put(('log', "DME training complete!"))
-            self.msg_queue.put(('log', f"Model saved to: {run_dir / 'checkpoints' / 'dme_best.pth'}"))
-
-        except ImportError as e:
-            self.msg_queue.put(('error', f"Import error: {e}"))
-
-    def _run_training(self):
-        """Run model training (in thread)."""
-        # Set CUDA launch blocking if requested (must be done before any CUDA operations)
-        if self.cuda_launch_blocking_var.get():
-            import os
-            os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
-            self.msg_queue.put(
-                ('log', "⚠ CUDA_LAUNCH_BLOCKING enabled - training will be slower but errors will be precise"))
-
-        resolved = self._resolve_training_paths()
-        if resolved is None:
-            return
-        data_dir, run_dir, config = resolved
-        self._apply_gui_training_settings(config)
-
-        self.msg_queue.put(('status', "Initialising trainer..."))
-
-        try:
-            from train import Trainer
-
-            device = 'cuda' if self.use_gpu_var.get() else 'cpu'
-
-            trainer = Trainer(
-                config=config,
-                data_dir=data_dir,
-                output_dir=run_dir,
-                device=device,
-                stop_flag=lambda: self.stop_training
-            )
-            trainer.write_run_metadata(status='started', run_name=self.run_name_var.get().strip() or None)
-
-            self.msg_queue.put(('log', f"Training on device: {trainer.device}"))
-            self.msg_queue.put(('log', f"Run folder: {run_dir}"))
-            self.msg_queue.put(('status', "Training DME..."))
-
-            checkpoint_value = self.checkpoint_path_var.get()
-            explicit_checkpoint = None if checkpoint_value == "" else checkpoint_value
-
-            trainer.train(resume_from=explicit_checkpoint)
-
-            self.msg_queue.put(('log', "Training complete!"))
             self.msg_queue.put(('log', f"Model saved to: {run_dir / 'checkpoints' / 'dme_best.pth'}"))
 
         except ImportError as e:
