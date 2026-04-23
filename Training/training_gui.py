@@ -2730,6 +2730,82 @@ This gives the model examples with known ground truth to learn from."""
         else:
             self.dataset_info_var.set("OK (no dataset_summary.json — legacy dataset)")
 
+    def _resolve_training_paths(self):
+        """Resolve (data_dir, run_dir, config) for a training launch.
+
+        Returns (data_dir, run_dir, config_dict) or None if anything is invalid.
+        Pulls the dataset from the Tab 3 dropdown (with fallback to legacy
+        <root>/synthetic_data/) and creates the timestamped run folder.
+        """
+        from run_paths import (datasets_root, find_latest_dataset, make_run_folder_name,
+                                runs_root, validate_dataset)
+
+        output_root = Path(self.output_dir_var.get())
+
+        # Resolve dataset
+        raw = self.dataset_path_var.get().replace("  (legacy)", "").strip()
+        if raw:
+            data_dir = Path(raw)
+        else:
+            data_dir = find_latest_dataset(output_root)
+            if data_dir is None:
+                messagebox.showwarning(
+                    "No dataset", f"No dataset found under {output_root}/datasets/.\n"
+                    "Generate one in Tab 2 first.")
+                return None
+
+        ok, msg = validate_dataset(data_dir)
+        if not ok:
+            messagebox.showwarning("Invalid dataset", f"{data_dir}\n{msg}")
+            return None
+
+        # Build run folder
+        run_name = self.run_name_var.get().strip()
+        run_dir = runs_root(output_root) / make_run_folder_name(run_name or None, default='run')
+        run_dir.mkdir(parents=True, exist_ok=True)
+
+        # Load the generation config that was used to build this dataset
+        gen_cfg_path = data_dir / 'generation_config.yaml'
+        if gen_cfg_path.is_file():
+            with open(gen_cfg_path) as f:
+                config = yaml.safe_load(f) or {}
+        else:
+            # Legacy datasets had training_config.yaml at the parent root
+            legacy_cfg = output_root / 'training_config.yaml'
+            if legacy_cfg.is_file():
+                with open(legacy_cfg) as f:
+                    config = yaml.safe_load(f) or {}
+            else:
+                messagebox.showerror(
+                    "Missing config",
+                    f"Could not find generation_config.yaml in {data_dir} "
+                    f"or training_config.yaml in {output_root}.")
+                return None
+
+        return data_dir, run_dir, config
+
+    def _apply_gui_training_settings(self, config: dict) -> None:
+        """Layer the current GUI training-tab settings onto a config dict (in place)."""
+        config.setdefault('training', {})
+        cfg = config['training']
+        cfg['epochs_dme'] = int(self.epochs_dme_var.get())
+        cfg['batch_size'] = int(self.batch_size_var.get())
+        cfg['lr'] = float(self.lr_var.get())
+        cfg['override_checkpoint_lr'] = self.override_lr_var.get()
+        cfg['stratified'] = (self.val_split_var.get() == "stratified")
+        cfg['save_only_best'] = self.save_only_best_var.get()
+        cfg['optimizer'] = self.optimizer_var.get()
+        cfg['adam_beta1'] = float(self.adam_beta1_var.get())
+        cfg['adam_beta2'] = float(self.adam_beta2_var.get())
+        cfg['weight_decay'] = float(self.weight_decay_var.get())
+        cfg['lr_schedule'] = self.lr_schedule_var.get()
+        cfg['lr_decay_start_epoch'] = int(self.lr_decay_start_var.get())
+        cfg['lr_decay_rate'] = float(self.lr_decay_rate_var.get())
+        cfg['lr_min'] = float(self.lr_min_var.get())
+        cfg['grad_clip_norm'] = float(self.grad_clip_var.get())
+        cfg['log_eps'] = float(self.log_eps_var.get())
+        cfg['seed'] = int(self.seed_var.get())
+
     def _browse_direct_calibration(self):
         """Browse and load direct calibration YAML file (USER CONSTRAINT: explicit browse only)."""
         from pathlib import Path
@@ -5409,40 +5485,11 @@ This gives the model examples with known ground truth to learn from."""
             self.msg_queue.put(
                 ('log', "⚠ CUDA_LAUNCH_BLOCKING enabled - training will be slower but errors will be precise"))
 
-        output_dir = Path(self.output_dir_var.get())
-        data_dir = output_dir / 'synthetic_data'
-        config_path = output_dir / 'training_config.yaml'
-
-        # Load config
-        with open(config_path, 'r') as f:
-            config = yaml.safe_load(f)
-
-        # Update training params from GUI
-        cfg = config['training']
-        cfg['epochs_dme'] = int(self.epochs_dme_var.get())
-        cfg['batch_size'] = int(self.batch_size_var.get())
-        cfg['lr'] = float(self.lr_var.get())
-        cfg['override_checkpoint_lr'] = self.override_lr_var.get()
-        cfg['stratified'] = (self.val_split_var.get() == "stratified")
-        cfg['save_only_best'] = self.save_only_best_var.get()
-        # Optimizer
-        cfg['optimizer'] = self.optimizer_var.get()
-        cfg['adam_beta1'] = float(self.adam_beta1_var.get())
-        cfg['adam_beta2'] = float(self.adam_beta2_var.get())
-        cfg['weight_decay'] = float(self.weight_decay_var.get())
-        # LR schedule
-        cfg['lr_schedule'] = self.lr_schedule_var.get()
-        cfg['lr_decay_start_epoch'] = int(self.lr_decay_start_var.get())
-        cfg['lr_decay_rate'] = float(self.lr_decay_rate_var.get())
-        cfg['lr_min'] = float(self.lr_min_var.get())
-        # Regularisation + loss
-        cfg['grad_clip_norm'] = float(self.grad_clip_var.get())
-        cfg['log_eps'] = float(self.log_eps_var.get())
-        cfg['seed'] = int(self.seed_var.get())
-
-        # Save updated config
-        with open(config_path, 'w') as f:
-            yaml.dump(config, f, default_flow_style=False)
+        resolved = self._resolve_training_paths()
+        if resolved is None:
+            return
+        data_dir, run_dir, config = resolved
+        self._apply_gui_training_settings(config)
 
         self.msg_queue.put(('status', "Initialising trainer..."))
 
@@ -5454,20 +5501,20 @@ This gives the model examples with known ground truth to learn from."""
             trainer = Trainer(
                 config=config,
                 data_dir=data_dir,
-                output_dir=output_dir / 'checkpoints',
+                output_dir=run_dir,
                 device=device,
                 stop_flag=lambda: self.stop_training
             )
+            trainer.write_run_metadata(status='started', run_name=self.run_name_var.get().strip() or None)
 
             self.msg_queue.put(('log', f"Training on device: {trainer.device}"))
+            self.msg_queue.put(('log', f"Run folder: {run_dir}"))
             self.msg_queue.put(('status', "Training DME-subnet..."))
 
-            # Get explicit checkpoint path if provided
             checkpoint_value = self.checkpoint_path_var.get()
-            force_fresh = (checkpoint_value == "")  # User cleared, train from scratch
+            force_fresh = (checkpoint_value == "")
             explicit_checkpoint = checkpoint_value if checkpoint_value else None
 
-            # Run DME training only
             trainer.train_dme_only(
                 checkpoint_preference='best',
                 explicit_checkpoint=explicit_checkpoint,
@@ -5475,8 +5522,7 @@ This gives the model examples with known ground truth to learn from."""
             )
 
             self.msg_queue.put(('log', "DME training complete!"))
-            self.msg_queue.put(
-                ('log', f"Model saved to: {output_dir / 'checkpoints' / 'dme_best.pth'}"))
+            self.msg_queue.put(('log', f"Model saved to: {run_dir / 'checkpoints' / 'dme_best.pth'}"))
 
         except ImportError as e:
             self.msg_queue.put(('error', f"Import error: {e}"))
@@ -5490,36 +5536,11 @@ This gives the model examples with known ground truth to learn from."""
             self.msg_queue.put(
                 ('log', "⚠ CUDA_LAUNCH_BLOCKING enabled - training will be slower but errors will be precise"))
 
-        output_dir = Path(self.output_dir_var.get())
-        data_dir = output_dir / 'synthetic_data'
-        config_path = output_dir / 'training_config.yaml'
-
-        # Load config
-        with open(config_path, 'r') as f:
-            config = yaml.safe_load(f)
-
-        # Update training params from GUI
-        cfg = config['training']
-        cfg['epochs_dme'] = int(self.epochs_dme_var.get())
-        cfg['batch_size'] = int(self.batch_size_var.get())
-        cfg['lr'] = float(self.lr_var.get())
-        cfg['override_checkpoint_lr'] = self.override_lr_var.get()
-        cfg['stratified'] = (self.val_split_var.get() == "stratified")
-        cfg['optimizer'] = self.optimizer_var.get()
-        cfg['adam_beta1'] = float(self.adam_beta1_var.get())
-        cfg['adam_beta2'] = float(self.adam_beta2_var.get())
-        cfg['weight_decay'] = float(self.weight_decay_var.get())
-        cfg['lr_schedule'] = self.lr_schedule_var.get()
-        cfg['lr_decay_start_epoch'] = int(self.lr_decay_start_var.get())
-        cfg['lr_decay_rate'] = float(self.lr_decay_rate_var.get())
-        cfg['lr_min'] = float(self.lr_min_var.get())
-        cfg['grad_clip_norm'] = float(self.grad_clip_var.get())
-        cfg['log_eps'] = float(self.log_eps_var.get())
-        cfg['seed'] = int(self.seed_var.get())
-
-        # Save updated config
-        with open(config_path, 'w') as f:
-            yaml.dump(config, f, default_flow_style=False)
+        resolved = self._resolve_training_paths()
+        if resolved is None:
+            return
+        data_dir, run_dir, config = resolved
+        self._apply_gui_training_settings(config)
 
         self.msg_queue.put(('status', "Initialising trainer..."))
 
@@ -5531,25 +5552,23 @@ This gives the model examples with known ground truth to learn from."""
             trainer = Trainer(
                 config=config,
                 data_dir=data_dir,
-                output_dir=output_dir / 'checkpoints',
+                output_dir=run_dir,
                 device=device,
                 stop_flag=lambda: self.stop_training
             )
+            trainer.write_run_metadata(status='started', run_name=self.run_name_var.get().strip() or None)
 
             self.msg_queue.put(('log', f"Training on device: {trainer.device}"))
+            self.msg_queue.put(('log', f"Run folder: {run_dir}"))
             self.msg_queue.put(('status', "Training DME..."))
 
-            # Get explicit checkpoint path if provided
-            # For full pipeline, empty string means train from scratch
             checkpoint_value = self.checkpoint_path_var.get()
             explicit_checkpoint = None if checkpoint_value == "" else checkpoint_value
 
-            # Run DME training
-            trainer.train_dme(resume_from=explicit_checkpoint)
+            trainer.train(resume_from=explicit_checkpoint)
 
             self.msg_queue.put(('log', "Training complete!"))
-            self.msg_queue.put(
-                ('log', f"Model saved to: {output_dir / 'checkpoints' / 'dme_best.pth'}"))
+            self.msg_queue.put(('log', f"Model saved to: {run_dir / 'checkpoints' / 'dme_best.pth'}"))
 
         except ImportError as e:
             self.msg_queue.put(('error', f"Import error: {e}"))
