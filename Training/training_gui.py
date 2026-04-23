@@ -1954,8 +1954,8 @@ This gives the model examples with known ground truth to learn from."""
 
         row2 = ttk.Frame(paths_frame)
         row2.pack(fill='x', pady=2)
-        ttk.Label(row2, text="Synthetic Data:", width=18).pack(side='left')
-        self.val_data_var = tk.StringVar(value="training_output/synthetic_data")
+        ttk.Label(row2, text="Validation dataset:", width=18).pack(side='left')
+        self.val_data_var = tk.StringVar(value="")
         ttk.Entry(row2, textvariable=self.val_data_var, width=50).pack(side='left', padx=5)
         ttk.Button(row2, text="Browse", command=self._browse_val_data).pack(side='left')
         ttk.Button(row2, text="Latest dataset", command=self._fill_latest_dataset).pack(
@@ -2326,22 +2326,14 @@ This gives the model examples with known ground truth to learn from."""
 
     def _refresh_datasets(self):
         """Re-scan training_output/datasets/ and populate the dropdown."""
-        from run_paths import list_datasets, find_latest_dataset
+        from run_paths import list_datasets
         try:
             root = Path(self.output_dir_var.get())
         except Exception:
             return
-        datasets = list_datasets(root)
-        # Include legacy <root>/synthetic_data/ as a virtual entry if it exists
-        legacy = root / "synthetic_data"
-        legacy_listed = legacy.is_dir() and (legacy / "metadata.csv").is_file()
-
-        values = [str(p) for p in datasets]
-        if legacy_listed:
-            values.append(str(legacy) + "  (legacy)")
+        values = [str(p) for p in list_datasets(root)]
         self.dataset_combo['values'] = values
 
-        # Auto-select latest if nothing chosen yet
         if values and not self.dataset_path_var.get():
             self.dataset_path_var.set(values[0])
             self._on_dataset_select()
@@ -2367,13 +2359,11 @@ This gives the model examples with known ground truth to learn from."""
         if not raw:
             self.dataset_info_var.set("No dataset selected")
             return
-        # Strip trailing legacy marker
-        path = Path(raw.replace("  (legacy)", "").strip())
+        path = Path(raw)
         ok, msg = validate_dataset(path)
         if not ok:
             self.dataset_info_var.set(f"Invalid: {msg}")
             return
-        # Try to read dataset_summary.json for richer info
         summary_path = path / "dataset_summary.json"
         if summary_path.is_file():
             try:
@@ -2388,7 +2378,7 @@ This gives the model examples with known ground truth to learn from."""
             except Exception:
                 self.dataset_info_var.set("OK")
         else:
-            self.dataset_info_var.set("OK (no dataset_summary.json — legacy dataset)")
+            self.dataset_info_var.set("OK")
 
     def _fill_latest_run_checkpoint(self, target: str = 'val'):
         """Set the checkpoint field of the validation/inference tab to the
@@ -2397,13 +2387,6 @@ This gives the model examples with known ground truth to learn from."""
         root = Path(self.output_dir_var.get())
         latest = find_latest_run(root)
         if latest is None:
-            # Fall back to legacy training_output/checkpoints/dme_best.pth
-            legacy = root / "checkpoints" / "dme_best.pth"
-            if legacy.is_file():
-                target_var = self.inf_model_var if target == 'inf' else self.val_model_var
-                target_var.set(str(legacy))
-                self._log(f"Set checkpoint to legacy path: {legacy}")
-                return
             messagebox.showinfo("No runs", f"No runs found under {root}/runs/.")
             return
         ckpt = latest / "checkpoints" / "dme_best.pth"
@@ -2431,16 +2414,16 @@ This gives the model examples with known ground truth to learn from."""
         """Resolve (data_dir, run_dir, config) for a training launch.
 
         Returns (data_dir, run_dir, config_dict) or None if anything is invalid.
-        Pulls the dataset from the Tab 3 dropdown (with fallback to legacy
-        <root>/synthetic_data/) and creates the timestamped run folder.
+        Pulls the dataset from the Tab 3 dropdown and creates the timestamped
+        run folder.
         """
-        from run_paths import (datasets_root, find_latest_dataset, make_run_folder_name,
+        from run_paths import (find_latest_dataset, make_run_folder_name,
                                 runs_root, validate_dataset)
 
         output_root = Path(self.output_dir_var.get())
 
         # Resolve dataset
-        raw = self.dataset_path_var.get().replace("  (legacy)", "").strip()
+        raw = self.dataset_path_var.get().strip()
         if raw:
             data_dir = Path(raw)
         else:
@@ -2463,21 +2446,13 @@ This gives the model examples with known ground truth to learn from."""
 
         # Load the generation config that was used to build this dataset
         gen_cfg_path = data_dir / 'generation_config.yaml'
-        if gen_cfg_path.is_file():
-            with open(gen_cfg_path) as f:
-                config = yaml.safe_load(f) or {}
-        else:
-            # Legacy datasets had training_config.yaml at the parent root
-            legacy_cfg = output_root / 'training_config.yaml'
-            if legacy_cfg.is_file():
-                with open(legacy_cfg) as f:
-                    config = yaml.safe_load(f) or {}
-            else:
-                messagebox.showerror(
-                    "Missing config",
-                    f"Could not find generation_config.yaml in {data_dir} "
-                    f"or training_config.yaml in {output_root}.")
-                return None
+        if not gen_cfg_path.is_file():
+            messagebox.showerror(
+                "Missing config",
+                f"Could not find generation_config.yaml in {data_dir}.")
+            return None
+        with open(gen_cfg_path) as f:
+            config = yaml.safe_load(f) or {}
 
         return data_dir, run_dir, config
 

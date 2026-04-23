@@ -62,18 +62,12 @@ def list_runs(training_output_root: Path) -> List[Path]:
 
 def find_latest_dataset(training_output_root: Path) -> Optional[Path]:
     items = list_datasets(training_output_root)
-    if items:
-        return items[0]
-    # Fall back to legacy synthetic_data folder if present
-    legacy = Path(training_output_root) / "synthetic_data"
-    return legacy if legacy.is_dir() and (legacy / "metadata.csv").is_file() else None
+    return items[0] if items else None
 
 
 def find_latest_run(training_output_root: Path) -> Optional[Path]:
     items = list_runs(training_output_root)
-    if items:
-        return items[0]
-    return None
+    return items[0] if items else None
 
 
 def validate_dataset(path: Path) -> Tuple[bool, str]:
@@ -88,7 +82,3 @@ def validate_dataset(path: Path) -> Tuple[bool, str]:
     return True, "OK"
 
 
-def is_legacy_layout(training_output_root: Path) -> bool:
-    """True if the old training_output/synthetic_data/ + checkpoints/ structure is present."""
-    root = Path(training_output_root)
-    return (root / "synthetic_data").is_dir() and (root / "checkpoints").is_dir()
