@@ -410,28 +410,38 @@ class TestRunPaths:
         ok, msg = validate_dataset(bad)
         assert not ok and "metadata.csv" in msg
 
-    def test_validation_paths(self, tmp_path):
+    def test_per_model_paths(self, tmp_path):
         import re
         from run_paths import (
-            synthetic_validation_root, real_crop_validation_root,
-            synthetic_validation_dir, real_crop_validation_dir,
-            edits_dir, make_test_folder_name,
+            models_root, model_dir, model_checkpoints_dir, model_edits_dir,
+            edit_dir, tests_dir, make_test_folder_name,
         )
-        run = "20260423_202438_demo"
-        assert synthetic_validation_root(tmp_path).name == "synthetic_validation"
-        assert real_crop_validation_root(tmp_path).name == "real_crop_validation"
-        assert synthetic_validation_dir(tmp_path, run) == \
-            tmp_path / "synthetic_validation" / run
-        assert real_crop_validation_dir(tmp_path, run) == \
-            tmp_path / "real_crop_validation" / run
-        assert edits_dir(tmp_path, run) == \
-            tmp_path / "real_crop_validation" / run / "edits"
-        # Test-folder names
-        assert re.match(r"^test_\d{8}_\d{6}_v1$", make_test_folder_name("v1"))
-        assert re.match(r"^test_\d{8}_\d{6}_original$", make_test_folder_name())
-        # Illegal chars in variant should be sanitised
-        assert re.match(r"^test_\d{8}_\d{6}_v_1_beta$",
-                        make_test_folder_name("v/1:beta"))
+        m = "20260423_202438_demo"
+        # Roots
+        assert models_root(tmp_path).name == "models"
+        assert model_dir(tmp_path, m) == tmp_path / "models" / m
+        assert model_checkpoints_dir(tmp_path, m) == \
+            tmp_path / "models" / m / "checkpoints"
+        assert model_edits_dir(tmp_path, m) == tmp_path / "models" / m / "edits"
+        # Edit folder
+        assert edit_dir(tmp_path, m, "tuned_for_camG") == \
+            tmp_path / "models" / m / "edits" / "tuned_for_camG"
+        # Test-result folders — original model
+        assert tests_dir(tmp_path, m, 'synthetic') == \
+            tmp_path / "models" / m / "tests" / "synthetic"
+        assert tests_dir(tmp_path, m, 'real_crop') == \
+            tmp_path / "models" / m / "tests" / "real_crop"
+        # Test-result folders — edited model
+        assert tests_dir(tmp_path, m, 'synthetic', edit_name='v1') == \
+            tmp_path / "models" / m / "edits" / "v1" / "tests" / "synthetic"
+        assert tests_dir(tmp_path, m, 'real_crop', edit_name='tuned') == \
+            tmp_path / "models" / m / "edits" / "tuned" / "tests" / "real_crop"
+        # Illegal kind rejected
+        import pytest as _pt
+        with _pt.raises(ValueError):
+            tests_dir(tmp_path, m, 'bogus')
+        # Test-folder name is just test_<ts> (no variant suffix)
+        assert re.match(r"^test_\d{8}_\d{6}$", make_test_folder_name())
 
     def test_parse_true_z_from_filename(self):
         from run_paths import parse_true_z_from_filename
@@ -447,37 +457,34 @@ class TestRunPaths:
         from pathlib import Path
         assert parse_true_z_from_filename(Path("a/b/z-3.14mm.png")) == -3.14
 
-    def test_detect_run_name_and_variant(self, tmp_path):
-        from run_paths import detect_run_name, detect_variant
-        # Build fake checkpoint paths under the two recognised layouts
-        run = "20260423_202438_demo"
-        src = tmp_path / "runs" / run / "checkpoints" / "dme_best.pth"
+    def test_detect_model_name_and_variant(self, tmp_path):
+        from run_paths import detect_model_name, detect_variant
+        m = "20260423_202438_demo"
+        # Checkpoint of the original model (under models/<m>/checkpoints/)
+        src = tmp_path / "models" / m / "checkpoints" / "dme_best.pth"
         src.parent.mkdir(parents=True)
         src.write_bytes(b"")
-        assert detect_run_name(src) == run
+        assert detect_model_name(src) == m
         assert detect_variant(src) == "original"
 
-        v1 = tmp_path / "real_crop_validation" / run / "edits" / "dme_best_v1.pth"
+        # Checkpoint of an edited model (under models/<m>/edits/<edit>/)
+        v1 = tmp_path / "models" / m / "edits" / "tuned_for_camG" / "dme_best.pth"
         v1.parent.mkdir(parents=True)
         v1.write_bytes(b"")
-        assert detect_run_name(v1) == run
-        assert detect_variant(v1) == "v1"
+        assert detect_model_name(v1) == m
+        assert detect_variant(v1) == "tuned_for_camG"
 
-        v7 = v1.parent / "dme_best_v7.pth"
-        v7.write_bytes(b"")
-        assert detect_variant(v7) == "v7"
+        # Another edit with a different user-chosen name
+        v2 = tmp_path / "models" / m / "edits" / "after_bias_fix" / "dme_best.pth"
+        v2.parent.mkdir(parents=True)
+        v2.write_bytes(b"")
+        assert detect_variant(v2) == "after_bias_fix"
 
-        # Edit with a non-standard name → fall back to stem
-        custom = v1.parent / "tuned_for_camG.pth"
-        custom.write_bytes(b"")
-        assert detect_run_name(custom) == run
-        assert detect_variant(custom) == "tuned_for_camG"
-
-        # Unrecognised location → no run name, variant from stem
+        # Unrecognised location → no model name, variant from stem
         stray = tmp_path / "elsewhere" / "somehow.pth"
         stray.parent.mkdir(parents=True)
         stray.write_bytes(b"")
-        assert detect_run_name(stray) is None
+        assert detect_model_name(stray) is None
         assert detect_variant(stray) == "somehow"
 
 
@@ -667,17 +674,16 @@ class TestCalibrationEditor:
         with pytest.raises(CalibrationError):
             read_calibration({})
 
-    @requires_torch
-    def test_next_edit_filename_numbering(self, tmp_path):
-        import torch
-        from calibration_editor import next_edit_filename
+    def test_next_edit_dirname_numbering(self, tmp_path):
+        from calibration_editor import next_edit_dirname
         edits = tmp_path / "edits"
         edits.mkdir()
         # Empty dir → v1
-        assert next_edit_filename(edits).name == "dme_best_v1.pth"
-        (edits / "dme_best_v1.pth").write_bytes(b"x")
-        assert next_edit_filename(edits).name == "dme_best_v2.pth"
-        (edits / "dme_best_v2.pth").write_bytes(b"x")
-        assert next_edit_filename(edits).name == "dme_best_v3.pth"
-        # Custom stem
-        assert next_edit_filename(edits, "custom").name == "custom_v1.pth"
+        assert next_edit_dirname(edits) == "v1"
+        (edits / "v1").mkdir()
+        assert next_edit_dirname(edits) == "v2"
+        (edits / "v2").mkdir()
+        assert next_edit_dirname(edits) == "v3"
+        # User-named edits don't block the v-numbering
+        (edits / "tuned_for_camG").mkdir()
+        assert next_edit_dirname(edits) == "v3"

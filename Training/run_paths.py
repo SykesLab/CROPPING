@@ -1,13 +1,27 @@
-"""Path utilities for timestamped training datasets, runs, and validation results.
+"""Path utilities for timestamped datasets, models, and test outputs.
 
-Folder layout:
+Folder layout::
+
     training_output/
         datasets/<YYYYMMDD_HHMMSS>_<name>/
-        runs/<YYYYMMDD_HHMMSS>_<name>/
-        synthetic_validation/<run_name>/test_<YYYYMMDD_HHMMSS>_<variant>/
-        real_crop_validation/<run_name>/
-            test_<YYYYMMDD_HHMMSS>_<variant>/
-            edits/<edited_checkpoint>.pth
+            blur/ sharp/ blur_map/
+            metadata.csv  generation_config.yaml  dataset_summary.json
+
+        models/<YYYYMMDD_HHMMSS>_<name>/
+            checkpoints/        ← .pth files
+            logs/               ← tensorboard
+            run_metadata.json   ┐
+            training_config.yaml│ siblings of checkpoints/
+            training_history.yaml┘
+            tests/
+                synthetic/<test_<ts>>/
+                real_crop/<test_<ts>>/
+            edits/
+                <user_named>/
+                    dme_best.pth
+                    tests/
+                        synthetic/<test_<ts>>/
+                        real_crop/<test_<ts>>/
 """
 
 import re
@@ -15,10 +29,14 @@ from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple
 
+# ── Layout constants ─────────────────────────────────────────────────────
+
 DATASETS_SUBDIR = "datasets"
-RUNS_SUBDIR = "runs"
-SYNTHETIC_VALIDATION_SUBDIR = "synthetic_validation"
-REAL_CROP_VALIDATION_SUBDIR = "real_crop_validation"
+MODELS_SUBDIR = "models"
+CHECKPOINTS_SUBDIR = "checkpoints"
+TESTS_SUBDIR = "tests"
+SYNTHETIC_TESTS_SUBDIR = "synthetic"
+REAL_CROP_TESTS_SUBDIR = "real_crop"
 EDITS_SUBDIR = "edits"
 TEST_PREFIX = "test"
 TIMESTAMP_FMT = "%Y%m%d_%H%M%S"
@@ -40,6 +58,8 @@ def parse_true_z_from_filename(name) -> Optional[float]:
     return float(m.group(1)) if m else None
 
 
+# ── Naming helpers ───────────────────────────────────────────────────────
+
 def sanitise_run_name(name: str) -> str:
     """Replace illegal path characters with underscores; fall back to 'unnamed'."""
     if not name:
@@ -55,13 +75,28 @@ def make_run_folder_name(name: Optional[str], default: str = "run") -> str:
     return f"{timestamp}_{safe}"
 
 
+def make_test_folder_name() -> str:
+    """Compose a timestamped test-result folder name: test_<YYYYMMDD_HHMMSS>.
+
+    No variant suffix — the variant is always implied by location:
+    under ``models/<run>/tests/`` for the original, under
+    ``models/<run>/edits/<edit>/tests/`` for edited versions.
+    """
+    timestamp = datetime.now().strftime(TIMESTAMP_FMT)
+    return f"{TEST_PREFIX}_{timestamp}"
+
+
+# ── Root paths ───────────────────────────────────────────────────────────
+
 def datasets_root(training_output_root: Path) -> Path:
     return Path(training_output_root) / DATASETS_SUBDIR
 
 
-def runs_root(training_output_root: Path) -> Path:
-    return Path(training_output_root) / RUNS_SUBDIR
+def models_root(training_output_root: Path) -> Path:
+    return Path(training_output_root) / MODELS_SUBDIR
 
+
+# ── Listing + latest ─────────────────────────────────────────────────────
 
 def list_datasets(training_output_root: Path) -> List[Path]:
     """All dataset folders under training_output/datasets/, newest first."""
@@ -72,9 +107,9 @@ def list_datasets(training_output_root: Path) -> List[Path]:
     return sorted(folders, key=lambda p: p.name, reverse=True)
 
 
-def list_runs(training_output_root: Path) -> List[Path]:
-    """All run folders under training_output/runs/, newest first."""
-    root = runs_root(training_output_root)
+def list_models(training_output_root: Path) -> List[Path]:
+    """All model folders under training_output/models/, newest first."""
+    root = models_root(training_output_root)
     if not root.is_dir():
         return []
     folders = [p for p in root.iterdir() if p.is_dir() and _RUN_FOLDER_RE.match(p.name)]
@@ -86,8 +121,8 @@ def find_latest_dataset(training_output_root: Path) -> Optional[Path]:
     return items[0] if items else None
 
 
-def find_latest_run(training_output_root: Path) -> Optional[Path]:
-    items = list_runs(training_output_root)
+def find_latest_model(training_output_root: Path) -> Optional[Path]:
+    items = list_models(training_output_root)
     return items[0] if items else None
 
 
@@ -103,74 +138,80 @@ def validate_dataset(path: Path) -> Tuple[bool, str]:
     return True, "OK"
 
 
-# ── Validation results layout ────────────────────────────────────────────
+# ── Per-model paths ──────────────────────────────────────────────────────
 
-def synthetic_validation_root(training_output_root: Path) -> Path:
-    return Path(training_output_root) / SYNTHETIC_VALIDATION_SUBDIR
-
-
-def real_crop_validation_root(training_output_root: Path) -> Path:
-    return Path(training_output_root) / REAL_CROP_VALIDATION_SUBDIR
+def model_dir(training_output_root: Path, model_name: str) -> Path:
+    """training_output/models/<model_name>/"""
+    return models_root(training_output_root) / model_name
 
 
-def synthetic_validation_dir(training_output_root: Path, run_name: str) -> Path:
-    """Per-model folder under synthetic_validation/<run_name>/."""
-    return synthetic_validation_root(training_output_root) / run_name
+def model_checkpoints_dir(training_output_root: Path, model_name: str) -> Path:
+    """training_output/models/<model_name>/checkpoints/"""
+    return model_dir(training_output_root, model_name) / CHECKPOINTS_SUBDIR
 
 
-def real_crop_validation_dir(training_output_root: Path, run_name: str) -> Path:
-    """Per-model folder under real_crop_validation/<run_name>/."""
-    return real_crop_validation_root(training_output_root) / run_name
+def model_edits_dir(training_output_root: Path, model_name: str) -> Path:
+    """training_output/models/<model_name>/edits/"""
+    return model_dir(training_output_root, model_name) / EDITS_SUBDIR
 
 
-def edits_dir(training_output_root: Path, run_name: str) -> Path:
-    """edits/ folder under real_crop_validation/<run_name>/edits/."""
-    return real_crop_validation_dir(training_output_root, run_name) / EDITS_SUBDIR
+def edit_dir(training_output_root: Path, model_name: str, edit_name: str) -> Path:
+    """training_output/models/<model_name>/edits/<edit_name>/"""
+    return model_edits_dir(training_output_root, model_name) / sanitise_run_name(edit_name)
 
 
-def make_test_folder_name(variant: str = "original") -> str:
-    """Compose a timestamped test-result folder name: test_<YYYYMMDD_HHMMSS>_<variant>."""
-    timestamp = datetime.now().strftime(TIMESTAMP_FMT)
-    safe_variant = sanitise_run_name(variant) if variant else "original"
-    return f"{TEST_PREFIX}_{timestamp}_{safe_variant}"
+def tests_dir(training_output_root: Path, model_name: str, kind: str,
+              edit_name: Optional[str] = None) -> Path:
+    """Test-results folder for a given model + kind (+ optional edit).
+
+    kind must be 'synthetic' or 'real_crop'. If edit_name is given, the path
+    lands under edits/<edit_name>/tests/<kind>/; otherwise under
+    tests/<kind>/ at the model root (i.e. tests of the original checkpoint).
+    """
+    if kind == 'synthetic':
+        leaf = SYNTHETIC_TESTS_SUBDIR
+    elif kind == 'real_crop':
+        leaf = REAL_CROP_TESTS_SUBDIR
+    else:
+        raise ValueError(f"kind must be 'synthetic' or 'real_crop', got {kind!r}")
+
+    if edit_name:
+        base = edit_dir(training_output_root, model_name, edit_name)
+    else:
+        base = model_dir(training_output_root, model_name)
+    return base / TESTS_SUBDIR / leaf
 
 
-def detect_run_name(checkpoint_path: Path) -> Optional[str]:
-    """Walk up a checkpoint's path to find the enclosing run name.
+# ── Checkpoint-path introspection ────────────────────────────────────────
 
-    Recognised locations:
-      * .../runs/<run_name>/checkpoints/<file>.pth
-      * .../real_crop_validation/<run_name>/edits/<file>.pth
-    Returns None if the checkpoint is elsewhere on disk.
+def detect_model_name(checkpoint_path: Path) -> Optional[str]:
+    """Walk up a checkpoint's path to find the enclosing model-folder name.
+
+    Recognised location: ``.../models/<model_name>/...`` (including under
+    checkpoints/, edits/<edit>/, tests/, etc.)
+    Returns None if the checkpoint isn't in a recognised location.
     """
     parts = Path(checkpoint_path).resolve().parts
-    for anchor in (RUNS_SUBDIR, REAL_CROP_VALIDATION_SUBDIR):
-        if anchor in parts:
-            idx = parts.index(anchor)
-            if idx + 1 < len(parts):
-                return parts[idx + 1]
+    if MODELS_SUBDIR in parts:
+        idx = parts.index(MODELS_SUBDIR)
+        if idx + 1 < len(parts):
+            return parts[idx + 1]
     return None
 
 
 def detect_variant(checkpoint_path: Path) -> str:
-    """Short label describing which model variant a checkpoint represents.
+    """Label describing which model variant a checkpoint represents.
 
-    Convention:
-      * under runs/<run>/checkpoints/     → 'original'
-      * under .../edits/<stem>_v<N>.pth   → 'v<N>'
-      * under .../edits/<other>.pth       → sanitised stem
-      * anywhere else                     → sanitised stem
+    * under ``models/<m>/checkpoints/<file>`` → 'original'
+    * under ``models/<m>/edits/<edit>/<file>`` → '<edit>'
+    * anywhere else → the file stem (sanitised)
     """
     p = Path(checkpoint_path)
     parts = p.resolve().parts
     if EDITS_SUBDIR in parts:
-        stem = p.stem
-        m = re.search(r'_v(\d+)$', stem)
-        if m:
-            return f"v{m.group(1)}"
-        return sanitise_run_name(stem)
-    if RUNS_SUBDIR in parts:
+        idx = parts.index(EDITS_SUBDIR)
+        if idx + 1 < len(parts):
+            return parts[idx + 1]
+    if MODELS_SUBDIR in parts:
         return 'original'
     return sanitise_run_name(p.stem)
-
-
