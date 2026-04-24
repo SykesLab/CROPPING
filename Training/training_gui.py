@@ -1587,7 +1587,7 @@ class TrainingGUI:
         row1 = ttk.Frame(model_frame)
         row1.pack(fill='x', pady=2)
         ttk.Label(row1, text="Model Checkpoint:", width=18).pack(side='left')
-        self.inf_model_var = tk.StringVar(value="training_output/checkpoints/dme_best.pth")
+        self.inf_model_var = tk.StringVar(value=self._default_latest_checkpoint())
         ttk.Entry(row1, textvariable=self.inf_model_var, width=60).pack(side='left', padx=5)
         ttk.Button(row1, text="Browse", command=self._browse_inference_model).pack(side='left')
         ttk.Button(row1, text="Latest run",
@@ -2027,7 +2027,7 @@ class TrainingGUI:
         row1 = ttk.Frame(paths_frame)
         row1.pack(fill='x', pady=2)
         ttk.Label(row1, text="Model Checkpoint:", width=18).pack(side='left')
-        self.val_model_var = tk.StringVar(value="training_output/checkpoints/dme_best.pth")
+        self.val_model_var = tk.StringVar(value=self._default_latest_checkpoint())
         ttk.Entry(row1, textvariable=self.val_model_var, width=50).pack(side='left', padx=5)
         ttk.Button(row1, text="Browse", command=self._browse_val_model).pack(side='left')
         ttk.Button(row1, text="Latest run", command=self._fill_latest_run_checkpoint).pack(
@@ -2817,6 +2817,22 @@ class TrainingGUI:
             preview_var.set(
                 "Results go to: (checkpoint not under models/ — "
                 f"falling back to {fallback_root}/<subfolder>_<ts>/)")
+
+    @staticmethod
+    def _default_latest_checkpoint() -> str:
+        """Return the path to the most recent model's dme_best.pth, if any.
+
+        Used as the default value for the validation/inference model fields so
+        the GUI opens already pointing at the user's latest training, instead
+        of a stale legacy path under training_output/checkpoints/.
+        """
+        from run_paths import find_latest_model
+        training_root = Path(__file__).resolve().parent / "training_output"
+        latest = find_latest_model(training_root)
+        if latest is None:
+            return ""
+        candidate = latest / "checkpoints" / "dme_best.pth"
+        return str(candidate) if candidate.is_file() else ""
 
     def _browse_inference_model(self):
         """Browse for inference model checkpoint."""
@@ -6282,21 +6298,6 @@ class TrainingGUI:
             else:
                 output_path = Path(self.val_output_var.get())
             output_path.mkdir(parents=True, exist_ok=True)
-
-            # Provenance sidecar
-            import json
-            from datetime import datetime as _dt
-            test_metadata = {
-                'model_name': model_name,
-                'variant': variant if model_name else None,
-                'checkpoint': str(model_path),
-                'data_dir': str(data_path),
-                'mode': self.val_mode_var.get(),
-                'device': device,
-                'started_at': _dt.now().isoformat(timespec='seconds'),
-            }
-            with open(output_path / 'test_metadata.json', 'w') as _f:
-                json.dump(test_metadata, _f, indent=2)
             self.msg_queue.put(('log', f"Validation output: {output_path}"))
 
             # Get performance settings
