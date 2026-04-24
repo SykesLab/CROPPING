@@ -88,6 +88,7 @@ calib_cfg = _load_yaml(CALIB_YAML_PATH)
 
 training_sec = optical_cfg.get("training", {})
 data_sec = optical_cfg.get("data", {})
+calibration_sec = optical_cfg.get("calibration", {})
 direct_sec = calib_cfg.get("direct", {})
 
 # Extract all parameters — fail loudly if any are missing
@@ -108,7 +109,7 @@ crop_size = int(_require(training_sec, "crop_size_px", "optical_config.yaml [tra
 model_size = int(_require(data_sec, "image_size_px", "optical_config.yaml [data]"))
 defocus_range_mm = list(_require(data_sec, "defocus_range_mm", "optical_config.yaml [data]"))
 training_mode = _require(training_sec, "training_mode", "optical_config.yaml [training]")
-calib_ref_res = int(training_sec.get("calib_reference_resolution", crop_size))
+calib_ref_res = int(calibration_sec.get("reference_resolution", crop_size))
 
 # Verify direct mode
 if training_mode != "direct":
