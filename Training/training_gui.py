@@ -6374,7 +6374,8 @@ class TrainingGUI:
                     filter_metrics=filter_metrics,
                     exclude_from_test=exclude_from_test,
                     filter_intervals=False,
-                    filter_plots=False
+                    filter_plots=False,
+                    create_subfolder=False,  # output_path is already the per-test folder
                 )
 
                 if len(df) > 0:
