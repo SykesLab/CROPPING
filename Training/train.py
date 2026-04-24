@@ -194,17 +194,12 @@ class Trainer:
         # Stop flag for graceful shutdown
         self.stop_flag = stop_flag or (lambda: False)
 
-        # Training curve history (for PNG export)
-        self.curve_history = {
-            'epochs': [],
-            'train_loss': [],
-            'val_loss': [],
-            'train_weighted_mae': [],
-            'val_weighted_mae': [],
-            'lr': [],
-            'train_bin_maes': [],  # list of 4-element lists
-            'val_bin_maes': [],    # list of 4-element lists
-        }
+        # Training curve history (for PNG export). Restored from
+        # training_history.yaml if present so resumed runs see prior epochs.
+        self.curve_history = self._restore_curve_history(
+            self.training_history.get('curve_history')
+            if isinstance(self.training_history, dict) else None
+        )
 
         # Calculate bin weights from beta distribution
         self.bin_weights = self._calculate_bin_weights_from_beta()
@@ -219,6 +214,39 @@ class Trainer:
                 return history
         else:
             return self._create_empty_history()
+
+    @staticmethod
+    def _empty_curve_history() -> dict:
+        """Empty per-epoch metric arrays used for training_curves.png."""
+        return {
+            'epochs': [], 'train_loss': [], 'val_loss': [],
+            'train_weighted_mae': [], 'val_weighted_mae': [], 'lr': [],
+            'train_bin_maes': [], 'val_bin_maes': [],
+        }
+
+    def _restore_curve_history(self, prior) -> dict:
+        """Rehydrate curve_history from training_history.yaml on resume.
+
+        Defends against missing keys and inconsistent list lengths
+        (truncates to the shortest list). Returns an empty history if the
+        prior payload is unrecognisable.
+        """
+        empty = self._empty_curve_history()
+        if not isinstance(prior, dict) or not prior:
+            return empty
+        keys = list(empty.keys())
+        if not all(k in prior for k in keys):
+            logger.warning(
+                "curve_history in training_history.yaml is missing keys; "
+                "starting fresh")
+            return empty
+        n = min(len(prior[k]) for k in keys)
+        if n == 0:
+            return empty
+        if any(len(prior[k]) != n for k in keys):
+            logger.warning(
+                f"curve_history list lengths inconsistent — truncating to {n}")
+        return {k: list(prior[k][:n]) for k in keys}
 
     def _create_empty_history(self) -> dict:
         """Create empty training history structure."""
@@ -240,8 +268,21 @@ class Trainer:
         }
 
     def _save_training_history(self):
+        # Embed curve_history into the YAML so resumed runs can rehydrate it.
+        # train_bin_maes entries are np.float64 (np.mean output); yaml.dump
+        # writes those as opaque blobs that yaml.safe_load can't read back.
+        # Cast to Python float on the way out.
+        def _scalar(x):
+            return float(x) if hasattr(x, 'item') else x
+        self.training_history['curve_history'] = {
+            k: ([[_scalar(v) for v in row] for row in vs]
+                if k.endswith('_bin_maes')
+                else [_scalar(v) for v in vs])
+            for k, vs in self.curve_history.items()
+        }
         with open(self.history_file, 'w') as f:
-            yaml.dump(self.training_history, f, default_flow_style=False, sort_keys=False)
+            yaml.dump(self.training_history, f, default_flow_style=False,
+                      sort_keys=False)
 
     def _update_session_info(self, stage: str, epoch: int, val_loss: float = None):
         if self.current_session['start_epoch'] is None:
@@ -438,6 +479,12 @@ class Trainer:
                 self.best_val_loss = checkpoint['val_loss']
             if 'val_mae_px' in checkpoint:
                 self.best_dme_mae_px = checkpoint['val_mae_px']
+
+            # Drop any epochs in curve_history that were abandoned by this
+            # resume (anything > start_epoch - 1). The next per-epoch save
+            # will then render the truncated history + the new epoch in one go.
+            self._truncate_curve_history(start_epoch - 1)
+            self._save_training_history()
 
             # Verify max_blur consistency
             _bt = self.blur_term.lower()
@@ -683,14 +730,48 @@ class Trainer:
 
         return val_loss, val_mae_px, bin_maes, weighted_mae
 
+    def _truncate_curve_history(self, last_epoch_to_keep: int) -> None:
+        """Drop curve_history entries beyond ``last_epoch_to_keep``.
+
+        Used on resume so abandoned epochs from a prior run (anything after
+        the checkpoint we resumed from) disappear from training_curves.png.
+        """
+        h = self.curve_history
+        if not h.get('epochs'):
+            return
+        cutoff = next(
+            (i for i, e in enumerate(h['epochs']) if e > last_epoch_to_keep),
+            len(h['epochs']))
+        if cutoff == len(h['epochs']):
+            return  # nothing to drop
+        for k in h:
+            h[k] = h[k][:cutoff]
+        logger.info(f"Truncated curve_history to {cutoff} epochs "
+                    f"(resume cutoff: epoch ≤ {last_epoch_to_keep})")
+
     def _save_training_curves(self, epoch: int, bins: list):
-        """Export training curves as publication-quality PNGs."""
+        """Export training curves as publication-quality PNGs.
+
+        Marks the lowest-val_weighted_mae epoch in every panel with a
+        dashed green vertical line so the best epoch is visually obvious
+        even before training finishes.
+        """
         h = self.curve_history
         if len(h['epochs']) < 2:
             return
 
         epochs = h['epochs']
+        val_wmae = h['val_weighted_mae']
+        best_idx = int(np.argmin(val_wmae))
+        best_epoch = epochs[best_idx]
+        best_val_wmae = val_wmae[best_idx]
+
         fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+
+        def _mark_best(ax):
+            ax.axvline(best_epoch, linestyle='--', color='green', alpha=0.6,
+                       label=f'Best (ep {best_epoch})')
+            ax.legend()  # refresh to include the new entry
 
         # Panel 1: Loss curves
         ax = axes[0, 0]
@@ -701,6 +782,7 @@ class Trainer:
         ax.set_title('Training & Validation Loss')
         ax.legend()
         ax.grid(True, alpha=0.3)
+        _mark_best(ax)
 
         # Panel 2: Weighted MAE curves
         ax = axes[0, 1]
@@ -711,6 +793,7 @@ class Trainer:
         ax.set_title('Weighted MAE')
         ax.legend()
         ax.grid(True, alpha=0.3)
+        _mark_best(ax)
 
         # Panel 3: Per-bin validation MAE
         ax = axes[1, 0]
@@ -723,6 +806,7 @@ class Trainer:
         ax.set_title('Validation MAE by Blur Bin')
         ax.legend(fontsize=8)
         ax.grid(True, alpha=0.3)
+        _mark_best(ax)
 
         # Panel 4: Learning rate
         ax = axes[1, 1]
@@ -732,9 +816,10 @@ class Trainer:
         ax.set_title('Learning Rate Schedule')
         ax.ticklabel_format(axis='y', style='scientific', scilimits=(-4, -4))
         ax.grid(True, alpha=0.3)
+        _mark_best(ax)
 
-        fig.suptitle(f'Training Curves — Best at Epoch {epoch} '
-                     f'(Val WMAE: {h["val_weighted_mae"][-1]:.2f} px)',
+        fig.suptitle(f'Training Curves — Best at Epoch {best_epoch} '
+                     f'(Val WMAE: {best_val_wmae:.2f} px)',
                      fontsize=13, fontweight='bold')
         plt.tight_layout()
 
