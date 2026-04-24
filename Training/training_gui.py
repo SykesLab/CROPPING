@@ -149,9 +149,9 @@ class OpticalConfig:
                 'image_size_px': image_size,
             },
             'training': {
-                'batize': 50,
+                'batch_size': 50,
                 'epochs_dme': 400,
-                'learning_rate': 0.0002,
+                'lr': 0.0002,
             }
         }
 
@@ -5268,8 +5268,7 @@ class TrainingGUI:
             'training': {
                 'batch_size': 50,
                 'epochs_dme': 400,
-                'learning_rate': 0.0002,
-                'pixel_size_mm': gui_pixel_size,
+                'lr': 0.0002,
                 'crop_size_px': training_crop_size,
                 'training_mode': gui_training_mode,
             }
@@ -5281,8 +5280,6 @@ class TrainingGUI:
             config_dict['training']['sigma_0'] = gui_sigma_0
             if calib_scale_px_per_mm is not None:
                 config_dict['training']['scale_calib_px_per_mm'] = calib_scale_px_per_mm
-            if calib_reference_resolution is not None:
-                config_dict['training']['calib_reference_resolution'] = calib_reference_resolution
 
         # Add calibration reference info (for cross-resolution/camera scaling)
         if calib_pixel_size is not None or calib_reference_resolution is not None:
