@@ -1332,6 +1332,18 @@ class TrainingGUI:
         self.status_var = tk.StringVar(value="Ready — pick a dataset and press Start Training")
         ttk.Label(progress_frame, textvariable=self.status_var).pack(anchor='w')
 
+        # Auto-populate the resume field with the latest model's dme_best.pth.
+        # Setting .set() here (after all dependent widgets exist) fires the
+        # trace handler, which locks the run name and updates the hint label.
+        default_ckpt = self._default_latest_checkpoint()
+        if default_ckpt:
+            self.checkpoint_display_var.set(Path(default_ckpt).name)
+            self.checkpoint_path_var.set(default_ckpt)
+            try:
+                self._set_checkpoint_info_message(default_ckpt)
+            except Exception:
+                pass
+
     def _update_val_split_state(self):
         """Update validation split radio buttons based on whether resuming from checkpoint."""
         is_resuming = bool(self.checkpoint_path_var.get())
