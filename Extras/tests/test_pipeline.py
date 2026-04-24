@@ -687,3 +687,80 @@ class TestCalibrationEditor:
         # User-named edits don't block the v-numbering
         (edits / "tuned_for_camG").mkdir()
         assert next_edit_dirname(edits) == "v3"
+
+
+# ===========================================================================
+# Test 12 — curve_history persistence + truncation on resume
+# ===========================================================================
+@requires_torch
+class TestCurveHistory:
+    """Bypass the heavy Trainer ctor by using ``Trainer.__new__(Trainer)``;
+    the curve_history helpers don't depend on any other instance state."""
+
+    def _bare_trainer(self):
+        from train import Trainer
+        return Trainer.__new__(Trainer)
+
+    def _populate(self, t, n: int):
+        """Fill curve_history with epochs 1..n of synthetic data."""
+        t.curve_history = t._empty_curve_history()
+        for i in range(1, n + 1):
+            t.curve_history['epochs'].append(i)
+            t.curve_history['train_loss'].append(0.1 * i)
+            t.curve_history['val_loss'].append(0.2 * i)
+            t.curve_history['train_weighted_mae'].append(1.0 / i)
+            t.curve_history['val_weighted_mae'].append(2.0 / i)
+            t.curve_history['lr'].append(2e-4)
+            t.curve_history['train_bin_maes'].append([1.0, 1.1, 1.2, 1.3])
+            t.curve_history['val_bin_maes'].append([2.0, 2.1, 2.2, 2.3])
+
+    def test_truncate_curve_history(self):
+        t = self._bare_trainer()
+        self._populate(t, 10)
+        t._truncate_curve_history(5)
+        assert t.curve_history['epochs'] == [1, 2, 3, 4, 5]
+        for k in t.curve_history:
+            assert len(t.curve_history[k]) == 5, k
+
+    def test_truncate_curve_history_noop_on_short(self):
+        t = self._bare_trainer()
+        self._populate(t, 3)
+        t._truncate_curve_history(10)
+        assert t.curve_history['epochs'] == [1, 2, 3]
+        for k in t.curve_history:
+            assert len(t.curve_history[k]) == 3, k
+
+    def test_restore_curve_history_with_inconsistent_lengths(self):
+        from train import Trainer
+        prior = {
+            'epochs': [1, 2, 3, 4, 5],
+            'train_loss': [0.1, 0.2, 0.3],
+            'val_loss': [0.5, 0.4, 0.3],
+            'train_weighted_mae': [1.0, 0.9, 0.8],
+            'val_weighted_mae': [2.0, 1.9, 1.8],
+            'lr': [2e-4, 2e-4, 2e-4],
+            'train_bin_maes': [[1, 1, 1, 1]] * 3,
+            'val_bin_maes': [[2, 2, 2, 2]] * 3,
+        }
+        t = Trainer.__new__(Trainer)
+        restored = t._restore_curve_history(prior)
+        # All keys should be truncated to the shortest list (=3)
+        for k in restored:
+            assert len(restored[k]) == 3, k
+        assert restored['epochs'] == [1, 2, 3]
+
+    def test_restore_curve_history_missing_keys(self):
+        from train import Trainer
+        # Missing 'lr' key should yield an empty history
+        prior = {
+            'epochs': [1, 2], 'train_loss': [0.1, 0.2],
+            'val_loss': [0.5, 0.4],
+            'train_weighted_mae': [1.0, 0.9],
+            'val_weighted_mae': [2.0, 1.9],
+            'train_bin_maes': [[1, 1, 1, 1]] * 2,
+            'val_bin_maes': [[2, 2, 2, 2]] * 2,
+        }
+        t = Trainer.__new__(Trainer)
+        restored = t._restore_curve_history(prior)
+        for k in restored:
+            assert restored[k] == [], k

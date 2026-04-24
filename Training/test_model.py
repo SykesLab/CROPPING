@@ -215,7 +215,8 @@ class ModelTester:
         filter_metrics: bool = False,
         exclude_from_test: bool = False,
         filter_intervals: bool = False,
-        filter_plots: bool = False
+        filter_plots: bool = False,
+        create_subfolder: bool = True,
     ) -> pd.DataFrame:
         """
         Test DME-subnet only across N samples.
@@ -597,10 +598,14 @@ class ModelTester:
             output_dir = Path(output_dir)
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Create DME-specific subdirectory with timestamp
-            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-            dme_test_dir = output_dir / 'DME_test' / f'test_{timestamp}'
-            dme_test_dir.mkdir(parents=True, exist_ok=True)
+            if create_subfolder:
+                # CLI / generic-output-dir mode: per-test slot inside output_dir
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                dme_test_dir = output_dir / 'DME_test' / f'test_{timestamp}'
+                dme_test_dir.mkdir(parents=True, exist_ok=True)
+            else:
+                # Caller has already constructed a per-test folder — write into it directly
+                dme_test_dir = output_dir
 
             csv_path = dme_test_dir / 'dme_test_results.csv'
             df.to_csv(csv_path, index=False)
@@ -668,6 +673,20 @@ class ModelTester:
             f.write("-" * 80 + "\n")
             f.write("TEST CONFIGURATION\n")
             f.write("-" * 80 + "\n")
+
+            # Model identity (derived from path) — explicit in the summary so
+            # readers don't need to parse the directory tree to know which
+            # model + variant produced these results.
+            try:
+                from run_paths import detect_model_name, detect_variant
+                model_name = detect_model_name(output_dir)
+                variant = detect_variant(output_dir)
+                if model_name:
+                    f.write(f"Model Name: {model_name}\n")
+                    f.write(f"Variant: {variant}\n")
+            except Exception:
+                pass
+
             f.write(f"Data Directory: {config.get('data_dir', 'N/A')}\n")
             f.write(f"Model Path: {config.get('model_path', 'N/A')}\n")
             f.write(f"Device: {config.get('device', 'N/A')}\n")

@@ -5822,20 +5822,6 @@ class TrainingGUI:
                 output_dir = base_output / f"inference_{timestamp}"
             output_dir.mkdir(parents=True, exist_ok=True)
 
-            # Drop a small metadata file so each test folder carries its own provenance
-            import json
-            from datetime import datetime as _dt
-            test_metadata = {
-                'model_name': model_name,
-                'variant': variant if model_name else None,
-                'checkpoint': str(model_path),
-                'input_dir': str(input_dir),
-                'device': 'cuda' if self.inf_use_gpu_var.get() else 'cpu',
-                'started_at': _dt.now().isoformat(timespec='seconds'),
-            }
-            with open(output_dir / 'test_metadata.json', 'w') as _f:
-                json.dump(test_metadata, _f, indent=2)
-
             device = 'cuda' if self.inf_use_gpu_var.get() else 'cpu'
 
             self.msg_queue.put(('log', f"\n{'='*60}"))
