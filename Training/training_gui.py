@@ -2285,7 +2285,7 @@ class TrainingGUI:
         self.val_save_worst_var = tk.BooleanVar(value=True)
         self.val_save_worst_checkbox = ttk.Checkbutton(
             left_worst,
-            text="Save Worst Cases (by diameter error px)",
+            text="Save Worst Cases (by CoC error px)",
             variable=self.val_save_worst_var,
             command=self._on_worst_case_toggle
         )
@@ -4659,6 +4659,8 @@ class TrainingGUI:
             self.val_min_blur_label.configure(text=f"Min {blur} (px):")
         if hasattr(self, 'val_filter_opts_label'):
             self.val_filter_opts_label.configure(text=f"Exclude low {blur} from:")
+        if hasattr(self, 'val_save_worst_checkbox'):
+            self.val_save_worst_checkbox.configure(text=f"Save Worst Cases (by {blur} error px)")
         if hasattr(self, 'val_save_worst_checkbox_2'):
             self.val_save_worst_checkbox_2.configure(text=f"Save Worst Cases (by {blur} error %)")
         if hasattr(self, 'val_mode_dme_rb'):

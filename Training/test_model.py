@@ -628,7 +628,11 @@ class ModelTester:
             self._create_dme_visual_comparisons(
                 visual_samples_data, dme_test_dir, num_visual_samples, csv_path, data_dir)
 
-            # Worst-case visualizations removed with DD cleanup
+            if num_worst_px > 0 or num_worst_pct > 0:
+                self._save_dme_worst_cases(
+                    df, data_dir, dme_test_dir,
+                    num_worst_px=num_worst_px, num_worst_pct=num_worst_pct,
+                    min_blur_filter=min_blur_filter if filter_worst_pct else None)
 
         return df
 
@@ -993,6 +997,117 @@ class ModelTester:
             self._create_dme_grid_summary_from_csv(csv_path, vis_dir, data_dir, num_grid_samples=25)
 
         print(f"Saved visual comparisons to: {vis_dir}")
+
+    def _save_dme_worst_cases(
+        self, df: pd.DataFrame, data_dir: Path, output_dir: Path,
+        num_worst_px: int = 10, num_worst_pct: int = 10,
+        min_blur_filter: Optional[float] = None,
+    ):
+        """Save side-by-side visualisations of the N worst-performing samples.
+
+        Two folders, one for each ranking metric:
+            <output_dir>/worst_cases_dme/by_blur_error_px/
+            <output_dir>/worst_cases_dme/by_blur_error_pct/
+
+        ``min_blur_filter`` (when set) excludes samples with |blur_gt| below
+        that threshold from the percentage ranking, since % error is
+        meaningless for very-small ground-truth blurs.
+        """
+        if len(df) == 0:
+            return
+
+        worst_cases_dir = output_dir / 'worst_cases_dme'
+        worst_cases_dir.mkdir(exist_ok=True)
+        print("\nSaving worst-case visualisations...")
+
+        def _render(row, save_path: Path, title_extra: str):
+            sample_name = row['sample']
+            blur_gt = row[f'{self.blur_col}_gt_px']
+            blur_pred = row[f'{self.blur_col}_pred_px']
+            defocus_gt = row['defocus_gt_mm']
+            defocus_pred = row['defocus_pred_mm']
+
+            blur_path = data_dir / 'blur' / f"{sample_name}.png"
+            bm_dir = data_dir / 'blur_map' if (data_dir / 'blur_map').exists() \
+                else data_dir / 'coc_map'
+            blur_map_path = bm_dir / f"{sample_name}.png"
+            if not blur_path.exists() or not blur_map_path.exists():
+                print(f"  Warning: skipping {sample_name} (files not found)")
+                return
+
+            blur_img = cv2.imread(str(blur_path), cv2.IMREAD_GRAYSCALE)
+            blur_map_gt = cv2.imread(str(blur_map_path), cv2.IMREAD_GRAYSCALE)
+            blur_map_gt_norm = (blur_map_gt.astype(np.float32) / 255.0) * 2 - 1
+            pred_normalized = (blur_pred / self.max_blur) * 2.0 - 1.0
+            pred_uniform = np.full_like(blur_map_gt_norm, pred_normalized,
+                                        dtype=np.float32)
+
+            fig, axes = plt.subplots(1, 3, figsize=(15, 5))
+            axes[0].imshow(blur_img, cmap='gray')
+            axes[0].set_title("Blur (Input)")
+            axes[0].axis('off')
+            im1 = axes[1].imshow(blur_map_gt_norm, cmap='RdYlGn_r',
+                                 vmin=-1, vmax=1)
+            axes[1].set_title(
+                f"Ground Truth {self.blur_term}\n"
+                f"{blur_gt:.2f} px ({defocus_gt:.2f} mm)")
+            axes[1].axis('off')
+            plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
+            im2 = axes[2].imshow(pred_uniform, cmap='RdYlGn_r',
+                                 vmin=-1, vmax=1)
+            axes[2].set_title(
+                f"Predicted {self.blur_term}\n"
+                f"{blur_pred:.2f} px ({defocus_pred:.2f} mm)")
+            axes[2].axis('off')
+            plt.colorbar(im2, ax=axes[2], fraction=0.046, pad=0.04)
+
+            plt.suptitle(f"Worst Case: {sample_name}\n{title_extra}",
+                         fontsize=14, fontweight='bold', y=0.98)
+            plt.tight_layout(rect=[0, 0, 1, 0.96])
+            plt.savefig(save_path, dpi=150, bbox_inches='tight')
+            plt.close()
+
+        # Worst by absolute blur error (px)
+        if num_worst_px > 0:
+            sub = worst_cases_dir / 'by_blur_error_px'
+            sub.mkdir(exist_ok=True)
+            worst_px = df.sort_values('error_px', ascending=False).head(num_worst_px)
+            print(f"  Saving {len(worst_px)} worst by {self.blur_term} error px → {sub.name}/")
+            for _, row in worst_px.iterrows():
+                title = (f"{self.blur_term} Error: {row['error_px']:.2f} px "
+                         f"({row['defocus_error_mm']:.2f} mm)")
+                fname = (f"{row['sample']}_BlurErr{row['error_px']:.2f}px"
+                         f"_{row['defocus_error_mm']:.2f}mm.png")
+                _render(row, sub / fname, title)
+
+        # Worst by percentage error
+        if num_worst_pct > 0:
+            sub = worst_cases_dir / 'by_blur_error_pct'
+            sub.mkdir(exist_ok=True)
+            if min_blur_filter is not None:
+                df_filt = df[df[f'{self.blur_col}_gt_px'].abs() >= min_blur_filter].copy()
+                if len(df_filt) == 0:
+                    print(f"  Warning: no samples with |{self.blur_term}| >= "
+                          f"{min_blur_filter} px — skipping percentage worst cases")
+                    return
+                worst_pct = df_filt.sort_values('error_pct', ascending=False).head(num_worst_pct)
+                excl = len(df) - len(df_filt)
+                print(f"  Saving {len(worst_pct)} worst by {self.blur_term} error % "
+                      f"(filtered |{self.blur_term}| ≥ {min_blur_filter} px, "
+                      f"excluded {excl}) → {sub.name}/")
+            else:
+                worst_pct = df.sort_values('error_pct', ascending=False).head(num_worst_pct)
+                print(f"  Saving {len(worst_pct)} worst by {self.blur_term} error % "
+                      f"→ {sub.name}/")
+            for _, row in worst_pct.iterrows():
+                title = (f"{self.blur_term} Error: {row['error_pct']:.1f}% "
+                         f"({row['error_px']:.2f} px / {row['defocus_error_mm']:.2f} mm)")
+                fname = (f"{row['sample']}_BlurErr{row['error_pct']:.1f}pct"
+                         f"_{row['defocus_error_mm']:.2f}mm.png")
+                _render(row, sub / fname, title)
+
+        if num_worst_px > 0 or num_worst_pct > 0:
+            print(f"Saved worst cases to: {worst_cases_dir}")
 
     def _plot_dme_sample(self, sample_data: Dict, output_dir: Path):
         """Create a single sample comparison image - scalar blur focused."""
