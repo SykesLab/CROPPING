@@ -653,10 +653,6 @@ class Trainer:
                                       val_loss=val_loss, val_mae_px=val_weighted_mae)
                 logger.info(f"  → New global best (weighted MAE): {val_weighted_mae:.4f} px")
 
-                # Export training curves as PNG on best epochs (after warmup)
-                if epoch >= 15:
-                    self._save_training_curves(epoch, bins)
-
             # Save best for current training session (resets each time you start training)
             if val_weighted_mae < self.best_current_run_mae:
                 self.best_current_run_mae = val_weighted_mae
@@ -667,6 +663,7 @@ class Trainer:
                 logger.info(f"  → New session best (weighted MAE): {val_weighted_mae:.4f} px")
 
             self._save_training_history()
+            self._save_training_curves(epoch, bins)
 
         # Finalize session when training ends
         self._finalize_session("DME training session completed")
