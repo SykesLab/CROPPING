@@ -236,3 +236,180 @@ class TestFingerprintMetrics:
         # Cheap metrics still computed
         assert not np.isnan(rec.laplacian_variance)
         assert not np.isnan(rec.tenengrad)
+
+
+# ===========================================================================
+# I/O — synthetic dataset + calibration stack loaders
+# ===========================================================================
+class TestFingerprintIO:
+    def test_stratified_subsample_spans_full_range(self, tmp_path):
+        """Subsampling to N from a larger pool should keep coverage of the
+        full defocus range, not just one cluster."""
+        import numpy as np
+        import pandas as pd
+        from tools.fingerprint_checker.fingerprint_io import _stratified_sample
+
+        rng = np.random.default_rng(0)
+        df = pd.DataFrame({
+            'index': range(1000),
+            'defocus_mm': rng.uniform(-12, 12, 1000),
+            'sigma_px': rng.uniform(0, 10, 1000),
+        })
+        sampled = _stratified_sample(df, n_samples=100, n_bins=10, seed=42)
+        assert len(sampled) <= 100
+        # Sampled should cover roughly the same |z| range
+        assert sampled['defocus_mm'].abs().max() > 9.0
+        assert sampled['defocus_mm'].abs().min() < 1.5
+
+    def test_full_dataset_when_n_samples_exceeds_total(self, tmp_path):
+        """If user asks for more samples than exist, keep all of them."""
+        import pandas as pd
+        from tools.fingerprint_checker.fingerprint_io import _stratified_sample
+        df = pd.DataFrame({
+            'index': range(50),
+            'defocus_mm': [(i - 25) * 0.5 for i in range(50)],
+            'sigma_px': [1.0] * 50,
+        })
+        # n_samples=200 > total=50 → real load returns all; helper itself
+        # returns at most n_samples, which is up to 50 here
+        sampled = _stratified_sample(df, n_samples=200, n_bins=10, seed=42)
+        assert len(sampled) == 50
+
+    def test_load_synthetic_dataset_minimal(self, tmp_path):
+        """Build a tiny fake synthetic dataset on disk and load it."""
+        import cv2
+        import numpy as np
+        import pandas as pd
+        from tools.fingerprint_checker.fingerprint_io import load_synthetic_dataset
+
+        ds = tmp_path / "20260101_000000_test"
+        (ds / "blur").mkdir(parents=True)
+        (ds / "sharp").mkdir()
+        # Three samples
+        for i in range(3):
+            img = np.full((32, 32), 128, dtype=np.uint8)
+            cv2.imwrite(str(ds / "blur" / f"{i:06d}.png"), img)
+        pd.DataFrame({
+            'index': [0, 1, 2],
+            'defocus_mm': [-2.0, 0.0, 2.0],
+            'sigma_px': [1.5, 0.5, 1.5],
+            'sigma_measured_erf': [1.4, float('nan'), 1.5],
+        }).to_csv(ds / "metadata.csv", index=False)
+
+        loaded = load_synthetic_dataset(ds)
+        assert loaded.sample_count_total == 3
+        assert loaded.sample_count_used == 3
+        # First sample's metadata-driven fields
+        s0 = loaded.samples[0]
+        assert s0.index == 0
+        assert s0.defocus_mm == -2.0
+        assert abs(s0.sigma_measured_erf - 1.4) < 1e-9
+        # Second has NaN ERF — should come back as None
+        s1 = loaded.samples[1]
+        assert s1.sigma_measured_erf is None
+
+    def test_calibration_loader_reads_positions_csv(self, tmp_path):
+        """Without pyphantom we can't load the .cine bytes, but the
+        metadata loading (file list, positions.csv) should work."""
+        import pandas as pd
+        from tools.fingerprint_checker.fingerprint_io import load_calibration_stack
+        # Create empty .cine files + positions.csv
+        for i in [1, 2, 3]:
+            (tmp_path / f"sphere_{i}.cine").write_bytes(b"")
+        pd.DataFrame({
+            'filename': ['sphere_1.cine', 'sphere_2.cine', 'sphere_3.cine'],
+            'stage_position_mm': [0.0, 1.0, 2.0],
+        }).to_csv(tmp_path / "positions.csv", index=False)
+        stack = load_calibration_stack(tmp_path, focus_offset_mm=1.0)
+        assert len(stack.frames) == 3
+        # Frames sorted by trailing integer
+        assert stack.frames[0].file_path.name == 'sphere_1.cine'
+        # Defocus = stage − focus_offset
+        assert stack.frames[0].defocus_mm == -1.0
+        assert stack.frames[1].defocus_mm == 0.0
+        assert stack.frames[2].defocus_mm == 1.0
+
+
+# ===========================================================================
+# Analyses — Check B (alignment) + Check C (coverage)
+# ===========================================================================
+class TestAlignmentAndCoverage:
+    def test_alignment_picks_correct_neighbours(self):
+        """For an anchor at z=5, its K nearest synthetics by |z| should
+        be the K with |z| closest to 5."""
+        import numpy as np
+        import pandas as pd
+        from tools.fingerprint_checker.fingerprint_analyses import alignment_check_nn
+
+        anchor = pd.DataFrame({'defocus_mm': [5.0],
+                               'erf_sigma_px': [3.0],
+                               'edge_transition_width': [4.0]})
+        other = pd.DataFrame({
+            'defocus_mm': [-5.0, -4.5, -3.0, 4.0, 5.5, 8.0, 10.0, 0.0],
+            'erf_sigma_px': [3.0, 2.8, 2.5, 2.7, 3.2, 4.0, 4.5, 0.5],
+            'edge_transition_width': [4.0, 3.9, 3.5, 3.8, 4.2, 4.8, 5.0, 1.5],
+        })
+        result = alignment_check_nn(anchor, other, k=3)
+        assert len(result.comparisons) == 1
+        c = result.comparisons[0]
+        # Three closest |z| to 5 are: -5(0.0), 5.5(0.5), -4.5(0.5) OR 4.0(1.0)
+        # depending on tie-breaking. All within 1.0 of |z|=5.
+        for ni in c.neighbour_indices:
+            assert abs(abs(other.loc[ni, 'defocus_mm']) - 5.0) <= 1.0
+
+    def test_alignment_zero_delta_when_pipelines_identical(self):
+        """If anchor and other have identical fingerprints at matched defocuses,
+        deltas should be zero across all features."""
+        import pandas as pd
+        from tools.fingerprint_checker.fingerprint_analyses import alignment_check_nn
+        df = pd.DataFrame({
+            'defocus_mm': [-5.0, -2.0, 0.0, 2.0, 5.0],
+            'erf_sigma_px': [3.0, 1.5, 0.5, 1.5, 3.0],
+            'laplacian_variance': [10.0, 25.0, 50.0, 25.0, 10.0],
+        })
+        result = alignment_check_nn(df, df, k=1)
+        for c in result.comparisons:
+            assert abs(c.deltas['erf_sigma_px']) < 1e-9
+            assert abs(c.deltas['laplacian_variance']) < 1e-9
+
+    def test_coverage_full_when_test_inside_reference(self):
+        """If test distribution is contained inside reference's range,
+        coverage should be 100%."""
+        import numpy as np
+        import pandas as pd
+        from tools.fingerprint_checker.fingerprint_analyses import coverage_check
+        ref = pd.DataFrame({'edge_transition_width': np.linspace(0, 10, 100)})
+        test = pd.DataFrame({'edge_transition_width': np.linspace(2, 8, 50)})
+        result = coverage_check(ref, test)
+        cov = result.per_feature['edge_transition_width']['coverage_pct']
+        assert cov == 100.0
+
+    def test_coverage_partial_when_test_extends_beyond_reference(self):
+        """Test distribution wider than reference → coverage drops."""
+        import numpy as np
+        import pandas as pd
+        from tools.fingerprint_checker.fingerprint_analyses import coverage_check
+        ref = pd.DataFrame({'edge_transition_width': np.linspace(0, 10, 100)})
+        test = pd.DataFrame({'edge_transition_width': np.linspace(0, 15, 100)})
+        result = coverage_check(ref, test)
+        cov = result.per_feature['edge_transition_width']['coverage_pct']
+        # Test goes to 15 but ref's p95 is ~9.5 → ~63% of test should fit
+        assert 50 < cov < 75, f"unexpected coverage {cov}"
+
+    def test_alignment_flags_classify_correctly(self):
+        """Tiny delta → PASS, big delta → FAIL."""
+        import pandas as pd
+        from tools.fingerprint_checker.fingerprint_analyses import (
+            alignment_check_nn, flag_alignment)
+        anchor = pd.DataFrame({'defocus_mm': [5.0],
+                               'erf_sigma_px': [3.0]})
+        good = pd.DataFrame({'defocus_mm': [5.0],
+                             'erf_sigma_px': [3.001]})  # ~0% delta
+        bad = pd.DataFrame({'defocus_mm': [5.0],
+                            'erf_sigma_px': [4.5]})  # 50% delta
+        good_result = alignment_check_nn(anchor, good, k=1)
+        bad_result = alignment_check_nn(anchor, bad, k=1)
+        good_flags = flag_alignment(good_result)
+        bad_flags = flag_alignment(bad_result)
+        assert good_flags['erf_sigma_px'] == 'PASS'
+        assert bad_flags['erf_sigma_px'] == 'FAIL'
