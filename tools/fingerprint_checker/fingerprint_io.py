@@ -341,3 +341,91 @@ def iterate_calibration_frames(
         if img is None:
             continue
         yield frame, img
+
+
+# ── Generic image folder loader (for real crops + inference crops) ───────
+
+
+@dataclass
+class CropSample:
+    """A single crop image with optional parsed defocus."""
+    file_path: Path
+    defocus_mm: Optional[float] = None     # parsed from filename if available
+
+
+@dataclass
+class CropFolder:
+    """A folder of crop images for fingerprinting."""
+    root: Path
+    label: str                              # 'real' / 'inference' / etc.
+    samples: List[CropSample]
+    sample_count_total: int
+    sample_count_used: int
+
+
+def load_crop_folder(
+    folder: Path,
+    label: str = 'real',
+    n_samples: Optional[int] = None,
+    parse_defocus_from_filename: bool = True,
+    seed: int = 42,
+) -> CropFolder:
+    """Load a folder of PNG crops. Recurses into subfolders.
+
+    If ``parse_defocus_from_filename`` is True, extracts defocus from
+    filenames matching ``z<signed_value>mm`` (the project's standard
+    convention emitted by `Training.run_paths.parse_true_z_from_filename`).
+    Samples without a parseable defocus get ``defocus_mm=None``.
+    """
+    folder = Path(folder)
+    if not folder.is_dir():
+        raise FileNotFoundError(f"Crop folder does not exist: {folder}")
+
+    pngs = sorted(folder.rglob("*.png"))
+    if not pngs:
+        # Try other common extensions
+        pngs = sorted(list(folder.rglob("*.tif")) + list(folder.rglob("*.tiff"))
+                      + list(folder.rglob("*.jpg")))
+    if not pngs:
+        raise FileNotFoundError(f"No image files found in {folder}")
+    total = len(pngs)
+
+    # Subsample if requested
+    if n_samples is not None and n_samples < total:
+        rng = np.random.default_rng(seed)
+        idx = rng.choice(total, size=n_samples, replace=False)
+        idx.sort()
+        pngs = [pngs[i] for i in idx]
+
+    parser = None
+    if parse_defocus_from_filename:
+        try:
+            from run_paths import parse_true_z_from_filename
+            parser = parse_true_z_from_filename
+        except ImportError:
+            parser = None
+
+    samples = []
+    for p in pngs:
+        z = parser(p.name) if parser else None
+        samples.append(CropSample(file_path=p, defocus_mm=z))
+
+    return CropFolder(
+        root=folder,
+        label=label,
+        samples=samples,
+        sample_count_total=total,
+        sample_count_used=len(samples),
+    )
+
+
+def iterate_crop_folder(
+    folder: CropFolder,
+) -> Iterator[Tuple[CropSample, np.ndarray]]:
+    """Yield (sample, image) pairs from a crop folder."""
+    for s in folder.samples:
+        try:
+            img = load_blur_image(s.file_path)
+        except IOError:
+            continue
+        yield s, img

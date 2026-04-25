@@ -24,15 +24,21 @@ import pandas as pd
 
 from .fingerprint_analyses import (
     AlignmentResult,
+    CoverageResult,
     alignment_check_nn,
+    coverage_check,
     flag_alignment,
+    flag_coverage,
 )
 from .fingerprint_io import (
+    CropFolder,
     SyntheticDataset,
     SyntheticSample,
     iterate_calibration_frames,
+    iterate_crop_folder,
     iterate_synthetic_images,
     load_calibration_stack,
+    load_crop_folder,
     load_synthetic_dataset,
 )
 from .fingerprint_metrics import compute_fingerprint, FingerprintRecord
@@ -64,6 +70,18 @@ class AllChecksResult:
     alignment_synth_vs_calib: Optional[AlignmentResult] = None
     alignment_flags: dict = field(default_factory=dict)
 
+    # Check B: alignment between inference and calibration (Phase 2 addition)
+    alignment_inference_vs_calib: Optional[AlignmentResult] = None
+    alignment_inference_flags: dict = field(default_factory=dict)
+
+    # Check C: distribution coverage (Phase 2 addition)
+    real_fingerprints: pd.DataFrame = field(default_factory=pd.DataFrame)
+    inference_fingerprints: pd.DataFrame = field(default_factory=pd.DataFrame)
+    coverage_synth_vs_real: Optional[CoverageResult] = None
+    coverage_synth_vs_inference: Optional[CoverageResult] = None
+    coverage_real_flags: dict = field(default_factory=dict)
+    coverage_inference_flags: dict = field(default_factory=dict)
+
     # Misc / diagnostics
     diagnostics: List[str] = field(default_factory=list)
 
@@ -74,6 +92,8 @@ class AllChecksResult:
             'calibration_root': self.calibration_root,
             'synthetic_fingerprint_count': len(self.synthetic_fingerprints),
             'calibration_fingerprint_count': len(self.calibration_fingerprints),
+            'real_fingerprint_count': len(self.real_fingerprints),
+            'inference_fingerprint_count': len(self.inference_fingerprints),
             'scale_chain': self.scale_chain.to_dict() if self.scale_chain else None,
             'sigma_trend_correlations': self.sigma_trend_correlations,
             'alignment_synth_vs_calib': (
@@ -81,6 +101,21 @@ class AllChecksResult:
                 if self.alignment_synth_vs_calib else None
             ),
             'alignment_flags': self.alignment_flags,
+            'alignment_inference_vs_calib': (
+                self.alignment_inference_vs_calib.to_dict()
+                if self.alignment_inference_vs_calib else None
+            ),
+            'alignment_inference_flags': self.alignment_inference_flags,
+            'coverage_synth_vs_real': (
+                self.coverage_synth_vs_real.to_dict()
+                if self.coverage_synth_vs_real else None
+            ),
+            'coverage_synth_vs_inference': (
+                self.coverage_synth_vs_inference.to_dict()
+                if self.coverage_synth_vs_inference else None
+            ),
+            'coverage_real_flags': self.coverage_real_flags,
+            'coverage_inference_flags': self.coverage_inference_flags,
             'diagnostics': self.diagnostics,
         }
         return d
@@ -124,6 +159,41 @@ def fingerprint_synthetic(
         rows.append(row)
     if progress:
         progress("Synthetic fingerprint done", 1.0)
+    return pd.DataFrame(rows)
+
+
+def fingerprint_crop_folder(
+    folder: CropFolder,
+    progress: ProgressCallback = None,
+    skip_uniformity: bool = False,
+    skip_symmetry: bool = False,
+) -> pd.DataFrame:
+    """Compute fingerprints for every PNG in a CropFolder (real or inference).
+
+    Returns a DataFrame with one row per crop. NaN-padded when an image
+    fails to load.
+    """
+    rows = []
+    n = folder.sample_count_used
+    for i, (sample, image) in enumerate(iterate_crop_folder(folder)):
+        if progress and (i % max(1, n // 50) == 0):
+            progress(f"{folder.label.capitalize()} fingerprint {i+1}/{n}",
+                     i / max(1, n))
+        rec = compute_fingerprint(
+            image,
+            skip_uniformity=skip_uniformity,
+            skip_symmetry=skip_symmetry,
+        )
+        row = rec.to_dict()
+        row['source_path'] = str(sample.file_path)
+        row['source_type'] = folder.label
+        row['index'] = i
+        row['defocus_mm'] = (
+            sample.defocus_mm if sample.defocus_mm is not None else float('nan'))
+        row.pop('metadata', None)
+        rows.append(row)
+    if progress:
+        progress(f"{folder.label.capitalize()} done", 1.0)
     return pd.DataFrame(rows)
 
 
@@ -215,19 +285,28 @@ def run_all_checks(
     config_dict: Optional[dict] = None,
     synthetic_dataset_path: Optional[Path] = None,
     calibration_path: Optional[Path] = None,
+    real_crops_path: Optional[Path] = None,
+    inference_crops_path: Optional[Path] = None,
     n_synthetic_samples: Optional[int] = None,
+    n_real_samples: Optional[int] = None,
+    n_inference_samples: Optional[int] = None,
     calibration_focus_offset_mm: float = 0.0,
     k_neighbours: int = 20,
     progress: ProgressCallback = None,
     skip_uniformity: bool = False,
     skip_symmetry: bool = False,
 ) -> AllChecksResult:
-    """Run Check A + Check B end-to-end.
+    """Run all available checks end-to-end.
 
     Either ``config_path`` or ``config_dict`` must be given (used for Check A).
     ``synthetic_dataset_path`` is required for any image-based check.
-    ``calibration_path`` is optional; when omitted, only the synthetic-only
-    sigma-trend correlation analysis runs (no NN alignment).
+
+    Optional inputs:
+      - ``calibration_path`` enables synthetic↔calibration alignment AND
+        inference↔calibration alignment (when inference_crops_path also given)
+      - ``real_crops_path`` enables synth↔real distribution coverage (Check C)
+      - ``inference_crops_path`` enables synth↔inference distribution coverage
+        AND inference↔calibration alignment (with calibration also given)
     """
     diagnostics: List[str] = []
 
@@ -280,44 +359,62 @@ def run_all_checks(
 
     sigma_trends = synthetic_sigma_trend_correlations(synth_fp)
 
-    # If no calibration, return now
-    if calibration_path is None:
+    # ── Optional: load calibration ──────────────────────────────────────
+    calib_stack = None
+    calib_fp = pd.DataFrame()
+    if calibration_path is not None:
         if progress:
-            progress("Done (no calibration — alignment skipped)", 1.0)
-        return AllChecksResult(
-            config_summary={'config_keys': list(config_dict.keys())},
-            synthetic_dataset_root=str(synth_dataset.root),
-            synthetic_fingerprints=synth_fp,
-            scale_chain=scale_result,
-            sigma_trend_correlations=sigma_trends,
-            diagnostics=diagnostics + [
-                "No calibration provided — sigma-trend done; alignment skipped."
-            ],
+            progress("Loading calibration z-stack", 0.55)
+        calib_stack = load_calibration_stack(
+            Path(calibration_path),
+            focus_offset_mm=calibration_focus_offset_mm,
+        )
+        calib_fp = fingerprint_calibration(
+            calib_stack,
+            progress=lambda m, f: progress(m, 0.55 + f * 0.15) if progress else None,
+        )
+        if calib_fp.empty:
+            diagnostics.append(
+                "Calibration fingerprint DataFrame is empty — likely "
+                "pyphantom missing or all .cine reads failed.")
+
+    # ── Optional: load real crops ───────────────────────────────────────
+    real_fp = pd.DataFrame()
+    real_root = None
+    if real_crops_path is not None:
+        if progress:
+            progress("Loading real crops", 0.70)
+        real_folder = load_crop_folder(
+            Path(real_crops_path), label='real', n_samples=n_real_samples)
+        real_root = str(real_folder.root)
+        real_fp = fingerprint_crop_folder(
+            real_folder,
+            progress=lambda m, f: progress(m, 0.70 + f * 0.10) if progress else None,
+            skip_uniformity=skip_uniformity, skip_symmetry=skip_symmetry,
         )
 
-    # Load + fingerprint calibration
-    if progress:
-        progress("Loading calibration z-stack", 0.6)
-    calib_stack = load_calibration_stack(
-        Path(calibration_path),
-        focus_offset_mm=calibration_focus_offset_mm,
-    )
-
-    def _calib_progress(msg: str, frac: float):
+    # ── Optional: load inference crops ──────────────────────────────────
+    inference_fp = pd.DataFrame()
+    inference_root = None
+    if inference_crops_path is not None:
         if progress:
-            progress(msg, 0.6 + frac * 0.3)
+            progress("Loading inference crops", 0.80)
+        inf_folder = load_crop_folder(
+            Path(inference_crops_path), label='inference',
+            n_samples=n_inference_samples)
+        inference_root = str(inf_folder.root)
+        inference_fp = fingerprint_crop_folder(
+            inf_folder,
+            progress=lambda m, f: progress(m, 0.80 + f * 0.10) if progress else None,
+            skip_uniformity=skip_uniformity, skip_symmetry=skip_symmetry,
+        )
 
-    calib_fp = fingerprint_calibration(calib_stack, progress=_calib_progress)
-
-    if calib_fp.empty:
-        diagnostics.append(
-            "Calibration fingerprint DataFrame is empty — likely pyphantom "
-            "missing or all .cine reads failed. Skipping alignment.")
-        alignment_result = None
-        flags = {}
-    else:
+    # ── Check B: synthetic ↔ calibration alignment ──────────────────────
+    alignment_result = None
+    alignment_flags = {}
+    if not calib_fp.empty:
         if progress:
-            progress("Running Check B — synthetic↔calibration alignment", 0.92)
+            progress("Check B — synthetic↔calibration alignment", 0.90)
         alignment_result = alignment_check_nn(
             anchor_df=calib_fp,
             other_df=synth_fp,
@@ -325,7 +422,56 @@ def run_all_checks(
             other_label='synthetic',
             k=k_neighbours,
         )
-        flags = flag_alignment(alignment_result)
+        alignment_flags = flag_alignment(alignment_result)
+
+    # ── Check B (Phase 2): inference ↔ calibration alignment ─────────────
+    inf_alignment_result = None
+    inf_alignment_flags = {}
+    if not calib_fp.empty and not inference_fp.empty:
+        # Filter to inference samples that have a defocus value
+        inf_with_z = inference_fp[inference_fp['defocus_mm'].notna()]
+        if len(inf_with_z) > 0:
+            if progress:
+                progress("Check B — inference↔calibration alignment", 0.93)
+            inf_alignment_result = alignment_check_nn(
+                anchor_df=calib_fp,
+                other_df=inf_with_z,
+                anchor_label='calibration',
+                other_label='inference',
+                k=min(k_neighbours, len(inf_with_z)),
+            )
+            inf_alignment_flags = flag_alignment(inf_alignment_result)
+        else:
+            diagnostics.append(
+                "Inference crops have no parseable defocus from filename — "
+                "skipping inference↔calibration alignment.")
+
+    # ── Check C: synthetic ↔ real / inference distribution coverage ─────
+    coverage_real = None
+    coverage_real_flags = {}
+    if not real_fp.empty and not synth_fp.empty:
+        if progress:
+            progress("Check C — synth↔real coverage", 0.96)
+        coverage_real = coverage_check(
+            reference_df=synth_fp,
+            test_df=real_fp,
+            reference_label='synthetic',
+            test_label='real',
+        )
+        coverage_real_flags = flag_coverage(coverage_real)
+
+    coverage_inference = None
+    coverage_inference_flags = {}
+    if not inference_fp.empty and not synth_fp.empty:
+        if progress:
+            progress("Check C — synth↔inference coverage", 0.98)
+        coverage_inference = coverage_check(
+            reference_df=synth_fp,
+            test_df=inference_fp,
+            reference_label='synthetic',
+            test_label='inference',
+        )
+        coverage_inference_flags = flag_coverage(coverage_inference)
 
     if progress:
         progress("Done", 1.0)
@@ -333,12 +479,20 @@ def run_all_checks(
     return AllChecksResult(
         config_summary={'config_keys': list(config_dict.keys())},
         synthetic_dataset_root=str(synth_dataset.root),
-        calibration_root=str(calib_stack.root),
+        calibration_root=str(calib_stack.root) if calib_stack else None,
         synthetic_fingerprints=synth_fp,
         calibration_fingerprints=calib_fp,
+        real_fingerprints=real_fp,
+        inference_fingerprints=inference_fp,
         scale_chain=scale_result,
         sigma_trend_correlations=sigma_trends,
         alignment_synth_vs_calib=alignment_result,
-        alignment_flags=flags,
+        alignment_flags=alignment_flags,
+        alignment_inference_vs_calib=inf_alignment_result,
+        alignment_inference_flags=inf_alignment_flags,
+        coverage_synth_vs_real=coverage_real,
+        coverage_real_flags=coverage_real_flags,
+        coverage_synth_vs_inference=coverage_inference,
+        coverage_inference_flags=coverage_inference_flags,
         diagnostics=diagnostics,
     )

@@ -413,3 +413,221 @@ class TestAlignmentAndCoverage:
         bad_flags = flag_alignment(bad_result)
         assert good_flags['erf_sigma_px'] == 'PASS'
         assert bad_flags['erf_sigma_px'] == 'FAIL'
+
+
+# ===========================================================================
+# Orchestrator + Report — end-to-end with a tiny dataset
+# ===========================================================================
+class TestOrchestratorAndReport:
+    def _build_tiny_dataset(self, tmp_path):
+        """Minimal synthetic dataset on disk + matching config."""
+        import cv2
+        import numpy as np
+        import pandas as pd
+        ds = tmp_path / "20260101_000000_test"
+        (ds / "blur").mkdir(parents=True)
+        # 8 samples with monotonic blur for correlation
+        for i in range(8):
+            img = np.ones((48, 48), dtype=np.float32)
+            cv2.circle(img, (24, 24), 10, 0.0, -1)
+            sigma = 0.5 + i * 0.7
+            blurred = cv2.GaussianBlur(img, (0, 0), sigmaX=sigma)
+            cv2.imwrite(str(ds / "blur" / f"{i:06d}.png"),
+                        (blurred * 255).astype(np.uint8))
+        pd.DataFrame({
+            'index': range(8),
+            'defocus_mm': [-3.0, -2.0, -1.0, 0.0, 1.0, 2.0, 3.0, 4.0],
+            'sigma_px': [3.0, 2.0, 1.0, 0.5, 1.0, 2.0, 3.0, 4.0],
+            'sigma_measured_erf': [None] * 8,
+        }).to_csv(ds / "metadata.csv", index=False)
+        config = {
+            'data': {'image_size_px': 48,
+                     'blur_range_px': [0.5, 4.0]},
+            'training': {
+                'rho_direct': 1.0, 'sigma_0': 0.0,
+                'scale_calib_px_per_mm': 50.0,
+                'crop_size_px': 48,
+                'training_mode': 'direct',
+            },
+        }
+        return ds, config
+
+    def test_run_all_checks_no_calibration(self, tmp_path):
+        from tools.fingerprint_checker.fingerprint_orchestrator import run_all_checks
+        ds, cfg = self._build_tiny_dataset(tmp_path)
+        result = run_all_checks(
+            config_dict=cfg,
+            synthetic_dataset_path=ds,
+            n_synthetic_samples=None,
+        )
+        assert result.scale_chain is not None
+        assert result.scale_chain.overall_passed
+        assert len(result.synthetic_fingerprints) == 8
+        # Sigma-trend correlations exist for the cheap metrics
+        assert 'tenengrad' in result.sigma_trend_correlations
+        assert 'edge_gradient_max' in result.sigma_trend_correlations
+
+    def test_write_full_report_creates_all_files(self, tmp_path):
+        from tools.fingerprint_checker.fingerprint_orchestrator import run_all_checks
+        from tools.fingerprint_checker.fingerprint_report import write_full_report
+        ds, cfg = self._build_tiny_dataset(tmp_path)
+        out = tmp_path / "report"
+        result = run_all_checks(config_dict=cfg, synthetic_dataset_path=ds)
+        files = write_full_report(result, out)
+        # JSON + markdown + at least one CSV + at least one PNG
+        assert (out / 'blur_fingerprint_report.json').is_file()
+        assert (out / 'blur_fingerprint_report.md').is_file()
+        assert (out / 'fingerprints_synthetic.csv').is_file()
+        assert (out / 'check_a_scale_residuals.png').is_file()
+        assert (out / 'check_b_internal_sigma_trends.png').is_file()
+
+    def test_report_json_is_valid_json(self, tmp_path):
+        import json
+        from tools.fingerprint_checker.fingerprint_orchestrator import run_all_checks
+        from tools.fingerprint_checker.fingerprint_report import write_json_report
+        ds, cfg = self._build_tiny_dataset(tmp_path)
+        result = run_all_checks(config_dict=cfg, synthetic_dataset_path=ds)
+        p = write_json_report(result, tmp_path / 'rep')
+        with open(p) as f:
+            data = json.load(f)
+        # Top-level keys
+        assert 'config_summary' in data
+        assert 'scale_chain' in data
+        assert 'sigma_trend_correlations' in data
+        assert 'written_at' in data
+
+
+# ===========================================================================
+# Phase 2 — crop folder loaders, Check C, Inference↔Calibration alignment
+# ===========================================================================
+class TestPhase2:
+    def _build_real_crops(self, tmp_path):
+        """A folder of "real" crops with defocus encoded in filename."""
+        import cv2
+        import numpy as np
+        folder = tmp_path / "real_crops"
+        folder.mkdir()
+        for i, z in enumerate([-3.0, -1.0, 0.0, 1.0, 3.0]):
+            img = np.ones((48, 48), dtype=np.float32)
+            cv2.circle(img, (24, 24), 10, 0.0, -1)
+            sigma = 0.5 + abs(z) * 0.3
+            blurred = cv2.GaussianBlur(img, (0, 0), sigmaX=sigma)
+            (folder / f"sample{i}_z{z:+.2f}mm.png").write_bytes(b"")
+            cv2.imwrite(str(folder / f"sample{i}_z{z:+.2f}mm.png"),
+                        (blurred * 255).astype(np.uint8))
+        return folder
+
+    def test_load_crop_folder_parses_defocus_from_filename(self, tmp_path):
+        from tools.fingerprint_checker.fingerprint_io import load_crop_folder
+        folder = self._build_real_crops(tmp_path)
+        loaded = load_crop_folder(folder, label='real')
+        assert loaded.sample_count_total == 5
+        # Each sample should have parsed defocus
+        zs = sorted(s.defocus_mm for s in loaded.samples
+                    if s.defocus_mm is not None)
+        assert zs == [-3.0, -1.0, 0.0, 1.0, 3.0]
+
+    def test_load_crop_folder_subsample(self, tmp_path):
+        from tools.fingerprint_checker.fingerprint_io import load_crop_folder
+        folder = self._build_real_crops(tmp_path)
+        loaded = load_crop_folder(folder, label='real', n_samples=3)
+        assert loaded.sample_count_total == 5
+        assert loaded.sample_count_used == 3
+
+    def test_load_crop_folder_handles_no_defocus_in_name(self, tmp_path):
+        import cv2
+        import numpy as np
+        from tools.fingerprint_checker.fingerprint_io import load_crop_folder
+        folder = tmp_path / "no_z_crops"
+        folder.mkdir()
+        for i in range(3):
+            cv2.imwrite(str(folder / f"plain_{i}.png"),
+                        (np.ones((32, 32)) * 128).astype(np.uint8))
+        loaded = load_crop_folder(folder, label='inference')
+        for s in loaded.samples:
+            assert s.defocus_mm is None
+
+    def test_orchestrator_runs_check_c_when_real_provided(self, tmp_path):
+        """End-to-end: synth dataset + real crops → coverage check runs."""
+        from tools.fingerprint_checker.fingerprint_orchestrator import run_all_checks
+        # Build synth dataset
+        import cv2
+        import numpy as np
+        import pandas as pd
+        ds = tmp_path / "20260101_000000_test"
+        (ds / "blur").mkdir(parents=True)
+        for i in range(8):
+            img = np.ones((48, 48), dtype=np.float32)
+            cv2.circle(img, (24, 24), 10, 0.0, -1)
+            sigma = 0.5 + i * 0.4
+            cv2.imwrite(str(ds / "blur" / f"{i:06d}.png"),
+                        (cv2.GaussianBlur(img, (0, 0), sigmaX=sigma) * 255)
+                        .astype(np.uint8))
+        pd.DataFrame({
+            'index': range(8),
+            'defocus_mm': [(i - 4) * 1.0 for i in range(8)],
+            'sigma_px': [0.5 + i * 0.4 for i in range(8)],
+        }).to_csv(ds / "metadata.csv", index=False)
+
+        cfg = {
+            'data': {'image_size_px': 48, 'blur_range_px': [0.5, 4.0]},
+            'training': {'rho_direct': 1.0, 'sigma_0': 0.0,
+                         'scale_calib_px_per_mm': 50.0, 'crop_size_px': 48,
+                         'training_mode': 'direct'},
+        }
+
+        # Reuse the real-crops builder
+        real_folder = self._build_real_crops(tmp_path)
+
+        result = run_all_checks(
+            config_dict=cfg,
+            synthetic_dataset_path=ds,
+            real_crops_path=real_folder,
+        )
+        assert not result.synthetic_fingerprints.empty
+        assert not result.real_fingerprints.empty
+        assert result.coverage_synth_vs_real is not None
+        # At least one feature should have a defined coverage
+        per_feat = result.coverage_synth_vs_real.per_feature
+        assert any(np.isfinite(v.get('coverage_pct', float('nan')))
+                   for v in per_feat.values())
+
+    def test_orchestrator_no_inference_calib_alignment_without_defocus(self, tmp_path):
+        """If inference crops have no parseable defocus, the
+        inference↔calibration alignment step is skipped with a diagnostic."""
+        import cv2
+        import numpy as np
+        import pandas as pd
+        from tools.fingerprint_checker.fingerprint_orchestrator import run_all_checks
+        ds = tmp_path / "ds"
+        (ds / "blur").mkdir(parents=True)
+        for i in range(4):
+            cv2.imwrite(str(ds / "blur" / f"{i:06d}.png"),
+                        (np.ones((32, 32)) * 100).astype(np.uint8))
+        pd.DataFrame({
+            'index': range(4),
+            'defocus_mm': [-2.0, -1.0, 1.0, 2.0],
+            'sigma_px': [1.0, 0.5, 0.5, 1.0],
+        }).to_csv(ds / "metadata.csv", index=False)
+
+        # Inference crops with NO defocus in filename
+        inf = tmp_path / "inf"
+        inf.mkdir()
+        for i in range(3):
+            cv2.imwrite(str(inf / f"plain_{i}.png"),
+                        (np.ones((32, 32)) * 128).astype(np.uint8))
+
+        cfg = {
+            'data': {'image_size_px': 32, 'blur_range_px': [0.5, 1.0]},
+            'training': {'rho_direct': 1.0, 'sigma_0': 0.0,
+                         'scale_calib_px_per_mm': 50.0, 'crop_size_px': 32,
+                         'training_mode': 'direct'},
+        }
+        result = run_all_checks(
+            config_dict=cfg, synthetic_dataset_path=ds,
+            inference_crops_path=inf,
+        )
+        # Coverage runs (doesn't need defocus)
+        assert result.coverage_synth_vs_inference is not None
+        # But alignment skipped (no defocus)
+        assert result.alignment_inference_vs_calib is None

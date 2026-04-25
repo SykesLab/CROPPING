@@ -131,30 +131,70 @@ def write_markdown_report(result, output_dir: Path) -> Path:
         lines.append("")
 
     # Check B: synthetic vs calibration
-    lines.append("## Check B — Synthetic ↔ Calibration alignment")
-    if result.alignment_synth_vs_calib is None:
-        lines.append("_(skipped — calibration not provided)_")
-    else:
-        ar = result.alignment_synth_vs_calib
-        lines.append(
-            f"K = {ar.k_neighbours} nearest synthetic samples per calibration "
-            f"anchor (matched on |defocus_mm|).")
-        lines.append("")
+    def _alignment_table(ar, flags):
+        if ar is None:
+            return ["_(skipped)_", ""]
+        out = [
+            f"K = {ar.k_neighbours} nearest {ar.other_label} samples per "
+            f"{ar.anchor_label} anchor (matched on |defocus_mm|).",
+            "",
+        ]
         if ar.diagnostics:
             for d in ar.diagnostics:
-                lines.append(f"- {d}")
-            lines.append("")
-        lines.append("| Metric | n | mean Δ | median Δ | |mean Δ| | flag |")
-        lines.append("|---|---|---|---|---|---|")
+                out.append(f"- {d}")
+            out.append("")
+        out.append("| Metric | n | mean Δ | median Δ | |mean Δ| | flag |")
+        out.append("|---|---|---|---|---|---|")
         for m, summary in ar.per_metric_summary.items():
-            flag = result.alignment_flags.get(m, 'NODATA')
-            lines.append(
+            flag = flags.get(m, 'NODATA')
+            out.append(
                 f"| {m} | {summary['n_finite']} | "
                 f"{summary['mean_delta']:+.4f} | "
                 f"{summary['median_delta']:+.4f} | "
                 f"{summary['abs_mean_delta']:.4f} | {flag} |"
             )
-        lines.append("")
+        out.append("")
+        return out
+
+    lines.append("## Check B — Synthetic ↔ Calibration alignment")
+    lines.extend(_alignment_table(
+        result.alignment_synth_vs_calib, result.alignment_flags))
+
+    lines.append("## Check B — Inference ↔ Calibration alignment")
+    lines.extend(_alignment_table(
+        result.alignment_inference_vs_calib, result.alignment_inference_flags))
+
+    # Check C — distribution coverage
+    def _coverage_table(cov, flags):
+        if cov is None:
+            return ["_(skipped)_", ""]
+        out = [
+            f"For each metric: % of {cov.test_label} samples falling within "
+            f"the {cov.reference_label} distribution's "
+            f"[p{cov.percentile_low}, p{cov.percentile_high}] range. "
+            f"({cov.n_test} test, {cov.n_reference} reference)",
+            "",
+            "| Metric | reference range [lo, hi] | n_in / n_total | coverage % | flag |",
+            "|---|---|---|---|---|",
+        ]
+        for m, info in cov.per_feature.items():
+            flag = flags.get(m, 'NODATA')
+            out.append(
+                f"| {m} | "
+                f"[{info['p_lo']:.4f}, {info['p_hi']:.4f}] | "
+                f"{info['n_in']} / {info['n_total']} | "
+                f"{info['coverage_pct']:.1f}% | {flag} |"
+            )
+        out.append("")
+        return out
+
+    lines.append("## Check C — Synthetic ↔ Real distribution coverage")
+    lines.extend(_coverage_table(
+        result.coverage_synth_vs_real, result.coverage_real_flags))
+
+    lines.append("## Check C — Synthetic ↔ Inference distribution coverage")
+    lines.extend(_coverage_table(
+        result.coverage_synth_vs_inference, result.coverage_inference_flags))
 
     if result.diagnostics:
         lines.append("## Diagnostics")
@@ -167,18 +207,20 @@ def write_markdown_report(result, output_dir: Path) -> Path:
 
 
 def write_fingerprint_csvs(result, output_dir: Path) -> dict:
-    """Save the synthetic + calibration fingerprint DataFrames as CSVs."""
+    """Save the per-source fingerprint DataFrames as CSVs."""
     output_dir = Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     written = {}
-    if not result.synthetic_fingerprints.empty:
-        p = output_dir / 'fingerprints_synthetic.csv'
-        result.synthetic_fingerprints.to_csv(p, index=False)
-        written['synthetic'] = p
-    if not result.calibration_fingerprints.empty:
-        p = output_dir / 'fingerprints_calibration.csv'
-        result.calibration_fingerprints.to_csv(p, index=False)
-        written['calibration'] = p
+    for label, df in (
+        ('synthetic', result.synthetic_fingerprints),
+        ('calibration', result.calibration_fingerprints),
+        ('real', result.real_fingerprints),
+        ('inference', result.inference_fingerprints),
+    ):
+        if not df.empty:
+            p = output_dir / f'fingerprints_{label}.csv'
+            df.to_csv(p, index=False)
+            written[label] = p
     return written
 
 
@@ -202,13 +244,38 @@ def write_plots(result, output_dir: Path) -> dict:
     if result.alignment_synth_vs_calib is not None:
         fig = plot_alignment_per_metric_deltas(
             result.alignment_synth_vs_calib, result.alignment_flags)
-        p = output_dir / 'check_b_alignment_per_metric.png'
+        p = output_dir / 'check_b_synth_vs_calib_per_metric.png'
         save_figure(fig, p)
-        written['alignment_per_metric'] = p
+        written['synth_vs_calib_per_metric'] = p
         fig = plot_alignment_per_anchor_heatmap(result.alignment_synth_vs_calib)
-        p = output_dir / 'check_b_alignment_heatmap.png'
+        p = output_dir / 'check_b_synth_vs_calib_heatmap.png'
         save_figure(fig, p)
-        written['alignment_heatmap'] = p
+        written['synth_vs_calib_heatmap'] = p
+    if result.alignment_inference_vs_calib is not None:
+        fig = plot_alignment_per_metric_deltas(
+            result.alignment_inference_vs_calib,
+            result.alignment_inference_flags)
+        p = output_dir / 'check_b_inference_vs_calib_per_metric.png'
+        save_figure(fig, p)
+        written['inference_vs_calib_per_metric'] = p
+        fig = plot_alignment_per_anchor_heatmap(
+            result.alignment_inference_vs_calib)
+        p = output_dir / 'check_b_inference_vs_calib_heatmap.png'
+        save_figure(fig, p)
+        written['inference_vs_calib_heatmap'] = p
+    if result.coverage_synth_vs_real is not None:
+        fig = plot_coverage_bars(
+            result.coverage_synth_vs_real, result.coverage_real_flags)
+        p = output_dir / 'check_c_synth_vs_real_coverage.png'
+        save_figure(fig, p)
+        written['synth_vs_real_coverage'] = p
+    if result.coverage_synth_vs_inference is not None:
+        fig = plot_coverage_bars(
+            result.coverage_synth_vs_inference,
+            result.coverage_inference_flags)
+        p = output_dir / 'check_c_synth_vs_inference_coverage.png'
+        save_figure(fig, p)
+        written['synth_vs_inference_coverage'] = p
     return written
 
 
