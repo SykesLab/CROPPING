@@ -237,16 +237,31 @@ def load_calibration_stack(
 ) -> CalibrationStack:
     """Load a calibration z-stack folder.
 
-    Expects: a folder containing `.cine` files and an optional
-    `positions.csv` mapping `filename → stage_position_mm`. Without the
-    CSV, frames are still listed but their `defocus_mm` is NaN.
+    Two folder layouts are supported, in this order:
+
+    1. **Run bundle** (preferred): a folder produced by the calibration GUI
+       containing ``processed_images/`` + ``measurements.csv``. The PNGs
+       are read directly — fast and no pyphantom dependency.
+
+    2. **Legacy .cine folder**: ``.cine`` files + optional ``positions.csv``.
+       Frames are extracted via pyphantom on demand.
     """
     folder = Path(folder)
     if not folder.is_dir():
         raise FileNotFoundError(f"Calibration folder does not exist: {folder}")
+
+    # Bundle layout?
+    bundle_dir = folder / "processed_images"
+    measurements = folder / "measurements.csv"
+    if bundle_dir.is_dir() and measurements.is_file():
+        return _load_calibration_bundle(folder, focus_offset_mm)
+
     cine_files = sorted(folder.glob("*.cine"), key=_cine_sort_key)
     if not cine_files:
-        raise FileNotFoundError(f"No .cine files in {folder}")
+        raise FileNotFoundError(
+            f"{folder} is neither a calibration run bundle "
+            f"(needs processed_images/ + measurements.csv) "
+            f"nor a folder of .cine files.")
 
     positions = _load_positions_csv(folder)
     frames: List[CalibrationFrame] = []
@@ -258,6 +273,55 @@ def load_calibration_stack(
             stage_position_mm=stage,
             defocus_mm=defocus,
             frame_idx=frame_idx,
+        ))
+    return CalibrationStack(
+        root=folder, frames=frames, focus_offset_mm=focus_offset_mm)
+
+
+def _load_calibration_bundle(
+    folder: Path, focus_offset_mm: float,
+) -> CalibrationStack:
+    """Load a calibration run bundle written by Calibration/calibration_gui.py.
+
+    Pairs each ``processed_images/<name>.png`` with the matching ``z_mm`` row
+    in ``measurements.csv`` (either by index order or, if present, by
+    a 'filename' column).
+    """
+    bundle_dir = folder / "processed_images"
+    pngs = sorted(bundle_dir.glob("*.png"))
+    if not pngs:
+        raise FileNotFoundError(
+            f"Bundle has no PNGs under {bundle_dir}")
+
+    df = pd.read_csv(folder / "measurements.csv")
+    z_col = next((c for c in ('z_mm', 'defocus_mm', 'stage_position_mm')
+                  if c in df.columns), None)
+    if z_col is None:
+        raise ValueError(
+            f"measurements.csv lacks a z column "
+            f"(looked for z_mm / defocus_mm / stage_position_mm)")
+
+    # Match by filename column if present; otherwise by sorted-order index
+    if 'filename' in df.columns:
+        z_by_name = dict(zip(df['filename'].astype(str), df[z_col]))
+        z_by_stem = {Path(k).stem: v for k, v in z_by_name.items()}
+        positions = {p.name: z_by_name.get(p.name,
+                                           z_by_stem.get(p.stem, float('nan')))
+                     for p in pngs}
+    else:
+        z_values = df[z_col].tolist()
+        positions = {p.name: (z_values[i] if i < len(z_values) else float('nan'))
+                     for i, p in enumerate(pngs)}
+
+    frames: List[CalibrationFrame] = []
+    for png in pngs:
+        stage = float(positions.get(png.name, float('nan')))
+        defocus = (stage - focus_offset_mm) if not np.isnan(stage) else float('nan')
+        frames.append(CalibrationFrame(
+            file_path=png,
+            stage_position_mm=stage,
+            defocus_mm=defocus,
+            frame_idx=0,
         ))
     return CalibrationStack(
         root=folder, frames=frames, focus_offset_mm=focus_offset_mm)
@@ -335,11 +399,22 @@ def iterate_synthetic_images(
 def iterate_calibration_frames(
     stack: CalibrationStack,
 ) -> Iterator[Tuple[CalibrationFrame, np.ndarray]]:
-    """Yield (frame_metadata, image array) pairs for the calibration stack."""
+    """Yield (frame_metadata, image array) pairs for the calibration stack.
+
+    Dispatches by file extension: ``.png/.tif/.jpg`` go through the PNG loader
+    (fast, no extra deps); ``.cine`` go through the pyphantom loader.
+    """
     for frame in stack.frames:
-        img = load_cine_frame(frame.file_path, frame.frame_idx)
-        if img is None:
-            continue
+        ext = frame.file_path.suffix.lower()
+        if ext in ('.png', '.tif', '.tiff', '.jpg', '.jpeg'):
+            try:
+                img = load_blur_image(frame.file_path)
+            except IOError:
+                continue
+        else:
+            img = load_cine_frame(frame.file_path, frame.frame_idx)
+            if img is None:
+                continue
         yield frame, img
 
 

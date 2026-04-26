@@ -77,7 +77,8 @@ class FingerprintCheckerApp(tk.Tk):
         self.config_var = tk.StringVar(value=self._first_existing(
             default_models, "*.pth", "checkpoints/dme_best.pth", suffix=True))
         self.synth_var = tk.StringVar(value=self._latest_dataset(default_dataset_root))
-        self.calib_var = tk.StringVar(value="")
+        self.calib_var = tk.StringVar(
+            value=self._latest_calibration_run(_REPO_ROOT / "Calibration" / "runs"))
         self.inference_var = tk.StringVar(value="")
         self.output_var = tk.StringVar(value=str(_REPO_ROOT / "tools" / "fingerprint_checker" / "output" / datetime.now().strftime("%Y%m%d_%H%M%S")))
         self.n_synth_var = tk.StringVar(value=str(self._sample_default(self.synth_var.get())))
@@ -118,6 +119,19 @@ class FingerprintCheckerApp(tk.Tk):
                      if p.is_dir() and (p / "metadata.csv").is_file()],
                     reverse=True)
         return str(ds[0]) if ds else ""
+
+    @staticmethod
+    def _latest_calibration_run(runs_dir: Path) -> str:
+        """Latest calibration_gui run bundle (has processed_images/ + measurements.csv)."""
+        if not runs_dir.is_dir():
+            return ""
+        bundles = sorted([
+            p for p in runs_dir.iterdir()
+            if p.is_dir()
+            and (p / "processed_images").is_dir()
+            and (p / "measurements.csv").is_file()
+        ], reverse=True)
+        return str(bundles[0]) if bundles else ""
 
     @staticmethod
     def _dataset_count(synth_path: str) -> int:
@@ -259,7 +273,9 @@ class FingerprintCheckerApp(tk.Tk):
             self._refresh_n_default()
 
     def _browse_calib(self):
-        path = filedialog.askdirectory(title="Select calibration z-stack folder (.cine + positions.csv)")
+        path = filedialog.askdirectory(
+            title="Select calibration run folder "
+                  "(bundle from calibration_gui, OR legacy .cine + positions.csv)")
         if path:
             self.calib_var.set(path)
 

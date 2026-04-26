@@ -1789,6 +1789,17 @@ The synthetic blur will match your camera!"""
             f"Processed {len(self.zstack_images)} images\n(mirror + crop)"
         )
 
+    @staticmethod
+    def _processed_image_name(source_name: str, index: int) -> str:
+        """PNG filename for the i-th processed image — derived from the source
+        .cine name so it stays human-recognisable and pairs unambiguously with
+        the matching row in measurements.csv.
+        """
+        if source_name:
+            stem = Path(source_name).stem
+            return f"{stem}.png"
+        return f"crop_{index:04d}.png"
+
     def _save_cropped_images(self):
         """Save cropped images into the run folder's 'processed_images/' subdir.
 
@@ -1807,7 +1818,7 @@ The synthetic blur will match your camera!"""
         self.root.update_idletasks()
 
         for i, (img, filename) in enumerate(zip(self.zstack_images, self.zstack_filenames)):
-            out_name = filename if filename else f"crop_{i:04d}.png"
+            out_name = self._processed_image_name(filename, i)
             out_path = output_path / out_name
             if img.dtype != np.uint8:
                 img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
@@ -2590,12 +2601,20 @@ FOR TRAINING GUI:
                 yaml.dump(yaml_dict, f, default_flow_style=False, sort_keys=False)
             exported.append("calibration_results.yaml")
 
-        # Export CSV
+        # Export CSV. Include processed-image filename so downstream tools
+        # (e.g. fingerprint checker) can pair each measurement with its image
+        # unambiguously, instead of relying on sort-order coincidence.
         if self.export_csv_var.get():
             import pandas as pd
+            n = len(self.sigma_values)
+            png_names = [
+                self._processed_image_name(self.zstack_filenames[i], i)
+                for i in range(n)
+            ]
             df = pd.DataFrame({
-                'z_mm': self.zstack_positions[:len(self.sigma_values)],
-                'sigma_px': self.sigma_values
+                'filename': png_names,
+                'z_mm': self.zstack_positions[:n],
+                'sigma_px': self.sigma_values,
             })
             csv_path = output_dir / "measurements.csv"
             df.to_csv(csv_path, index=False)
