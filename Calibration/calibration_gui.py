@@ -83,6 +83,7 @@ import threading
 import tkinter as tk
 import webbrowser
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, scrolledtext, ttk
 from typing import Dict, List, Optional, Tuple
@@ -861,8 +862,12 @@ Droplet at z = +5 mm:
 
         folder_row = ttk.Frame(folder_frame)
         folder_row.pack(fill='x', pady=2)
+        # Per-run timestamped folder. Both Export Calibration and Save Processed
+        # write here, so each calibration run produces one self-contained bundle.
+        _run_stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        _run_name = f"{_run_stamp}_camera-{self.camera_var.get()}"
         self.export_folder_var = tk.StringVar(
-            value=str(Path(__file__).parent / "calibration_output"))
+            value=str(Path(__file__).parent / "runs" / _run_name))
         ttk.Entry(folder_row, textvariable=self.export_folder_var,
                   width=40).pack(side='left', padx=(0, 5))
         ttk.Button(folder_row, text="Browse", command=self._browse_export_folder).pack(side='left')
@@ -1785,28 +1790,25 @@ The synthetic blur will match your camera!"""
         )
 
     def _save_cropped_images(self):
-        """Save cropped images to 'Cropped Z-Stack' subfolder next to script."""
+        """Save cropped images into the run folder's 'processed_images/' subdir.
+
+        Shares the run folder with Export Calibration so each run is one
+        self-contained bundle (yaml + measurements + processed images).
+        """
         if not self.zstack_images:
             messagebox.showerror("Error", "No images loaded")
             return
 
-        # Create "Cropped Z-Stack" subfolder next to this script (portable)
-        script_dir = Path(__file__).parent
-        output_path = script_dir / "Cropped Z-Stack"
+        run_dir = Path(self.export_folder_var.get())
+        output_path = run_dir / "processed_images"
         output_path.mkdir(parents=True, exist_ok=True)
 
         self.crop_status_var.set("Saving...")
         self.root.update_idletasks()
 
-        # Save each image
         for i, (img, filename) in enumerate(zip(self.zstack_images, self.zstack_filenames)):
-            if filename:
-                out_name = filename
-            else:
-                out_name = f"crop_{i:04d}.png"
-
+            out_name = filename if filename else f"crop_{i:04d}.png"
             out_path = output_path / out_name
-            # Normalize to uint8 for saving if needed
             if img.dtype != np.uint8:
                 img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
             cv2.imwrite(str(out_path), img)
@@ -1815,9 +1817,10 @@ The synthetic blur will match your camera!"""
             self.root.update_idletasks()
 
         self.load_progress_var.set(0)
-        self.crop_status_var.set(f"Saved to Cropped Z-Stack/")
+        self.crop_status_var.set(f"Saved to {run_dir.name}/processed_images/")
         messagebox.showinfo(
-            "Save Complete", f"Saved {len(self.zstack_images)} images to:\n{output_path}")
+            "Save Complete",
+            f"Saved {len(self.zstack_images)} images to:\n{output_path}")
 
     def _detect_sphere_in_preview(self):
         """Detect sphere in current preview image."""
