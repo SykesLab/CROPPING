@@ -299,3 +299,150 @@ def flag_coverage(
         else:
             flags[m] = 'PASS'
     return flags
+
+
+# ── Multivariate joint coverage (Phase 4 supplement to Check C) ──────────
+
+
+def joint_coverage(
+    reference_df: pd.DataFrame,
+    test_df: pd.DataFrame,
+    metrics: Sequence[str] = ALL_NUMERIC_METRICS,
+    k: int = 5,
+) -> Dict[str, float]:
+    """Joint k-NN coverage of test in the reference's feature space.
+
+    Per-feature percentile coverage misses combinations: a test sample whose
+    individual features all fall in the reference's marginal ranges may
+    still be in a region of feature space the reference never visits. This
+    function quantifies that.
+
+    Algorithm:
+      1. z-score reference + test by reference's mean/std per feature
+      2. Compute each REF sample's mean distance to its k nearest REF
+         neighbours → defines a typical local-density scale
+      3. For each TEST sample, compute its mean distance to k nearest
+         reference neighbours
+      4. "Covered" = test's k-NN distance ≤ 95th percentile of ref's own
+      5. Report joint_coverage_pct = % of test samples covered.
+
+    Returns a dict with: 'joint_coverage_pct', 'n_features_used',
+    'n_test_finite', 'n_reference_finite', 'reference_p95_distance'.
+    """
+    feature_cols = [
+        m for m in metrics
+        if m in reference_df.columns and m in test_df.columns
+    ]
+    if not feature_cols:
+        return {
+            'joint_coverage_pct': float('nan'), 'n_features_used': 0,
+            'n_test_finite': 0, 'n_reference_finite': 0,
+            'reference_p95_distance': float('nan'),
+        }
+    ref = reference_df[feature_cols].to_numpy(dtype=float)
+    test = test_df[feature_cols].to_numpy(dtype=float)
+
+    means = np.nanmean(ref, axis=0)
+    stds = np.nanstd(ref, axis=0)
+    stds = np.where((stds < 1e-9) | ~np.isfinite(stds), 1.0, stds)
+
+    ref_z = (ref - means) / stds
+    test_z = (test - means) / stds
+
+    # Drop rows with any NaN in EITHER side (joint comparison needs finite all)
+    ref_finite_mask = np.all(np.isfinite(ref_z), axis=1)
+    test_finite_mask = np.all(np.isfinite(test_z), axis=1)
+    ref_clean = ref_z[ref_finite_mask]
+    test_clean = test_z[test_finite_mask]
+
+    if len(ref_clean) <= k or len(test_clean) == 0:
+        return {
+            'joint_coverage_pct': float('nan'),
+            'n_features_used': len(feature_cols),
+            'n_test_finite': int(test_finite_mask.sum()),
+            'n_reference_finite': int(ref_finite_mask.sum()),
+            'reference_p95_distance': float('nan'),
+        }
+
+    def _knn_mean_distance(query: np.ndarray, ref_pts: np.ndarray) -> np.ndarray:
+        """For each query, mean Euclidean distance to k nearest ref points."""
+        # n_query × n_ref distance matrix
+        diff = query[:, None, :] - ref_pts[None, :, :]
+        d = np.sqrt((diff ** 2).sum(axis=2))
+        # Sort each row, take the k smallest (excluding self if same set)
+        d.sort(axis=1)
+        return d[:, :k].mean(axis=1)
+
+    # Reference's typical k-NN distance — exclude self (column 0 = distance 0)
+    ref_self_d = _knn_mean_distance(ref_clean, ref_clean)
+    # Note: includes self at distance 0, so effectively averaging over k-1
+    # nearest others + self. Subtract self's contribution: weight 0/k pulls
+    # the mean down by 1/k * 0; correct by * k/(k-1).
+    ref_self_d = ref_self_d * (k / max(k - 1, 1))
+    ref_p95 = float(np.percentile(ref_self_d, 95))
+
+    test_d = _knn_mean_distance(test_clean, ref_clean)
+    n_covered = int((test_d <= ref_p95).sum())
+
+    return {
+        'joint_coverage_pct': 100.0 * n_covered / len(test_clean),
+        'n_features_used': len(feature_cols),
+        'n_test_finite': int(len(test_clean)),
+        'n_reference_finite': int(len(ref_clean)),
+        'reference_p95_distance': ref_p95,
+    }
+
+
+# ── Nearest-match lookup (Sample Viewer, Phase 3) ────────────────────────
+
+
+def find_nearest_match(
+    source_row: pd.Series,
+    target_df: pd.DataFrame,
+    feature_cols: Optional[Sequence[str]] = None,
+) -> tuple:
+    """Find the target row most similar to source_row in z-scored feature space.
+
+    Z-scoring uses the TARGET distribution's mean and std per feature so that
+    distances are unit-free regardless of metric scale. Source-NaN dimensions
+    are skipped (the source's missing measurements don't count against any
+    target). Target-NaN dimensions contribute zero distance for that target on
+    that dimension (treats missing = no info).
+
+    Returns ``(target_index, distance)``. Returns ``(None, None)`` if the
+    source has no usable features in common with the target.
+    """
+    if target_df is None or target_df.empty:
+        return None, None
+    if feature_cols is None:
+        feature_cols = [
+            m for m in ALL_NUMERIC_METRICS
+            if m in source_row.index and m in target_df.columns
+        ]
+    feature_cols = [c for c in feature_cols if c in target_df.columns]
+    if not feature_cols:
+        return None, None
+
+    target_arr = target_df[feature_cols].to_numpy(dtype=float)
+    means = np.nanmean(target_arr, axis=0)
+    stds = np.nanstd(target_arr, axis=0)
+    stds = np.where((stds < 1e-9) | ~np.isfinite(stds), 1.0, stds)
+
+    source_vec = np.array(
+        [source_row.get(c, np.nan) for c in feature_cols], dtype=float)
+    finite = np.isfinite(source_vec)
+    if finite.sum() == 0:
+        return None, None
+
+    src_z = (source_vec - means) / stds
+    tgt_z = (target_arr - means) / stds
+
+    src_z = src_z[finite]
+    tgt_z = tgt_z[:, finite]
+
+    diff_sq = (tgt_z - src_z) ** 2
+    diff_sq = np.where(np.isnan(diff_sq), 0.0, diff_sq)
+    distances = np.sqrt(diff_sq.sum(axis=1))
+
+    best_pos = int(np.argmin(distances))
+    return int(target_df.index[best_pos]), float(distances[best_pos])

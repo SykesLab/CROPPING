@@ -188,13 +188,51 @@ def write_markdown_report(result, output_dir: Path) -> Path:
         out.append("")
         return out
 
+    def _joint_summary(label: str, joint: dict, per_feature_avg: Optional[float]) -> list:
+        if not joint:
+            return []
+        pct = joint.get('joint_coverage_pct')
+        if pct is None or (isinstance(pct, float) and pct != pct):
+            return [f"_Joint multivariate coverage ({label}): not available._", ""]
+        n_used = joint.get('n_features_used', 0)
+        n_test = joint.get('n_test_finite', 0)
+        gap_str = ""
+        if per_feature_avg is not None and np.isfinite(per_feature_avg):
+            gap = per_feature_avg - pct
+            if gap > 10:
+                gap_str = (f" — {gap:.0f} pp below the per-feature average "
+                           f"({per_feature_avg:.0f}%) suggests combination effects "
+                           f"that marginal coverage misses")
+        return [
+            f"**Joint multivariate coverage ({label}):** {pct:.1f}% "
+            f"of {n_test} samples land inside the synthetic distribution's "
+            f"density envelope across all {n_used} features simultaneously{gap_str}.",
+            "",
+        ]
+
+    def _per_feature_avg(cov):
+        if cov is None:
+            return None
+        vals = [info['coverage_pct'] for info in cov.per_feature.values()
+                if isinstance(info.get('coverage_pct'), float)
+                and np.isfinite(info['coverage_pct'])]
+        if not vals:
+            return None
+        return float(np.mean(vals))
+
     lines.append("## Check C — Synthetic ↔ Real distribution coverage")
     lines.extend(_coverage_table(
         result.coverage_synth_vs_real, result.coverage_real_flags))
+    lines.extend(_joint_summary(
+        'synth↔real', result.joint_coverage_real,
+        _per_feature_avg(result.coverage_synth_vs_real)))
 
     lines.append("## Check C — Synthetic ↔ Inference distribution coverage")
     lines.extend(_coverage_table(
         result.coverage_synth_vs_inference, result.coverage_inference_flags))
+    lines.extend(_joint_summary(
+        'synth↔inference', result.joint_coverage_inference,
+        _per_feature_avg(result.coverage_synth_vs_inference)))
 
     if result.diagnostics:
         lines.append("## Diagnostics")

@@ -592,6 +592,67 @@ class TestPhase2:
         assert any(np.isfinite(v.get('coverage_pct', float('nan')))
                    for v in per_feat.values())
 
+    def test_find_nearest_match_picks_identical(self):
+        """An identical sample should match itself with distance ~0."""
+        import numpy as np
+        import pandas as pd
+        from tools.fingerprint_checker.fingerprint_analyses import find_nearest_match
+        target = pd.DataFrame({
+            'erf_sigma_px': [1.0, 2.0, 3.0, 4.0, 5.0],
+            'edge_transition_width': [2.0, 3.0, 4.0, 5.0, 6.0],
+            'laplacian_variance': [50.0, 30.0, 20.0, 15.0, 10.0],
+        })
+        # Source matches target row 2 exactly
+        source = pd.Series({
+            'erf_sigma_px': 3.0,
+            'edge_transition_width': 4.0,
+            'laplacian_variance': 20.0,
+        })
+        idx, dist = find_nearest_match(source, target)
+        assert idx == 2
+        assert dist < 1e-9
+
+    def test_find_nearest_match_handles_source_nan(self):
+        """NaN values in source are skipped, not propagated."""
+        import numpy as np
+        import pandas as pd
+        from tools.fingerprint_checker.fingerprint_analyses import find_nearest_match
+        target = pd.DataFrame({
+            'erf_sigma_px': [1.0, 2.0, 3.0],
+            'laplacian_variance': [50.0, 30.0, 20.0],
+        })
+        # Source has NaN ERF — should match purely on Laplacian
+        source = pd.Series({
+            'erf_sigma_px': float('nan'),
+            'laplacian_variance': 20.0,
+        })
+        idx, _ = find_nearest_match(source, target)
+        assert idx == 2
+
+    def test_find_nearest_match_returns_none_on_empty_target(self):
+        import pandas as pd
+        from tools.fingerprint_checker.fingerprint_analyses import find_nearest_match
+        idx, dist = find_nearest_match(
+            pd.Series({'erf_sigma_px': 1.0}), pd.DataFrame())
+        assert idx is None and dist is None
+
+    def test_load_sample_image_by_row_dispatches_on_extension(self, tmp_path):
+        """load_sample_image_by_row should pick PNG loader for .png paths."""
+        import cv2
+        import numpy as np
+        import pandas as pd
+        from tools.fingerprint_checker.fingerprint_io import load_sample_image_by_row
+        png_path = tmp_path / "sample.png"
+        cv2.imwrite(str(png_path),
+                    (np.full((32, 32), 100, dtype=np.uint8)))
+        row = pd.Series({'source_path': str(png_path), 'source_type': 'real'})
+        img = load_sample_image_by_row(row)
+        assert img is not None
+        assert img.shape == (32, 32)
+        # Should be float32 [0, 1]
+        assert img.dtype == np.float32
+        assert 0.0 <= img.max() <= 1.0
+
     def test_orchestrator_no_inference_calib_alignment_without_defocus(self, tmp_path):
         """If inference crops have no parseable defocus, the
         inference↔calibration alignment step is skipped with a diagnostic."""
@@ -631,3 +692,151 @@ class TestPhase2:
         assert result.coverage_synth_vs_inference is not None
         # But alignment skipped (no defocus)
         assert result.alignment_inference_vs_calib is None
+
+
+# ===========================================================================
+# Phase 4 — Cache module
+# ===========================================================================
+class TestFingerprintCache:
+    def test_cache_filename_is_deterministic(self, tmp_path):
+        from tools.fingerprint_checker.fingerprint_cache import cache_filename
+        a = cache_filename('synthetic', tmp_path / 'src', n_samples=200)
+        b = cache_filename('synthetic', tmp_path / 'src', n_samples=200)
+        assert a == b
+        # Different n_samples → different filename
+        c = cache_filename('synthetic', tmp_path / 'src', n_samples=100)
+        assert a != c
+        # Different label → different filename
+        d = cache_filename('calibration', tmp_path / 'src', n_samples=200)
+        assert a != d
+
+    def test_save_load_roundtrip(self, tmp_path):
+        import pandas as pd
+        from tools.fingerprint_checker.fingerprint_cache import (
+            cache_path_for, load_cache, save_cache,
+        )
+        df = pd.DataFrame({'a': [1, 2, 3], 'b': [4.5, 5.5, 6.5]})
+        src = tmp_path / 'src'
+        src.mkdir()
+        cp = cache_path_for(tmp_path / 'cache', 'synthetic', src, 3)
+        save_cache(df, cp)
+        assert cp.is_file()
+        loaded = load_cache(cp)
+        assert list(loaded.columns) == ['a', 'b']
+        assert loaded['a'].tolist() == [1, 2, 3]
+
+    def test_cache_invalidates_when_source_newer(self, tmp_path):
+        import time
+        import pandas as pd
+        from tools.fingerprint_checker.fingerprint_cache import (
+            cache_path_for, is_cache_valid, save_cache,
+        )
+        src = tmp_path / 'src'
+        src.mkdir()
+        marker = src / 'metadata.csv'
+        marker.write_text("col\n1\n")
+        cp = cache_path_for(tmp_path / 'cache', 'synthetic', src, 1)
+        save_cache(pd.DataFrame({'x': [1]}), cp)
+        assert is_cache_valid(cp, src)
+        # Touch source AFTER cache → should invalidate
+        time.sleep(0.05)
+        marker.write_text("col\n1\n2\n")
+        assert not is_cache_valid(cp, src)
+
+    def test_clear_cache_returns_count(self, tmp_path):
+        import pandas as pd
+        from tools.fingerprint_checker.fingerprint_cache import (
+            cache_path_for, clear_cache, save_cache,
+        )
+        src = tmp_path / 'src'
+        src.mkdir()
+        cache_dir = tmp_path / 'cache'
+        for i in range(3):
+            cp = cache_path_for(cache_dir, f'lbl{i}', src, i)
+            save_cache(pd.DataFrame({'x': [i]}), cp)
+        assert clear_cache(cache_dir) == 3
+        assert clear_cache(cache_dir) == 0  # idempotent
+
+
+# ===========================================================================
+# Phase 4 — Joint multivariate coverage
+# ===========================================================================
+class TestJointCoverage:
+    def _df(self, n, mean, scale, seed=0):
+        import numpy as np
+        import pandas as pd
+        rng = np.random.default_rng(seed)
+        # Use real metric column names so default ALL_NUMERIC_METRICS picks them up
+        return pd.DataFrame({
+            'erf_sigma_px': rng.normal(mean, scale, n),
+            'edge_transition_width': rng.normal(mean * 2, scale, n),
+            'laplacian_variance': rng.normal(mean * 3, scale, n),
+        })
+
+    def test_full_overlap_high_coverage(self):
+        from tools.fingerprint_checker.fingerprint_analyses import joint_coverage
+        ref = self._df(200, mean=0.0, scale=1.0, seed=1)
+        # Test drawn from the same distribution → most samples should be "covered"
+        test = self._df(50, mean=0.0, scale=1.0, seed=2)
+        out = joint_coverage(ref, test, k=5)
+        assert out['joint_coverage_pct'] > 80, (
+            f"Same-distribution coverage should be high, got "
+            f"{out['joint_coverage_pct']:.1f}%")
+        assert out['n_features_used'] == 3
+
+    def test_disjoint_low_coverage(self):
+        from tools.fingerprint_checker.fingerprint_analyses import joint_coverage
+        ref = self._df(200, mean=0.0, scale=1.0, seed=1)
+        # Test pulled WAY off the reference cloud
+        test = self._df(50, mean=20.0, scale=1.0, seed=2)
+        out = joint_coverage(ref, test, k=5)
+        assert out['joint_coverage_pct'] < 20, (
+            f"Disjoint clouds should produce near-zero coverage, got "
+            f"{out['joint_coverage_pct']:.1f}%")
+
+    def test_handles_no_common_features(self):
+        import pandas as pd
+        from tools.fingerprint_checker.fingerprint_analyses import joint_coverage
+        ref = pd.DataFrame({'foo': [1, 2, 3]})
+        test = pd.DataFrame({'bar': [4, 5, 6]})
+        out = joint_coverage(ref, test, k=2)
+        assert out['n_features_used'] == 0
+        # joint_coverage_pct should be NaN
+        assert out['joint_coverage_pct'] != out['joint_coverage_pct']  # NaN check
+
+    def test_handles_nan_rows(self):
+        import numpy as np
+        import pandas as pd
+        from tools.fingerprint_checker.fingerprint_analyses import joint_coverage
+        rng = np.random.default_rng(0)
+        ref = pd.DataFrame({
+            'erf_sigma_px': rng.normal(0, 1, 100),
+            'edge_transition_width': rng.normal(0, 1, 100),
+        })
+        test = pd.DataFrame({
+            'erf_sigma_px': [0.1, np.nan, 0.5],
+            'edge_transition_width': [0.0, 0.1, np.nan],
+        })
+        out = joint_coverage(ref, test, k=5)
+        # Two of three test rows have a NaN and should be dropped
+        assert out['n_test_finite'] == 1
+
+
+class TestJointCoverageWiring:
+    """Confirm joint coverage is exposed on AllChecksResult and serialises."""
+
+    def test_result_has_joint_coverage_fields(self):
+        from tools.fingerprint_checker.fingerprint_orchestrator import AllChecksResult
+        r = AllChecksResult(config_summary={})
+        # Default empty dicts (not None) so report writers can use `if result.joint_…:`
+        assert r.joint_coverage_real == {}
+        assert r.joint_coverage_inference == {}
+
+    def test_to_dict_includes_joint_coverage(self):
+        from tools.fingerprint_checker.fingerprint_orchestrator import AllChecksResult
+        r = AllChecksResult(config_summary={})
+        r.joint_coverage_real = {'joint_coverage_pct': 73.4, 'n_features_used': 12}
+        d = r.to_dict()
+        assert 'joint_coverage_real' in d
+        assert d['joint_coverage_real']['joint_coverage_pct'] == 73.4
+        assert 'joint_coverage_inference' in d

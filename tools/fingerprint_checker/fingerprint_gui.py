@@ -16,11 +16,15 @@ from __future__ import annotations
 import queue
 import sys
 import threading
+import time
 import tkinter as tk
 from datetime import datetime
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 from typing import Optional
+
+import numpy as np
+import pandas as pd
 
 # Path setup so tools/fingerprint_checker is importable when run standalone
 _REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -36,6 +40,15 @@ from matplotlib.backends.backend_tkagg import (  # noqa: E402
     FigureCanvasTkAgg, NavigationToolbar2Tk,
 )
 
+from tools.fingerprint_checker.fingerprint_analyses import (  # noqa: E402
+    find_nearest_match,
+)
+from tools.fingerprint_checker.fingerprint_cache import (  # noqa: E402
+    DEFAULT_CACHE_DIR, clear_cache,
+)
+from tools.fingerprint_checker.fingerprint_io import (  # noqa: E402
+    load_sample_image_by_row,
+)
 from tools.fingerprint_checker.fingerprint_orchestrator import (  # noqa: E402
     AllChecksResult, run_all_checks,
 )
@@ -68,11 +81,12 @@ class FingerprintCheckerApp(tk.Tk):
         self.real_var = tk.StringVar(value="")
         self.inference_var = tk.StringVar(value="")
         self.output_var = tk.StringVar(value=str(_REPO_ROOT / "tools" / "fingerprint_checker" / "output" / datetime.now().strftime("%Y%m%d_%H%M%S")))
-        self.n_synth_var = tk.StringVar(value=str(self._dataset_count(self.synth_var.get())))
+        self.n_synth_var = tk.StringVar(value=str(self._sample_default(self.synth_var.get())))
         self.n_real_var = tk.StringVar(value="")
         self.n_inference_var = tk.StringVar(value="")
         self.k_var = tk.StringVar(value="20")
         self.focus_offset_var = tk.StringVar(value="0.0")
+        self.force_recompute_var = tk.BooleanVar(value=False)
 
         self.status_var = tk.StringVar(value="Ready. Pick a config + synthetic dataset (and optionally calibration), then Run All.")
         self.progress_var = tk.DoubleVar(value=0.0)
@@ -81,6 +95,7 @@ class FingerprintCheckerApp(tk.Tk):
         self._worker_thread: Optional[threading.Thread] = None
         self._msg_queue: "queue.Queue" = queue.Queue()
         self._embedded_canvases = []  # (FigureCanvasTkAgg, frame) list for cleanup
+        self._run_start_time: Optional[float] = None
 
         self._build_ui()
         self.after(100, self._poll_messages)
@@ -119,8 +134,16 @@ class FingerprintCheckerApp(tk.Tk):
         except Exception:
             return 0
 
+    @staticmethod
+    def _sample_default(synth_path: str) -> int:
+        """Default n_synth: full count when small, capped at 200 for large datasets."""
+        count = FingerprintCheckerApp._dataset_count(synth_path)
+        if count > 1000:
+            return 200
+        return count
+
     def _refresh_n_default(self, *_):
-        self.n_synth_var.set(str(self._dataset_count(self.synth_var.get())))
+        self.n_synth_var.set(str(self._sample_default(self.synth_var.get())))
 
     # ── UI construction ──────────────────────────────────────────────────
 
@@ -171,6 +194,12 @@ class FingerprintCheckerApp(tk.Tk):
         self.open_output_button = ttk.Button(
             btns, text="Open Output Folder", command=self._on_open_output)
         self.open_output_button.pack(side='left', padx=2)
+        ttk.Separator(btns, orient='vertical').pack(
+            side='left', fill='y', padx=8)
+        ttk.Checkbutton(btns, text="Force recompute (ignore cache)",
+                        variable=self.force_recompute_var).pack(side='left', padx=2)
+        ttk.Button(btns, text="Clear Cache",
+                   command=self._on_clear_cache).pack(side='left', padx=2)
 
         # Notebook with tabs
         self.notebook = ttk.Notebook(self)
@@ -181,12 +210,14 @@ class FingerprintCheckerApp(tk.Tk):
         self.tab_sigma = ttk.Frame(self.notebook)
         self.tab_check_b = ttk.Frame(self.notebook)
         self.tab_check_c = ttk.Frame(self.notebook)
+        self.tab_viewer = ttk.Frame(self.notebook)
         self.tab_report = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_overview, text='Overview')
         self.notebook.add(self.tab_check_a, text='Check A - Scale Chain')
         self.notebook.add(self.tab_sigma, text='Sigma Trends')
         self.notebook.add(self.tab_check_b, text='Check B - Alignment')
         self.notebook.add(self.tab_check_c, text='Check C - Coverage')
+        self.notebook.add(self.tab_viewer, text='Sample Viewer')
         self.notebook.add(self.tab_report, text='Report')
 
         # Overview tab
@@ -266,6 +297,12 @@ class FingerprintCheckerApp(tk.Tk):
         else:
             subprocess.run(['xdg-open', str(path)])
 
+    def _on_clear_cache(self):
+        n = clear_cache(DEFAULT_CACHE_DIR)
+        messagebox.showinfo(
+            "Cache cleared",
+            f"Removed {n} cached fingerprint file(s) from {DEFAULT_CACHE_DIR}")
+
     # ── Run loop ─────────────────────────────────────────────────────────
 
     def _on_run(self):
@@ -308,6 +345,8 @@ class FingerprintCheckerApp(tk.Tk):
         self.save_button.config(state='disabled')
         self.progress_var.set(0.0)
         self.status_var.set("Starting...")
+        self._run_start_time = time.monotonic()
+        force_recompute = bool(self.force_recompute_var.get())
 
         def progress_cb(msg, frac):
             self._msg_queue.put(('progress', msg, frac * 100.0))
@@ -326,6 +365,8 @@ class FingerprintCheckerApp(tk.Tk):
                     k_neighbours=k,
                     calibration_focus_offset_mm=focus_offset,
                     progress=progress_cb,
+                    cache_dir=DEFAULT_CACHE_DIR,
+                    force_recompute=force_recompute,
                 )
                 self._msg_queue.put(('done', result))
             except Exception as e:
@@ -342,7 +383,7 @@ class FingerprintCheckerApp(tk.Tk):
                 kind = msg[0]
                 if kind == 'progress':
                     _, m, pct = msg
-                    self.status_var.set(m)
+                    self.status_var.set(self._format_progress(m, pct))
                     self.progress_var.set(pct)
                 elif kind == 'done':
                     self._on_run_done(msg[1])
@@ -353,6 +394,18 @@ class FingerprintCheckerApp(tk.Tk):
         except queue.Empty:
             pass
         self.after(100, self._poll_messages)
+
+    def _format_progress(self, msg: str, pct: float) -> str:
+        """Append elapsed + ETA to a progress message."""
+        if self._run_start_time is None:
+            return msg
+        elapsed = time.monotonic() - self._run_start_time
+        if pct <= 0.5 or elapsed < 1.0:
+            return f"{msg}  [{int(elapsed)}s elapsed]"
+        total_est = elapsed * 100.0 / pct
+        remaining = max(0.0, total_est - elapsed)
+        return (f"{msg}  [{int(elapsed)}s elapsed, "
+                f"~{int(remaining)}s left]")
 
     def _on_run_done(self, result: AllChecksResult):
         self._result = result
@@ -430,10 +483,20 @@ class FingerprintCheckerApp(tk.Tk):
         _coverage_block(
             "Synthetic vs Real coverage", result.coverage_synth_vs_real,
             result.coverage_real_flags)
+        if result.joint_coverage_real:
+            jc = result.joint_coverage_real.get('joint_coverage_pct')
+            if isinstance(jc, float) and np.isfinite(jc):
+                lines.append(f"  Joint multivariate coverage: {jc:.1f}%  "
+                             f"(over {result.joint_coverage_real.get('n_features_used', '?')} features)")
         lines.append("")
         _coverage_block(
             "Synthetic vs Inference coverage", result.coverage_synth_vs_inference,
             result.coverage_inference_flags)
+        if result.joint_coverage_inference:
+            jc = result.joint_coverage_inference.get('joint_coverage_pct')
+            if isinstance(jc, float) and np.isfinite(jc):
+                lines.append(f"  Joint multivariate coverage: {jc:.1f}%  "
+                             f"(over {result.joint_coverage_inference.get('n_features_used', '?')} features)")
         lines.append("")
 
         if result.diagnostics:
@@ -516,6 +579,12 @@ class FingerprintCheckerApp(tk.Tk):
             result.coverage_synth_vs_inference, result.coverage_inference_flags,
             'Synthetic vs Inference')
 
+        # Sample viewer — destroy any previous, build fresh
+        for child in self.tab_viewer.winfo_children():
+            child.destroy()
+        viewer = SampleViewerFrame(self.tab_viewer, result)
+        viewer.pack(fill='both', expand=True)
+
     def _populate_report_tab(self, result: AllChecksResult):
         # Render the markdown report inline (don't write to disk yet — Save handles that)
         from tools.fingerprint_checker.fingerprint_report import write_markdown_report
@@ -542,6 +611,374 @@ class FingerprintCheckerApp(tk.Tk):
         for kind, p in files.items():
             msg += f"\n  {kind}: {Path(p).name}"
         messagebox.showinfo("Report saved", msg)
+
+
+class SampleViewerFrame(ttk.Frame):
+    """Browse individual samples; show side-by-side closest match in another source.
+
+    Reads from an AllChecksResult — no recompute beyond on-demand image loads
+    and per-click NN lookup.
+    """
+
+    DISPLAY_PX = 256
+
+    SOURCE_LABELS = (
+        ('synthetic', 'Synthetic'),
+        ('calibration', 'Calibration'),
+        ('real', 'Real'),
+        ('inference', 'Inference'),
+    )
+
+    METRIC_DISPLAY_ORDER = (
+        ('defocus_mm', 'defocus (mm)'),
+        ('sigma_px_metadata', 'meta σ_px'),
+        ('erf_sigma_px', 'ERF σ (px)'),
+        ('erf_r_squared', 'ERF R²'),
+        ('edge_transition_width', 'edge width 10-90%'),
+        ('edge_gradient_max', 'edge gradient max'),
+        ('quadrant_sigma_max_min_ratio', 'quadrant σ ratio'),
+        ('edge_symmetry_lr_l1', 'edge symmetry LR'),
+        ('edge_symmetry_tb_l1', 'edge symmetry TB'),
+        ('laplacian_variance', 'Laplacian var'),
+        ('tenengrad', 'Tenengrad'),
+        ('high_freq_energy_ratio', 'HF energy ratio'),
+        ('background_mean', 'bg mean'),
+        ('background_std', 'bg std'),
+        ('object_bg_contrast', 'obj/bg contrast'),
+        ('object_diameter_px', 'object diameter (px)'),
+        ('centre_offset_px', 'centre offset (px)'),
+        ('crop_occupancy', 'crop occupancy'),
+        ('polarity', 'polarity'),
+    )
+
+    def __init__(self, parent, result: AllChecksResult):
+        super().__init__(parent)
+        self._result = result
+        self._sources = self._build_source_map(result)
+        # Cached PhotoImages (Tk garbage-collects them otherwise)
+        self._photo_left = None
+        self._photo_right = None
+        # Cached calibration arrays (slow to load via pyphantom)
+        self._image_cache: dict = {}
+
+        self.source_var = tk.StringVar(value='synthetic')
+        self.match_var = tk.StringVar(value='calibration')
+        self.filter_var = tk.StringVar(value='')
+
+        self._build_ui()
+        # Populate from default source on construction
+        self._on_source_changed()
+
+    def _build_source_map(self, result):
+        return {
+            'synthetic': result.synthetic_fingerprints,
+            'calibration': result.calibration_fingerprints,
+            'real': result.real_fingerprints,
+            'inference': result.inference_fingerprints,
+        }
+
+    # ── UI ───────────────────────────────────────────────────────────────
+
+    def _build_ui(self):
+        # Top: source selector + filter
+        top = ttk.Frame(self)
+        top.pack(fill='x', padx=4, pady=4)
+        ttk.Label(top, text="Source:").pack(side='left')
+        for key, label in self.SOURCE_LABELS:
+            df = self._sources.get(key)
+            count = 0 if df is None else len(df)
+            text = f"{label} ({count})"
+            state = 'normal' if count > 0 else 'disabled'
+            rb = ttk.Radiobutton(
+                top, text=text, variable=self.source_var, value=key,
+                command=self._on_source_changed, state=state)
+            rb.pack(side='left', padx=4)
+        ttk.Label(top, text="    Filter:").pack(side='left')
+        ttk.Entry(top, textvariable=self.filter_var, width=24).pack(side='left')
+        ttk.Button(top, text="Apply", command=self._on_source_changed).pack(
+            side='left', padx=2)
+
+        # Middle: PanedWindow horizontal split
+        pw = ttk.PanedWindow(self, orient='horizontal')
+        pw.pack(fill='both', expand=True, padx=4, pady=4)
+
+        # ── Left pane: sample list + selected sample image/fingerprint ──
+        left = ttk.Frame(pw)
+        pw.add(left, weight=1)
+
+        list_frame = ttk.LabelFrame(left, text="Samples", padding=4)
+        list_frame.pack(fill='both', expand=True)
+        self.tree = ttk.Treeview(
+            list_frame,
+            columns=('idx', 'defocus', 'sigma_meta', 'erf_sigma'),
+            show='headings', height=10,
+        )
+        self.tree.heading('idx', text='#')
+        self.tree.heading('defocus', text='defocus (mm)')
+        self.tree.heading('sigma_meta', text='meta σ')
+        self.tree.heading('erf_sigma', text='ERF σ')
+        self.tree.column('idx', width=40, anchor='e')
+        self.tree.column('defocus', width=90, anchor='e')
+        self.tree.column('sigma_meta', width=70, anchor='e')
+        self.tree.column('erf_sigma', width=70, anchor='e')
+        sb = ttk.Scrollbar(list_frame, orient='vertical', command=self.tree.yview)
+        self.tree.configure(yscrollcommand=sb.set)
+        self.tree.pack(side='left', fill='both', expand=True)
+        sb.pack(side='right', fill='y')
+        self.tree.bind('<<TreeviewSelect>>', self._on_select)
+
+        sel_image_frame = ttk.LabelFrame(left, text="Selected sample", padding=4)
+        sel_image_frame.pack(fill='x', pady=(4, 0))
+        self.left_canvas = tk.Canvas(
+            sel_image_frame, width=self.DISPLAY_PX, height=self.DISPLAY_PX,
+            background='#1a1a1a')
+        self.left_canvas.pack()
+        self.left_caption_var = tk.StringVar(value='(select a sample)')
+        ttk.Label(sel_image_frame, textvariable=self.left_caption_var,
+                  font=('TkDefaultFont', 8), wraplength=self.DISPLAY_PX).pack(
+            anchor='w', pady=(2, 0))
+
+        # ── Right pane: match controls + matched image + delta table ──
+        right = ttk.Frame(pw)
+        pw.add(right, weight=2)
+
+        match_top = ttk.Frame(right)
+        match_top.pack(fill='x', pady=(0, 4))
+        ttk.Label(match_top, text="Match against:").pack(side='left')
+        self.match_radios = []
+        for key, label in self.SOURCE_LABELS:
+            df = self._sources.get(key)
+            count = 0 if df is None else len(df)
+            text = f"{label} ({count})"
+            state = 'normal' if count > 0 else 'disabled'
+            rb = ttk.Radiobutton(
+                match_top, text=text, variable=self.match_var, value=key,
+                command=self._on_select, state=state)
+            rb.pack(side='left', padx=4)
+            self.match_radios.append(rb)
+
+        match_image_frame = ttk.LabelFrame(right, text="Closest match", padding=4)
+        match_image_frame.pack(fill='x')
+        self.right_canvas = tk.Canvas(
+            match_image_frame, width=self.DISPLAY_PX, height=self.DISPLAY_PX,
+            background='#1a1a1a')
+        self.right_canvas.pack()
+        self.right_caption_var = tk.StringVar(value='(no match)')
+        ttk.Label(match_image_frame, textvariable=self.right_caption_var,
+                  font=('TkDefaultFont', 8), wraplength=self.DISPLAY_PX).pack(
+            anchor='w', pady=(2, 0))
+
+        # Per-feature delta table
+        delta_frame = ttk.LabelFrame(right, text="Per-feature comparison", padding=4)
+        delta_frame.pack(fill='both', expand=True, pady=(4, 0))
+        self.delta_tree = ttk.Treeview(
+            delta_frame,
+            columns=('metric', 'selected', 'match', 'delta'),
+            show='headings', height=12,
+        )
+        self.delta_tree.heading('metric', text='metric')
+        self.delta_tree.heading('selected', text='selected')
+        self.delta_tree.heading('match', text='match')
+        self.delta_tree.heading('delta', text='Δ (match − selected)')
+        self.delta_tree.column('metric', width=180)
+        self.delta_tree.column('selected', width=110, anchor='e')
+        self.delta_tree.column('match', width=110, anchor='e')
+        self.delta_tree.column('delta', width=160, anchor='e')
+        sb2 = ttk.Scrollbar(delta_frame, orient='vertical',
+                            command=self.delta_tree.yview)
+        self.delta_tree.configure(yscrollcommand=sb2.set)
+        self.delta_tree.pack(side='left', fill='both', expand=True)
+        sb2.pack(side='right', fill='y')
+
+    # ── Behaviour ────────────────────────────────────────────────────────
+
+    def _current_source_df(self):
+        return self._sources.get(self.source_var.get())
+
+    def _current_match_df(self):
+        return self._sources.get(self.match_var.get())
+
+    def _filter_df(self, df):
+        text = self.filter_var.get().strip().lower()
+        if not text or df is None or df.empty:
+            return df
+        # Search across source_path + key numeric columns coerced to string
+        cols = [c for c in ('source_path', 'defocus_mm', 'sigma_px_metadata',
+                            'erf_sigma_px', 'camera') if c in df.columns]
+        mask = pd.Series(False, index=df.index)
+        for c in cols:
+            mask |= df[c].astype(str).str.lower().str.contains(text, na=False)
+        return df[mask]
+
+    def _on_source_changed(self):
+        df = self._current_source_df()
+        df = self._filter_df(df)
+        # Repopulate the tree
+        self.tree.delete(*self.tree.get_children())
+        if df is None or df.empty:
+            return
+        for idx, row in df.iterrows():
+            d = row.get('defocus_mm', float('nan'))
+            sm = row.get('sigma_px_metadata', float('nan'))
+            erf = row.get('erf_sigma_px', float('nan'))
+            self.tree.insert('', 'end', iid=str(idx), values=(
+                int(idx),
+                f"{d:+.3f}" if pd.notna(d) else '-',
+                f"{sm:.3f}" if pd.notna(sm) else '-',
+                f"{erf:.3f}" if pd.notna(erf) else '-',
+            ))
+        # Auto-pick first row to populate panels
+        first = self.tree.get_children()
+        if first:
+            self.tree.selection_set(first[0])
+            self.tree.see(first[0])
+
+    def _on_select(self, _event=None):
+        df = self._current_source_df()
+        if df is None or df.empty:
+            return
+        sel = self.tree.selection()
+        if not sel:
+            return
+        try:
+            idx = int(sel[0])
+        except ValueError:
+            return
+        if idx not in df.index:
+            return
+        row = df.loc[idx]
+        self._render_left(row)
+        self._render_match_and_delta(row)
+
+    def _render_left(self, row):
+        img = self._load_image_cached(row)
+        self._photo_left = self._array_to_photoimage(img)
+        self._draw_canvas(self.left_canvas, self._photo_left)
+        self.left_caption_var.set(self._format_caption(row))
+
+    def _render_match_and_delta(self, source_row):
+        target_df = self._current_match_df()
+        # Don't match against the same source
+        if (target_df is None or target_df.empty
+                or self.match_var.get() == self.source_var.get()):
+            self._photo_right = None
+            self._draw_canvas(self.right_canvas, None)
+            self.right_caption_var.set("(pick a different match source)")
+            self.delta_tree.delete(*self.delta_tree.get_children())
+            return
+        target_idx, distance = find_nearest_match(source_row, target_df)
+        if target_idx is None:
+            self._photo_right = None
+            self._draw_canvas(self.right_canvas, None)
+            self.right_caption_var.set("(no comparable features)")
+            self.delta_tree.delete(*self.delta_tree.get_children())
+            return
+        target_row = target_df.loc[target_idx]
+        img = self._load_image_cached(target_row)
+        self._photo_right = self._array_to_photoimage(img)
+        self._draw_canvas(self.right_canvas, self._photo_right)
+        cap = self._format_caption(target_row)
+        cap += f"\n  z-scored distance: {distance:.3f}"
+        self.right_caption_var.set(cap)
+        # Populate delta table
+        self.delta_tree.delete(*self.delta_tree.get_children())
+        for col, label in self.METRIC_DISPLAY_ORDER:
+            sel_v = source_row.get(col)
+            mat_v = target_row.get(col)
+            sel_s, mat_s, delta_s = self._format_metric_row(sel_v, mat_v)
+            self.delta_tree.insert(
+                '', 'end',
+                values=(label, sel_s, mat_s, delta_s),
+            )
+
+    # ── Helpers ──────────────────────────────────────────────────────────
+
+    def _load_image_cached(self, row):
+        path = row.get('source_path', '')
+        if not path:
+            return None
+        if path in self._image_cache:
+            return self._image_cache[path]
+        img = load_sample_image_by_row(row)
+        # Cache only calibration (slow to reload); PNG reads are fast enough
+        if path.lower().endswith('.cine') and img is not None:
+            # Cap cache size
+            if len(self._image_cache) >= 30:
+                self._image_cache.pop(next(iter(self._image_cache)))
+            self._image_cache[path] = img
+        return img
+
+    def _array_to_photoimage(self, arr):
+        if arr is None:
+            return None
+        try:
+            from PIL import Image, ImageTk
+        except ImportError:
+            return None
+        if arr.ndim != 2:
+            return None
+        a = arr
+        if a.dtype != np.uint8:
+            a = np.clip(a * 255.0, 0, 255).astype(np.uint8) \
+                if a.max() <= 1.5 else a.astype(np.uint8)
+        pil = Image.fromarray(a, mode='L')
+        pil = pil.resize((self.DISPLAY_PX, self.DISPLAY_PX),
+                         resample=Image.Resampling.LANCZOS)
+        return ImageTk.PhotoImage(pil)
+
+    def _draw_canvas(self, canvas, photo):
+        canvas.delete('all')
+        if photo is None:
+            canvas.create_text(
+                self.DISPLAY_PX // 2, self.DISPLAY_PX // 2,
+                text='(no image)', fill='#888888')
+        else:
+            canvas.create_image(0, 0, anchor='nw', image=photo)
+
+    @staticmethod
+    def _format_caption(row):
+        parts = []
+        st = row.get('source_type', '')
+        idx = row.get('index', '?')
+        parts.append(f"[{st}] #{idx}")
+        d = row.get('defocus_mm')
+        if pd.notna(d):
+            parts.append(f"z = {d:+.3f} mm")
+        sm = row.get('sigma_px_metadata')
+        if pd.notna(sm):
+            parts.append(f"meta σ = {sm:.3f}")
+        path = row.get('source_path', '')
+        if path:
+            parts.append(Path(path).name)
+        return "  ·  ".join(parts)
+
+    @staticmethod
+    def _format_metric_row(sel, mat):
+        def _fmt(v):
+            if isinstance(v, str):
+                return v
+            try:
+                if v is None or pd.isna(v):
+                    return '-'
+                return f"{float(v):.4f}"
+            except (TypeError, ValueError):
+                return str(v)
+        if isinstance(sel, str) or isinstance(mat, str):
+            # Categorical (e.g. polarity)
+            delta = '(match)' if sel == mat else '(differ)'
+            return _fmt(sel), _fmt(mat), delta
+        sel_s, mat_s = _fmt(sel), _fmt(mat)
+        try:
+            delta_v = float(mat) - float(sel)
+            if not np.isfinite(delta_v):
+                return sel_s, mat_s, '-'
+            ref = abs(float(sel)) if pd.notna(sel) and abs(float(sel)) > 1e-9 else None
+            if ref is not None:
+                pct = 100.0 * delta_v / ref
+                return sel_s, mat_s, f"{delta_v:+.4f}  ({pct:+.1f}%)"
+            return sel_s, mat_s, f"{delta_v:+.4f}"
+        except (TypeError, ValueError):
+            return sel_s, mat_s, '-'
 
 
 def main():

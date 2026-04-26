@@ -429,3 +429,26 @@ def iterate_crop_folder(
         except IOError:
             continue
         yield s, img
+
+
+def load_sample_image_by_row(row) -> Optional[np.ndarray]:
+    """Universal image loader: dispatch on source_path's extension.
+
+    Pass a row from any of the per-source fingerprint DataFrames (i.e.
+    ``result.synthetic_fingerprints.iloc[k]``). Returns the float32 [0,1]
+    image array, or None if loading fails (e.g. .cine without pyphantom).
+    """
+    if row is None:
+        return None
+    path_str = row.get('source_path')
+    if not path_str:
+        return None
+    path = Path(path_str)
+    if not path.exists():
+        return None
+    if path.suffix.lower() == '.cine':
+        return load_cine_frame(path)
+    try:
+        return load_blur_image(path)
+    except IOError:
+        return None
