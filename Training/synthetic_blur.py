@@ -884,6 +884,10 @@ class SyntheticBlurGenerator:
         self.beta_beta = beta_beta
         self.min_blur_px = min_blur_px
         self.sphere_stats: Optional[SphereAppearanceStats] = None  # Set by generate_dataset
+        # When set (by generate_dataset), synthesis (sphere rendering + blur)
+        # happens at this resolution before a final resize to image_size.
+        # If None, synthesis happens directly at image_size (existing behaviour).
+        self.synthesis_size: Optional[int] = None
 
         # resolution_scale: for optical mode only — scales CoC range from calib-native to model-scale.
         # Direct mode uses native_to_model_scale (crop→model); see generate_sample().
@@ -1002,31 +1006,38 @@ class SyntheticBlurGenerator:
               - Optical mode: 'coc_map', 'coc_value'
         """
         # Generate or use provided sharp image
+        # Render-target resolution: use synthesis_size if set, else image_size.
+        render_size = self.synthesis_size if self.synthesis_size else self.image_size
         if sharp_image is None:
             if diameter_px is None:
                 if self.sphere_stats is not None:
-                    # Scale diameters from native crop resolution to model resolution
-                    scale = self.image_size / self.sphere_stats.image_size
-                    d_min = max(int(self.sphere_stats.diameter_min * scale), self.image_size // 5)
+                    # Scale diameters from native crop resolution to render resolution
+                    scale = render_size / self.sphere_stats.image_size
+                    d_min = max(int(self.sphere_stats.diameter_min * scale), render_size // 5)
                     d_max = min(
                         int(self.sphere_stats.diameter_max * scale),
-                        self.image_size * 4 // 5)
+                        render_size * 4 // 5)
                     if d_min >= d_max:
                         d_min = d_max - 1
                     diameter_px = random.randint(d_min, d_max)
                 else:
                     diameter_px = random.randint(10, 50)
             sharp_image = generate_realistic_sphere(
-                diameter_px, self.image_size, stats=self.sphere_stats,
+                diameter_px, render_size, stats=self.sphere_stats,
             )
             # Apply native blur to synthetic sphere so it matches real crop
             # edge character.  The caller passes the sampled native_blur_sigma
             # and quadrature subtraction accounts for it exactly.
             if native_blur_sigma > 0:
                 from scipy.ndimage import gaussian_filter
-                # native_blur_sigma is in crop-pixel units; convert to model px
+                # native_blur_sigma is in crop-pixel units; convert to model px,
+                # then up-scale to render_size if synthesis happens there.
                 sigma_at_model = native_blur_sigma * self.native_to_model_scale
-                sharp_image = gaussian_filter(sharp_image, sigma=sigma_at_model)
+                if render_size != self.image_size:
+                    sigma_at_render = sigma_at_model * (render_size / self.image_size)
+                else:
+                    sigma_at_render = sigma_at_model
+                sharp_image = gaussian_filter(sharp_image, sigma=sigma_at_render)
 
         mode = getattr(self.params, 'training_mode', 'optical')
 
@@ -1089,11 +1100,31 @@ class SyntheticBlurGenerator:
                 sigma_kernel = 0.0
                 sigma_model = sigma_native_model
 
-            blurred = apply_gaussian_blur(sharp_image, sigma_kernel, self.radius_factor)
+            # If synthesis happens at higher resolution than the model's
+            # final input, scale the blur kernel up so that after the
+            # downsample-to-model-size step at the end, the effective
+            # blur in the saved image is sigma_kernel as labelled.
+            if self.synthesis_size and self.synthesis_size != self.image_size:
+                synth_scale = self.synthesis_size / self.image_size
+                sigma_for_blur = sigma_kernel * synth_scale
+            else:
+                sigma_for_blur = sigma_kernel
+
+            blurred = apply_gaussian_blur(sharp_image, sigma_for_blur, self.radius_factor)
 
             # Normalized blur map (clamp to [0, 1] in case native blur exceeds max_sigma)
             normalized_blur = min(sigma_model / self.max_sigma, 1.0) if self.max_sigma > 0 else 0.0
             sigma_map = np.full_like(sharp_image, normalized_blur)
+
+            # Downsample to model size if synthesis was at higher resolution
+            if self.synthesis_size and self.synthesis_size != self.image_size:
+                ms = self.image_size
+                sharp_image = cv2.resize(sharp_image, (ms, ms),
+                                          interpolation=cv2.INTER_AREA)
+                blurred = cv2.resize(blurred, (ms, ms),
+                                      interpolation=cv2.INTER_AREA)
+                sigma_map = cv2.resize(sigma_map, (ms, ms),
+                                        interpolation=cv2.INTER_AREA)
 
             return {
                 'sharp': sharp_image,
@@ -1134,6 +1165,11 @@ class SyntheticBlurGenerator:
         save_blur_trace: bool = False,
         erf_validation: bool = False,
         erf_validation_count: Optional[int] = None,
+        synthetic_fraction: Optional[float] = None,
+        synthetic_source_size: Optional[int] = None,
+        secondary_source_dir: Optional[Union[str, Path]] = None,
+        secondary_source_size: Optional[int] = None,
+        secondary_fraction: float = 0.0,
     ) -> dict:
         """
         Generate full training dataset.
@@ -1173,6 +1209,98 @@ class SyntheticBlurGenerator:
             if self.params.training_mode != "direct":
                 log(
                     f"   {blur_label} range adjusted to [{self.coc_range[0]:.2f}, {self.coc_range[1]:.2f}] px")
+
+        # Configure synthesis_size for the PRIMARY source.
+        # Synthesis_size is set per-sample below so secondary-source
+        # samples can use a different resolution. The starting value here
+        # is the primary one; the loop swaps it per sample as needed.
+        primary_synthesis_size = (int(synthetic_source_size)
+                                   if synthetic_source_size and synthetic_source_size > 0
+                                   else None)
+        secondary_synthesis_size = (int(secondary_source_size)
+                                     if secondary_source_size and secondary_source_size > 0
+                                     else None)
+        self.synthesis_size = primary_synthesis_size
+        if primary_synthesis_size:
+            log(f"Primary synthesis size = {primary_synthesis_size} px "
+                f"(blur at this resolution, resized to {self.image_size} for save)")
+
+        # Load SECONDARY pool of sharp templates (for two-source mixing).
+        # Used when secondary_fraction > 0 AND secondary_source_dir set.
+        secondary_sharps: list[Path] = []
+        secondary_stats: Optional[SphereAppearanceStats] = None
+        # Calibration camera scale for secondary samples — looked up from
+        # the bundle's calibration_results.yaml (or the parent's). Falls
+        # back to self.params.scale_calib_px_per_mm if unavailable.
+        secondary_scale_px_per_mm: Optional[float] = None
+        sec_frac = max(0.0, min(1.0, float(secondary_fraction or 0.0)))
+        if sec_frac > 0 and secondary_source_dir is not None:
+            sec_dir = Path(secondary_source_dir)
+            if sec_dir.is_dir():
+                secondary_sharps = sorted(sec_dir.glob("*.png"))
+                if secondary_sharps:
+                    log(f"Secondary source: {len(secondary_sharps)} PNGs from {sec_dir}")
+                    if secondary_synthesis_size:
+                        log(f"Secondary synthesis size = {secondary_synthesis_size} px")
+                    # Cache appearance stats so rendered spheres for
+                    # secondary samples reflect the secondary source.
+                    try:
+                        secondary_stats = SphereAppearanceStats.from_real_crops(
+                            secondary_sharps[:50])
+                    except Exception as e:
+                        log(f"WARNING: failed to extract secondary stats: {e}")
+                    # Look up calibration scale from the bundle. The
+                    # convention (calibration GUI bundle layout) is:
+                    #   <bundle>/processed_images/*.png
+                    #   <bundle>/calibration_results.yaml
+                    # If user pointed at processed_images/ directly, the
+                    # yaml is at the parent.
+                    yaml_candidates = [
+                        sec_dir / "calibration_results.yaml",
+                        sec_dir.parent / "calibration_results.yaml",
+                    ]
+                    for yp in yaml_candidates:
+                        if yp.is_file():
+                            try:
+                                import yaml as _yaml
+                                with open(yp, "r") as _f:
+                                    _cfg = _yaml.safe_load(_f) or {}
+                                # Direct mode: scale_calib_px_per_mm at top
+                                # of `direct` block; some setups put it at
+                                # root. Try both.
+                                _scale = (
+                                    _cfg.get("direct", {}).get(
+                                        "scale_calib_px_per_mm")
+                                    or _cfg.get("scale_calib_px_per_mm")
+                                )
+                                if _scale:
+                                    secondary_scale_px_per_mm = float(_scale)
+                                    log(
+                                        f"Secondary calibration scale: "
+                                        f"{secondary_scale_px_per_mm:.4f} px/mm "
+                                        f"(from {yp.name})")
+                                break
+                            except Exception as e:
+                                log(f"WARNING: could not read {yp}: {e}")
+                    if secondary_scale_px_per_mm is None:
+                        # Fall back to the training config's calibration scale
+                        secondary_scale_px_per_mm = (
+                            self.params.scale_calib_px_per_mm)
+                        if secondary_scale_px_per_mm:
+                            log(
+                                f"Secondary calibration scale (fallback "
+                                f"to training config): "
+                                f"{secondary_scale_px_per_mm:.4f} px/mm")
+                else:
+                    log(f"WARNING: secondary source {sec_dir} has no PNGs — "
+                        f"secondary mixing disabled")
+                    sec_frac = 0.0
+            else:
+                log(f"WARNING: secondary_source_dir {sec_dir} not found — "
+                    f"secondary mixing disabled")
+                sec_frac = 0.0
+        # Cache the primary stats reference for swap-back after secondary samples
+        primary_sphere_stats = None  # set after self.sphere_stats is populated
 
         # ERF validation setup
         validate_indices = set()
@@ -1408,14 +1536,16 @@ class SyntheticBlurGenerator:
                         f"  Bin 2 (Large):  {len(diameter_bins[2])} images, median={bin_medians[2]:.1f}px")
 
                     if total_images >= 50:
-                        log("Using 100% real images with uniform diameter distribution")
+                        log("Primary pool: 100% real templates from sharp crops "
+                            "(uniform diameter distribution)")
                     else:
                         log(
-                            f"Supplementing bins with synthetic droplets (only {total_images} real images)")
+                            f"Primary pool: supplementing bins with rendered "
+                            f"droplets (only {total_images} real images)")
 
             # Fallback: no diameter info, use old behavior
             if not use_binning:
-                log("No diameter binning - using random sampling")
+                log("Primary pool: no diameter binning - using random sampling")
                 log(
                     f"Synthetic droplet diameter range: {diameter_range_px[0]}-{diameter_range_px[1]} px")
                 if len(real_sharps) >= 50:
@@ -1427,7 +1557,24 @@ class SyntheticBlurGenerator:
         sample_idx = 0  # Track actual saved samples
         _sharp_cache = {}  # Cache decoded sharp images to avoid redundant disk reads
 
+        # Cache primary sphere stats so we can swap to secondary_stats per
+        # secondary sample and back. self.sphere_stats was set above (line
+        # ~1399) when needed for rendering fallbacks.
+        primary_sphere_stats = self.sphere_stats
+
         log(f"Starting generation of {num_samples} samples...")
+        if sec_frac > 0 and secondary_sharps:
+            primary_pct = (1.0 - sec_frac) * 100
+            sec_pct = sec_frac * 100
+            log(
+                f"Two-source mixing enabled:\n"
+                f"  Primary pool   (sharp crops, real templates):    "
+                f"~{int(primary_pct)}% of {num_samples:,} = "
+                f"{int(num_samples * (1 - sec_frac)):,} samples\n"
+                f"  Secondary pool (calibration-rendered, donor-only): "
+                f"~{int(sec_pct)}% of {num_samples:,} = "
+                f"{int(num_samples * sec_frac):,} samples"
+            )
         pbar = tqdm(total=num_samples, desc="Generating synthetic data")
         attempt = 0
         max_attempts = num_samples * 2  # Prevent infinite loop
@@ -1436,8 +1583,36 @@ class SyntheticBlurGenerator:
             attempt += 1
             sharp_path = None  # Reset each iteration; set below if a real image is used
 
+            # ── Per-sample two-source dispatch ──────────────────────
+            # If secondary mixing is on, with prob sec_frac use the
+            # secondary appearance stats to RENDER a fresh sphere
+            # (donor-only — secondary PNGs are NOT used as direct
+            # templates, so we avoid mislabelling pre-existing physical
+            # blur as "sharp"). Otherwise primary flow.
+            use_secondary = (sec_frac > 0 and secondary_sharps
+                              and random.random() < sec_frac)
+            if use_secondary:
+                self.synthesis_size = secondary_synthesis_size
+                if secondary_stats is not None:
+                    self.sphere_stats = secondary_stats
+                # Empty pool for the random-sampling branch -> always
+                # falls through to the rendered-from-stats path. Each
+                # secondary sample is a freshly-rendered sphere using
+                # secondary_stats's appearance characteristics, then
+                # Gaussian-blurred to a known sigma. Labels are exact
+                # because the rendered template is truly sharp.
+                use_binning_this_sample = False
+                active_sharps = []
+                source_label = 'secondary'
+            else:
+                self.synthesis_size = primary_synthesis_size
+                self.sphere_stats = primary_sphere_stats
+                use_binning_this_sample = use_binning
+                active_sharps = real_sharps
+                source_label = 'primary'
+
             # Decide which sharp image to use
-            if use_binning:
+            if use_binning_this_sample:
                 # NEW: Binned sampling for uniform diameter distribution
                 total_images = sum(len(diameter_bins[i]) for i in range(3))
                 use_real_only = total_images >= 50
@@ -1472,12 +1647,26 @@ class SyntheticBlurGenerator:
                     sharp = None
                     sharp_path = None
             else:
-                # Random sampling (fallback when no diameter binning)
-                use_real = len(real_sharps) >= 50
+                # Random sampling (fallback when no diameter binning).
+                # Uses active_sharps which is the per-sample chosen pool
+                # (primary or secondary) — see two-source dispatch above.
+                # If synthetic_fraction is explicitly set, use it; otherwise
+                # fall back to the historical heuristic (real if >= 50, else
+                # 70% real / 30% synthetic).
+                if synthetic_fraction is not None:
+                    sf = float(synthetic_fraction)
+                    use_real_choice = (active_sharps
+                                       and random.random() >= sf)
+                else:
+                    use_real_default = (len(active_sharps) >= 50
+                                         if active_sharps else False)
+                    use_real_choice = (active_sharps
+                                       and (use_real_default
+                                            or random.random() < 0.7))
 
-                if real_sharps and (use_real or random.random() < 0.7):
-                    # Load random real sharp image
-                    sharp_path = random.choice(real_sharps)
+                if use_real_choice:
+                    # Load random real sharp image from the active pool
+                    sharp_path = random.choice(active_sharps)
                     _sp_key = str(sharp_path)
                     if _sp_key in _sharp_cache:
                         sharp = _sharp_cache[_sp_key].copy()
@@ -1497,7 +1686,8 @@ class SyntheticBlurGenerator:
                         sharp = self._prepare_image(sharp)
                         diameter_px = None  # Unknown for real images
                 else:
-                    # Generate synthetic droplet
+                    # Generate synthetic droplet (uses self.sphere_stats which
+                    # was swapped to secondary_stats above if applicable)
                     diameter_px = None  # Let generate_sample pick from sphere_stats
                     sharp = None
                     sharp_path = None
@@ -1506,9 +1696,16 @@ class SyntheticBlurGenerator:
             if sharp_path is not None:
                 scale_camera = scale_map.get(sharp_path.name)
                 native_blur = native_blur_map.get(sharp_path.name, 0.0)
+            elif use_secondary:
+                # Secondary calibration-rendered sample: use the
+                # calibration camera's scale (from the bundle's yaml)
+                # and zero native blur (rendered spheres are truly sharp).
+                scale_camera = secondary_scale_px_per_mm
+                native_blur = 0.0
             else:
-                # Synthetic sample: pick a donor crop and take both native_blur
-                # and scale from it so cross-camera correction is consistent.
+                # Primary synthetic sample: pick a donor crop and take both
+                # native_blur and scale from it so cross-camera correction
+                # is consistent.
                 if native_blur_map:
                     donor_fn = random.choice(list(native_blur_map.keys()))
                     native_blur = native_blur_map[donor_fn]
@@ -1562,8 +1759,16 @@ class SyntheticBlurGenerator:
             }
 
             if save_blur_trace and self.params.training_mode == 'direct':
-                _src = sharp_path.name if sharp_path is not None else 'synthetic'
-                _cam = camera_map.get(sharp_path.name, '') if sharp_path is not None else ''
+                # Tag source: real sharp / calibration-rendered / fallback synthetic
+                if sharp_path is not None:
+                    _src = sharp_path.name
+                    _cam = camera_map.get(sharp_path.name, '')
+                elif use_secondary:
+                    _src = 'calib_render'
+                    _cam = 'calibration'
+                else:
+                    _src = 'synthetic'
+                    _cam = ''
                 _scale = scale_camera
                 _scale_calib = self.params.scale_calib_px_per_mm
                 _cc = (_scale / _scale_calib
@@ -1687,9 +1892,14 @@ class SyntheticBlurGenerator:
             'diameter_bins_used': bool(use_binning),
         }
         if 'diameter_px' in df.columns:
-            summary['diameter_range_px'] = [
-                float(df['diameter_px'].min()), float(df['diameter_px'].max())
-            ]
+            # Coerce to numeric — secondary (rendered) samples write ''
+            # for diameter_px (the rendered diameter is internal to
+            # generate_sample); coerce drops them to NaN before min/max.
+            _diam = pd.to_numeric(df['diameter_px'], errors='coerce').dropna()
+            if not _diam.empty:
+                summary['diameter_range_px'] = [
+                    float(_diam.min()), float(_diam.max())
+                ]
         with open(output_dir / 'dataset_summary.json', 'w') as f:
             json.dump(summary, f, indent=2)
 
@@ -1699,9 +1909,14 @@ class SyntheticBlurGenerator:
         }
 
     def _prepare_image(self, image: np.ndarray) -> np.ndarray:
-        """Resize image to target size (preserves droplet, scales down)."""
+        """Resize image to target size (preserves droplet, scales down).
+
+        If self.synthesis_size is set, that's used as the intermediate
+        target so blur is applied at higher resolution. The sample is
+        downsampled to self.image_size at the end of generate_sample.
+        """
         h, w = image.shape[:2]
-        target = self.image_size
+        target = self.synthesis_size if self.synthesis_size else self.image_size
 
         # If image is larger, resize it down (don't just crop!)
         if h > target or w > target:
@@ -1712,6 +1927,14 @@ class SyntheticBlurGenerator:
 
             # Resize using area interpolation (best for downscaling)
             image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
+            h, w = image.shape[:2]
+        # If image is smaller AND synthesis_size > image_size, upscale
+        # so blur can be applied at the chosen synthesis resolution.
+        elif self.synthesis_size and (h < target or w < target):
+            scale = target / max(h, w)
+            new_h = int(h * scale)
+            new_w = int(w * scale)
+            image = cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_CUBIC)
             h, w = image.shape[:2]
 
         # Pad to exact target size if needed (centers the image)
