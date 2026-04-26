@@ -197,6 +197,9 @@ class FingerprintCheckerApp(tk.Tk):
         btns.pack(fill='x', pady=(6, 0))
         self.run_button = ttk.Button(btns, text="Run All Checks", command=self._on_run)
         self.run_button.pack(side='left', padx=2)
+        self.check_a_button = ttk.Button(
+            btns, text="Run Check A only", command=self._on_run_check_a)
+        self.check_a_button.pack(side='left', padx=2)
         self.save_button = ttk.Button(
             btns, text="Save Report", command=self._on_save, state='disabled')
         self.save_button.pack(side='left', padx=2)
@@ -377,6 +380,38 @@ class FingerprintCheckerApp(tk.Tk):
 
         self._worker_thread = threading.Thread(target=worker, daemon=True)
         self._worker_thread.start()
+
+    def _on_run_check_a(self):
+        """Quick path: run Check A (scale-chain arithmetic) only.
+
+        Pure-arithmetic, milliseconds, no images touched. Useful when
+        iterating on a config without paying the synthetic-fingerprint cost.
+        """
+        if self._worker_thread and self._worker_thread.is_alive():
+            messagebox.showinfo("Busy", "A run is already in progress.")
+            return
+        cfg = self.config_var.get().strip()
+        if not cfg or not Path(cfg).is_file():
+            messagebox.showerror(
+                "Missing config", "Pick a training_config.yaml or .pth checkpoint.")
+            return
+        try:
+            result = run_all_checks(config_path=Path(cfg))
+        except Exception as e:
+            import traceback
+            messagebox.showerror(
+                "Check A failed", f"{e}\n{traceback.format_exc()}")
+            return
+        self._result = result
+        self.save_button.config(state='normal')
+        self.status_var.set(
+            "Check A done. " + (
+                "PASS" if result.scale_chain and result.scale_chain.overall_passed
+                else "FAIL — see Check A tab"))
+        self.progress_var.set(100.0)
+        self._populate_overview(result)
+        self._populate_plot_tabs(result)
+        self._populate_report_tab(result)
 
     def _poll_messages(self):
         try:
