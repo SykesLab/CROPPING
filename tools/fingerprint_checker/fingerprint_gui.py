@@ -78,11 +78,9 @@ class FingerprintCheckerApp(tk.Tk):
             default_models, "*.pth", "checkpoints/dme_best.pth", suffix=True))
         self.synth_var = tk.StringVar(value=self._latest_dataset(default_dataset_root))
         self.calib_var = tk.StringVar(value="")
-        self.real_var = tk.StringVar(value="")
         self.inference_var = tk.StringVar(value="")
         self.output_var = tk.StringVar(value=str(_REPO_ROOT / "tools" / "fingerprint_checker" / "output" / datetime.now().strftime("%Y%m%d_%H%M%S")))
         self.n_synth_var = tk.StringVar(value=str(self._sample_default(self.synth_var.get())))
-        self.n_real_var = tk.StringVar(value="")
         self.n_inference_var = tk.StringVar(value="")
         self.k_var = tk.StringVar(value="20")
         self.focus_offset_var = tk.StringVar(value="0.0")
@@ -162,7 +160,6 @@ class FingerprintCheckerApp(tk.Tk):
         _row("Config (yaml or .pth):", self.config_var, self._browse_config)
         _row("Synthetic dataset:", self.synth_var, self._browse_synth)
         _row("Calibration folder (opt):", self.calib_var, self._browse_calib)
-        _row("Real crops folder (opt):", self.real_var, self._browse_real)
         _row("Inference crops folder (opt):", self.inference_var, self._browse_inference)
         _row("Output folder:", self.output_var, self._browse_output)
 
@@ -170,8 +167,6 @@ class FingerprintCheckerApp(tk.Tk):
         opts.pack(fill='x', pady=(4, 2))
         ttk.Label(opts, text="Samples to fingerprint:  synth").pack(side='left', padx=(0, 2))
         ttk.Entry(opts, textvariable=self.n_synth_var, width=8).pack(side='left')
-        ttk.Label(opts, text="  real").pack(side='left', padx=(8, 2))
-        ttk.Entry(opts, textvariable=self.n_real_var, width=6).pack(side='left')
         ttk.Label(opts, text="  inference").pack(side='left', padx=(8, 2))
         ttk.Entry(opts, textvariable=self.n_inference_var, width=6).pack(side='left')
         ttk.Label(opts, text=" (blank = all)", foreground='gray',
@@ -268,11 +263,6 @@ class FingerprintCheckerApp(tk.Tk):
         if path:
             self.calib_var.set(path)
 
-    def _browse_real(self):
-        path = filedialog.askdirectory(title="Select real preprocessed crop folder (PNGs)")
-        if path:
-            self.real_var.set(path)
-
     def _browse_inference(self):
         path = filedialog.askdirectory(title="Select inference crop folder (PNGs, optional defocus in filename)")
         if path:
@@ -315,7 +305,6 @@ class FingerprintCheckerApp(tk.Tk):
             return
         synth = self.synth_var.get().strip() or None
         calib = self.calib_var.get().strip() or None
-        real = self.real_var.get().strip() or None
         inference = self.inference_var.get().strip() or None
 
         def _opt_int(s, label):
@@ -329,7 +318,6 @@ class FingerprintCheckerApp(tk.Tk):
 
         try:
             n_synth = _opt_int(self.n_synth_var.get(), "Synth N")
-            n_real = _opt_int(self.n_real_var.get(), "Real N")
             n_inf = _opt_int(self.n_inference_var.get(), "Inference N")
         except ValueError as e:
             messagebox.showerror("Bad N", str(e))
@@ -357,10 +345,8 @@ class FingerprintCheckerApp(tk.Tk):
                     config_path=Path(cfg),
                     synthetic_dataset_path=Path(synth) if synth else None,
                     calibration_path=Path(calib) if calib else None,
-                    real_crops_path=Path(real) if real else None,
                     inference_crops_path=Path(inference) if inference else None,
                     n_synthetic_samples=n_synth,
-                    n_real_samples=n_real,
                     n_inference_samples=n_inf,
                     k_neighbours=k,
                     calibration_focus_offset_mm=focus_offset,
@@ -464,10 +450,6 @@ class FingerprintCheckerApp(tk.Tk):
             "Synthetic vs Calibration", result.alignment_synth_vs_calib,
             result.alignment_flags)
         lines.append("")
-        _alignment_block(
-            "Inference vs Calibration", result.alignment_inference_vs_calib,
-            result.alignment_inference_flags)
-        lines.append("")
 
         def _coverage_block(name, cov, flags):
             lines.append(f"CHECK C - {name}")
@@ -480,15 +462,6 @@ class FingerprintCheckerApp(tk.Tk):
                 lines.append(
                     f"  [{flag:>4}]  {m:30s}  coverage = {info['coverage_pct']:5.1f}%")
 
-        _coverage_block(
-            "Synthetic vs Real coverage", result.coverage_synth_vs_real,
-            result.coverage_real_flags)
-        if result.joint_coverage_real:
-            jc = result.joint_coverage_real.get('joint_coverage_pct')
-            if isinstance(jc, float) and np.isfinite(jc):
-                lines.append(f"  Joint multivariate coverage: {jc:.1f}%  "
-                             f"(over {result.joint_coverage_real.get('n_features_used', '?')} features)")
-        lines.append("")
         _coverage_block(
             "Synthetic vs Inference coverage", result.coverage_synth_vs_inference,
             result.coverage_inference_flags)
@@ -531,53 +504,34 @@ class FingerprintCheckerApp(tk.Tk):
                 plot_sigma_trends(result.synthetic_fingerprints,
                                   correlations=result.sigma_trend_correlations),
                 self._plot_frame_sigma)
-        # Check B: nested notebook of (synth↔calib, inference↔calib)
+        # Check B: synthetic ↔ calibration alignment (per-metric deltas + heatmap)
         for child in self._plot_frame_b.winfo_children():
             child.destroy()
-        nested_b = ttk.Notebook(self._plot_frame_b)
-        nested_b.pack(fill='both', expand=True)
-
-        def _build_alignment_pane(ar, flags, title):
-            pane = ttk.Frame(nested_b)
-            nested_b.add(pane, text=title)
-            if ar is None:
-                ttk.Label(pane, text="(not run)").pack(pady=20)
-                return
-            top_frame = ttk.Frame(pane)
+        ar = result.alignment_synth_vs_calib
+        if ar is None:
+            ttk.Label(self._plot_frame_b, text="(not run — provide a calibration folder)"
+                      ).pack(pady=20)
+        else:
+            top_frame = ttk.Frame(self._plot_frame_b)
             top_frame.pack(fill='both', expand=True)
-            bot_frame = ttk.Frame(pane)
+            bot_frame = ttk.Frame(self._plot_frame_b)
             bot_frame.pack(fill='both', expand=True)
             self._embed_figure(
-                plot_alignment_per_metric_deltas(ar, flags), top_frame)
+                plot_alignment_per_metric_deltas(ar, result.alignment_flags),
+                top_frame)
             self._embed_figure(plot_alignment_per_anchor_heatmap(ar), bot_frame)
 
-        _build_alignment_pane(
-            result.alignment_synth_vs_calib, result.alignment_flags,
-            'Synthetic vs Calibration')
-        _build_alignment_pane(
-            result.alignment_inference_vs_calib, result.alignment_inference_flags,
-            'Inference vs Calibration')
-
-        # Check C: nested notebook of (synth↔real, synth↔inference)
+        # Check C: synthetic ↔ inference coverage
         for child in self._plot_frame_c.winfo_children():
             child.destroy()
-        nested_c = ttk.Notebook(self._plot_frame_c)
-        nested_c.pack(fill='both', expand=True)
-
-        def _build_coverage_pane(cov, flags, title):
-            pane = ttk.Frame(nested_c)
-            nested_c.add(pane, text=title)
-            if cov is None:
-                ttk.Label(pane, text="(not run)").pack(pady=20)
-                return
-            self._embed_figure(plot_coverage_bars(cov, flags), pane)
-
-        _build_coverage_pane(
-            result.coverage_synth_vs_real, result.coverage_real_flags,
-            'Synthetic vs Real')
-        _build_coverage_pane(
-            result.coverage_synth_vs_inference, result.coverage_inference_flags,
-            'Synthetic vs Inference')
+        cov = result.coverage_synth_vs_inference
+        if cov is None:
+            ttk.Label(self._plot_frame_c, text="(not run — provide an inference crops folder)"
+                      ).pack(pady=20)
+        else:
+            self._embed_figure(
+                plot_coverage_bars(cov, result.coverage_inference_flags),
+                self._plot_frame_c)
 
         # Sample viewer — destroy any previous, build fresh
         for child in self.tab_viewer.winfo_children():
@@ -625,7 +579,6 @@ class SampleViewerFrame(ttk.Frame):
     SOURCE_LABELS = (
         ('synthetic', 'Synthetic'),
         ('calibration', 'Calibration'),
-        ('real', 'Real'),
         ('inference', 'Inference'),
     )
 
@@ -673,7 +626,6 @@ class SampleViewerFrame(ttk.Frame):
         return {
             'synthetic': result.synthetic_fingerprints,
             'calibration': result.calibration_fingerprints,
-            'real': result.real_fingerprints,
             'inference': result.inference_fingerprints,
         }
 

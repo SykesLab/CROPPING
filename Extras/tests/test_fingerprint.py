@@ -164,6 +164,21 @@ class TestFingerprintMetrics:
         blurred = self._step_image(blur_sigma=4.0)
         assert metric_tenengrad(blurred) < metric_tenengrad(sharp)
 
+    def test_metric_edge_width_on_step_function(self):
+        """For a Gaussian-blurred step edge with sigma σ, the 10–90%
+        intensity transition spans 2·σ·√2·erfinv(0.8) ≈ 2.563·σ.
+        Verify the metric recovers this within pixel-discretisation tolerance.
+        """
+        from tools.fingerprint_checker.fingerprint_metrics import (
+            metric_edge_transition_width,
+        )
+        sigma = 3.0
+        expected = 2.5631 * sigma  # ≈ 7.69 px
+        img = self._step_image(size=128, blur_sigma=sigma)
+        width = metric_edge_transition_width(img)
+        assert abs(width - expected) < 1.5, (
+            f"sigma={sigma}: expected ~{expected:.2f} px, got {width:.2f}")
+
     def test_polarity_detection(self):
         from tools.fingerprint_checker.fingerprint_metrics import metric_polarity
         dark = self._step_image(polarity='dark_on_light')
@@ -547,51 +562,6 @@ class TestPhase2:
         for s in loaded.samples:
             assert s.defocus_mm is None
 
-    def test_orchestrator_runs_check_c_when_real_provided(self, tmp_path):
-        """End-to-end: synth dataset + real crops → coverage check runs."""
-        from tools.fingerprint_checker.fingerprint_orchestrator import run_all_checks
-        # Build synth dataset
-        import cv2
-        import numpy as np
-        import pandas as pd
-        ds = tmp_path / "20260101_000000_test"
-        (ds / "blur").mkdir(parents=True)
-        for i in range(8):
-            img = np.ones((48, 48), dtype=np.float32)
-            cv2.circle(img, (24, 24), 10, 0.0, -1)
-            sigma = 0.5 + i * 0.4
-            cv2.imwrite(str(ds / "blur" / f"{i:06d}.png"),
-                        (cv2.GaussianBlur(img, (0, 0), sigmaX=sigma) * 255)
-                        .astype(np.uint8))
-        pd.DataFrame({
-            'index': range(8),
-            'defocus_mm': [(i - 4) * 1.0 for i in range(8)],
-            'sigma_px': [0.5 + i * 0.4 for i in range(8)],
-        }).to_csv(ds / "metadata.csv", index=False)
-
-        cfg = {
-            'data': {'image_size_px': 48, 'blur_range_px': [0.5, 4.0]},
-            'training': {'rho_direct': 1.0, 'sigma_0': 0.0,
-                         'scale_calib_px_per_mm': 50.0, 'crop_size_px': 48,
-                         'training_mode': 'direct'},
-        }
-
-        # Reuse the real-crops builder
-        real_folder = self._build_real_crops(tmp_path)
-
-        result = run_all_checks(
-            config_dict=cfg,
-            synthetic_dataset_path=ds,
-            real_crops_path=real_folder,
-        )
-        assert not result.synthetic_fingerprints.empty
-        assert not result.real_fingerprints.empty
-        assert result.coverage_synth_vs_real is not None
-        # At least one feature should have a defined coverage
-        per_feat = result.coverage_synth_vs_real.per_feature
-        assert any(np.isfinite(v.get('coverage_pct', float('nan')))
-                   for v in per_feat.values())
-
     def test_find_nearest_match_picks_identical(self):
         """An identical sample should match itself with distance ~0."""
         import numpy as np
@@ -652,47 +622,6 @@ class TestPhase2:
         # Should be float32 [0, 1]
         assert img.dtype == np.float32
         assert 0.0 <= img.max() <= 1.0
-
-    def test_orchestrator_no_inference_calib_alignment_without_defocus(self, tmp_path):
-        """If inference crops have no parseable defocus, the
-        inference↔calibration alignment step is skipped with a diagnostic."""
-        import cv2
-        import numpy as np
-        import pandas as pd
-        from tools.fingerprint_checker.fingerprint_orchestrator import run_all_checks
-        ds = tmp_path / "ds"
-        (ds / "blur").mkdir(parents=True)
-        for i in range(4):
-            cv2.imwrite(str(ds / "blur" / f"{i:06d}.png"),
-                        (np.ones((32, 32)) * 100).astype(np.uint8))
-        pd.DataFrame({
-            'index': range(4),
-            'defocus_mm': [-2.0, -1.0, 1.0, 2.0],
-            'sigma_px': [1.0, 0.5, 0.5, 1.0],
-        }).to_csv(ds / "metadata.csv", index=False)
-
-        # Inference crops with NO defocus in filename
-        inf = tmp_path / "inf"
-        inf.mkdir()
-        for i in range(3):
-            cv2.imwrite(str(inf / f"plain_{i}.png"),
-                        (np.ones((32, 32)) * 128).astype(np.uint8))
-
-        cfg = {
-            'data': {'image_size_px': 32, 'blur_range_px': [0.5, 1.0]},
-            'training': {'rho_direct': 1.0, 'sigma_0': 0.0,
-                         'scale_calib_px_per_mm': 50.0, 'crop_size_px': 32,
-                         'training_mode': 'direct'},
-        }
-        result = run_all_checks(
-            config_dict=cfg, synthetic_dataset_path=ds,
-            inference_crops_path=inf,
-        )
-        # Coverage runs (doesn't need defocus)
-        assert result.coverage_synth_vs_inference is not None
-        # But alignment skipped (no defocus)
-        assert result.alignment_inference_vs_calib is None
-
 
 # ===========================================================================
 # Phase 4 — Cache module
@@ -825,18 +754,17 @@ class TestJointCoverage:
 class TestJointCoverageWiring:
     """Confirm joint coverage is exposed on AllChecksResult and serialises."""
 
-    def test_result_has_joint_coverage_fields(self):
+    def test_result_has_joint_coverage_field(self):
         from tools.fingerprint_checker.fingerprint_orchestrator import AllChecksResult
         r = AllChecksResult(config_summary={})
-        # Default empty dicts (not None) so report writers can use `if result.joint_…:`
-        assert r.joint_coverage_real == {}
+        # Default empty dict (not None) so report writers can use `if result.joint_…:`
         assert r.joint_coverage_inference == {}
 
     def test_to_dict_includes_joint_coverage(self):
         from tools.fingerprint_checker.fingerprint_orchestrator import AllChecksResult
         r = AllChecksResult(config_summary={})
-        r.joint_coverage_real = {'joint_coverage_pct': 73.4, 'n_features_used': 12}
+        r.joint_coverage_inference = {
+            'joint_coverage_pct': 73.4, 'n_features_used': 12}
         d = r.to_dict()
-        assert 'joint_coverage_real' in d
-        assert d['joint_coverage_real']['joint_coverage_pct'] == 73.4
         assert 'joint_coverage_inference' in d
+        assert d['joint_coverage_inference']['joint_coverage_pct'] == 73.4

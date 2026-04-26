@@ -160,10 +160,6 @@ def write_markdown_report(result, output_dir: Path) -> Path:
     lines.extend(_alignment_table(
         result.alignment_synth_vs_calib, result.alignment_flags))
 
-    lines.append("## Check B — Inference ↔ Calibration alignment")
-    lines.extend(_alignment_table(
-        result.alignment_inference_vs_calib, result.alignment_inference_flags))
-
     # Check C — distribution coverage
     def _coverage_table(cov, flags):
         if cov is None:
@@ -220,13 +216,6 @@ def write_markdown_report(result, output_dir: Path) -> Path:
             return None
         return float(np.mean(vals))
 
-    lines.append("## Check C — Synthetic ↔ Real distribution coverage")
-    lines.extend(_coverage_table(
-        result.coverage_synth_vs_real, result.coverage_real_flags))
-    lines.extend(_joint_summary(
-        'synth↔real', result.joint_coverage_real,
-        _per_feature_avg(result.coverage_synth_vs_real)))
-
     lines.append("## Check C — Synthetic ↔ Inference distribution coverage")
     lines.extend(_coverage_table(
         result.coverage_synth_vs_inference, result.coverage_inference_flags))
@@ -252,7 +241,6 @@ def write_fingerprint_csvs(result, output_dir: Path) -> dict:
     for label, df in (
         ('synthetic', result.synthetic_fingerprints),
         ('calibration', result.calibration_fingerprints),
-        ('real', result.real_fingerprints),
         ('inference', result.inference_fingerprints),
     ):
         if not df.empty:
@@ -289,24 +277,6 @@ def write_plots(result, output_dir: Path) -> dict:
         p = output_dir / 'check_b_synth_vs_calib_heatmap.png'
         save_figure(fig, p)
         written['synth_vs_calib_heatmap'] = p
-    if result.alignment_inference_vs_calib is not None:
-        fig = plot_alignment_per_metric_deltas(
-            result.alignment_inference_vs_calib,
-            result.alignment_inference_flags)
-        p = output_dir / 'check_b_inference_vs_calib_per_metric.png'
-        save_figure(fig, p)
-        written['inference_vs_calib_per_metric'] = p
-        fig = plot_alignment_per_anchor_heatmap(
-            result.alignment_inference_vs_calib)
-        p = output_dir / 'check_b_inference_vs_calib_heatmap.png'
-        save_figure(fig, p)
-        written['inference_vs_calib_heatmap'] = p
-    if result.coverage_synth_vs_real is not None:
-        fig = plot_coverage_bars(
-            result.coverage_synth_vs_real, result.coverage_real_flags)
-        p = output_dir / 'check_c_synth_vs_real_coverage.png'
-        save_figure(fig, p)
-        written['synth_vs_real_coverage'] = p
     if result.coverage_synth_vs_inference is not None:
         fig = plot_coverage_bars(
             result.coverage_synth_vs_inference,

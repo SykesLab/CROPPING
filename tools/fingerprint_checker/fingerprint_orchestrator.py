@@ -74,19 +74,11 @@ class AllChecksResult:
     alignment_synth_vs_calib: Optional[AlignmentResult] = None
     alignment_flags: dict = field(default_factory=dict)
 
-    # Check B: alignment between inference and calibration (Phase 2 addition)
-    alignment_inference_vs_calib: Optional[AlignmentResult] = None
-    alignment_inference_flags: dict = field(default_factory=dict)
-
-    # Check C: distribution coverage (Phase 2 addition)
-    real_fingerprints: pd.DataFrame = field(default_factory=pd.DataFrame)
+    # Check C: synth↔inference distribution coverage
     inference_fingerprints: pd.DataFrame = field(default_factory=pd.DataFrame)
-    coverage_synth_vs_real: Optional[CoverageResult] = None
     coverage_synth_vs_inference: Optional[CoverageResult] = None
-    coverage_real_flags: dict = field(default_factory=dict)
     coverage_inference_flags: dict = field(default_factory=dict)
     # Phase 4: joint multivariate coverage (single-number supplement)
-    joint_coverage_real: dict = field(default_factory=dict)
     joint_coverage_inference: dict = field(default_factory=dict)
 
     # Misc / diagnostics
@@ -99,7 +91,6 @@ class AllChecksResult:
             'calibration_root': self.calibration_root,
             'synthetic_fingerprint_count': len(self.synthetic_fingerprints),
             'calibration_fingerprint_count': len(self.calibration_fingerprints),
-            'real_fingerprint_count': len(self.real_fingerprints),
             'inference_fingerprint_count': len(self.inference_fingerprints),
             'scale_chain': self.scale_chain.to_dict() if self.scale_chain else None,
             'sigma_trend_correlations': self.sigma_trend_correlations,
@@ -108,22 +99,11 @@ class AllChecksResult:
                 if self.alignment_synth_vs_calib else None
             ),
             'alignment_flags': self.alignment_flags,
-            'alignment_inference_vs_calib': (
-                self.alignment_inference_vs_calib.to_dict()
-                if self.alignment_inference_vs_calib else None
-            ),
-            'alignment_inference_flags': self.alignment_inference_flags,
-            'coverage_synth_vs_real': (
-                self.coverage_synth_vs_real.to_dict()
-                if self.coverage_synth_vs_real else None
-            ),
             'coverage_synth_vs_inference': (
                 self.coverage_synth_vs_inference.to_dict()
                 if self.coverage_synth_vs_inference else None
             ),
-            'coverage_real_flags': self.coverage_real_flags,
             'coverage_inference_flags': self.coverage_inference_flags,
-            'joint_coverage_real': self.joint_coverage_real,
             'joint_coverage_inference': self.joint_coverage_inference,
             'diagnostics': self.diagnostics,
         }
@@ -339,10 +319,8 @@ def run_all_checks(
     config_dict: Optional[dict] = None,
     synthetic_dataset_path: Optional[Path] = None,
     calibration_path: Optional[Path] = None,
-    real_crops_path: Optional[Path] = None,
     inference_crops_path: Optional[Path] = None,
     n_synthetic_samples: Optional[int] = None,
-    n_real_samples: Optional[int] = None,
     n_inference_samples: Optional[int] = None,
     calibration_focus_offset_mm: float = 0.0,
     k_neighbours: int = 20,
@@ -358,11 +336,9 @@ def run_all_checks(
     ``synthetic_dataset_path`` is required for any image-based check.
 
     Optional inputs:
-      - ``calibration_path`` enables synthetic↔calibration alignment AND
-        inference↔calibration alignment (when inference_crops_path also given)
-      - ``real_crops_path`` enables synth↔real distribution coverage (Check C)
+      - ``calibration_path`` enables synthetic↔calibration alignment (Check B)
       - ``inference_crops_path`` enables synth↔inference distribution coverage
-        AND inference↔calibration alignment (with calibration also given)
+        (Check C — does inference preprocessing match training distribution?)
     """
     diagnostics: List[str] = []
 
@@ -436,32 +412,14 @@ def run_all_checks(
                 "Calibration fingerprint DataFrame is empty — likely "
                 "pyphantom missing or all .cine reads failed.")
 
-    # ── Optional: load real crops ───────────────────────────────────────
-    real_fp = pd.DataFrame()
-    real_root = None
-    if real_crops_path is not None:
-        if progress:
-            progress("Loading real crops", 0.70)
-        real_folder = load_crop_folder(
-            Path(real_crops_path), label='real', n_samples=n_real_samples)
-        real_root = str(real_folder.root)
-        real_fp = fingerprint_crop_folder(
-            real_folder,
-            progress=lambda m, f: progress(m, 0.70 + f * 0.10) if progress else None,
-            skip_uniformity=skip_uniformity, skip_symmetry=skip_symmetry,
-            cache_dir=cache_dir, force_recompute=force_recompute,
-        )
-
     # ── Optional: load inference crops ──────────────────────────────────
     inference_fp = pd.DataFrame()
-    inference_root = None
     if inference_crops_path is not None:
         if progress:
             progress("Loading inference crops", 0.80)
         inf_folder = load_crop_folder(
             Path(inference_crops_path), label='inference',
             n_samples=n_inference_samples)
-        inference_root = str(inf_folder.root)
         inference_fp = fingerprint_crop_folder(
             inf_folder,
             progress=lambda m, f: progress(m, 0.80 + f * 0.10) if progress else None,
@@ -484,44 +442,7 @@ def run_all_checks(
         )
         alignment_flags = flag_alignment(alignment_result)
 
-    # ── Check B (Phase 2): inference ↔ calibration alignment ─────────────
-    inf_alignment_result = None
-    inf_alignment_flags = {}
-    if not calib_fp.empty and not inference_fp.empty:
-        # Filter to inference samples that have a defocus value
-        inf_with_z = inference_fp[inference_fp['defocus_mm'].notna()]
-        if len(inf_with_z) > 0:
-            if progress:
-                progress("Check B — inference↔calibration alignment", 0.93)
-            inf_alignment_result = alignment_check_nn(
-                anchor_df=calib_fp,
-                other_df=inf_with_z,
-                anchor_label='calibration',
-                other_label='inference',
-                k=min(k_neighbours, len(inf_with_z)),
-            )
-            inf_alignment_flags = flag_alignment(inf_alignment_result)
-        else:
-            diagnostics.append(
-                "Inference crops have no parseable defocus from filename — "
-                "skipping inference↔calibration alignment.")
-
-    # ── Check C: synthetic ↔ real / inference distribution coverage ─────
-    coverage_real = None
-    coverage_real_flags = {}
-    joint_real = {}
-    if not real_fp.empty and not synth_fp.empty:
-        if progress:
-            progress("Check C — synth↔real coverage", 0.96)
-        coverage_real = coverage_check(
-            reference_df=synth_fp,
-            test_df=real_fp,
-            reference_label='synthetic',
-            test_label='real',
-        )
-        coverage_real_flags = flag_coverage(coverage_real)
-        joint_real = joint_coverage(synth_fp, real_fp)
-
+    # ── Check C: synthetic ↔ inference distribution coverage ────────────
     coverage_inference = None
     coverage_inference_flags = {}
     joint_inference = {}
@@ -546,19 +467,13 @@ def run_all_checks(
         calibration_root=str(calib_stack.root) if calib_stack else None,
         synthetic_fingerprints=synth_fp,
         calibration_fingerprints=calib_fp,
-        real_fingerprints=real_fp,
         inference_fingerprints=inference_fp,
         scale_chain=scale_result,
         sigma_trend_correlations=sigma_trends,
         alignment_synth_vs_calib=alignment_result,
         alignment_flags=alignment_flags,
-        alignment_inference_vs_calib=inf_alignment_result,
-        alignment_inference_flags=inf_alignment_flags,
-        coverage_synth_vs_real=coverage_real,
-        coverage_real_flags=coverage_real_flags,
         coverage_synth_vs_inference=coverage_inference,
         coverage_inference_flags=coverage_inference_flags,
-        joint_coverage_real=joint_real,
         joint_coverage_inference=joint_inference,
         diagnostics=diagnostics,
     )
