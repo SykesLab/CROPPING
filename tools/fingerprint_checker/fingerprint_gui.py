@@ -84,7 +84,6 @@ class FingerprintCheckerApp(tk.Tk):
         self.n_synth_var = tk.StringVar(value=str(self._sample_default(self.synth_var.get())))
         self.n_inference_var = tk.StringVar(value="")
         self.k_var = tk.StringVar(value="20")
-        self.focus_offset_var = tk.StringVar(value="0.0")
         self.force_recompute_var = tk.BooleanVar(value=False)
 
         self.status_var = tk.StringVar(value="Ready. Pick a config + synthetic dataset (and optionally calibration), then Run All.")
@@ -190,8 +189,6 @@ class FingerprintCheckerApp(tk.Tk):
         opts2.pack(fill='x', pady=2)
         ttk.Label(opts2, text="K nearest synthetic per anchor:").pack(side='left', padx=(0, 4))
         ttk.Entry(opts2, textvariable=self.k_var, width=6).pack(side='left')
-        ttk.Label(opts2, text="    Calibration focus offset (mm):").pack(side='left', padx=(12, 4))
-        ttk.Entry(opts2, textvariable=self.focus_offset_var, width=8).pack(side='left')
 
         btns = ttk.Frame(top)
         btns.pack(fill='x', pady=(6, 0))
@@ -343,9 +340,8 @@ class FingerprintCheckerApp(tk.Tk):
             return
         try:
             k = int(self.k_var.get())
-            focus_offset = float(self.focus_offset_var.get())
         except ValueError:
-            messagebox.showerror("Bad number", "K and focus offset must be numeric.")
+            messagebox.showerror("Bad number", "K must be an integer.")
             return
 
         self.run_button.config(state='disabled')
@@ -368,7 +364,6 @@ class FingerprintCheckerApp(tk.Tk):
                     n_synthetic_samples=n_synth,
                     n_inference_samples=n_inf,
                     k_neighbours=k,
-                    calibration_focus_offset_mm=focus_offset,
                     progress=progress_cb,
                     cache_dir=DEFAULT_CACHE_DIR,
                     force_recompute=force_recompute,
