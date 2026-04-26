@@ -899,6 +899,24 @@ class TrainingGUI:
         ttk.Entry(row2, textvariable=self.train_size_var, width=15).pack(side='left')
         ttk.Label(row2, text="px (smaller = faster training)").pack(side='left', padx=5)
 
+        # Synthetic samples — opt-in via dialog. Defaults preserve the
+        # existing sharp-crops-only workflow (synth_calib_fraction = 0).
+        # State variables (set/edited via the dialog only):
+        self.synth_calib_source_var = tk.StringVar(value="")  # path to calib bundle / processed_images
+        self.synth_calib_size_var = tk.StringVar(value="")    # source size in px (blank = output)
+        self.synth_calib_fraction_var = tk.StringVar(value="0")  # % of samples from calib (0 = off)
+        self.synth_calib_status_var = tk.StringVar(value="(not configured — sharp crops only)")
+
+        synth_btn_row = ttk.Frame(settings_frame)
+        synth_btn_row.pack(fill='x', pady=(10, 5))
+        ttk.Button(
+            synth_btn_row, text="Configure synthetic samples...",
+            command=self._open_synth_config_dialog,
+        ).pack(side='left')
+        ttk.Label(synth_btn_row, textvariable=self.synth_calib_status_var,
+                  font=('TkDefaultFont', 8), foreground='gray').pack(
+            side='left', padx=8)
+
         # Blur Distribution
         coc_frame = ttk.LabelFrame(settings_frame, text="CoC Sampling Distribution", padding=5)
         coc_frame.pack(fill='x', pady=(10, 5))
@@ -2418,6 +2436,301 @@ class TrainingGUI:
             self.sharp_crops_dir = Path(path)
             self.sharp_crops_var.set(path)
             self._log(f"Sharp crops dir set: {path}")
+
+    def _open_synth_config_dialog(self):
+        """Open the 'Configure synthetic samples' dialog.
+
+        Lets the user opt in to mixing calibration-derived synthetic
+        images into the dataset. Defaults (% = 0) keep sharp-crops-only
+        behaviour. The dialog edits self.synth_calib_* state vars
+        in-place; nothing is applied to the generator until Generate runs.
+        """
+        dlg = tk.Toplevel(self.root)
+        dlg.title("Configure synthetic samples")
+        dlg.transient(self.root)
+        dlg.geometry("680x540")
+
+        # Local working vars seeded from the persisted state vars; only
+        # written back on Apply.
+        local_source = tk.StringVar(value=self.synth_calib_source_var.get())
+        local_size = tk.StringVar(value=self.synth_calib_size_var.get())
+        local_pct = tk.StringVar(value=self.synth_calib_fraction_var.get())
+
+        intro = (
+            "Optionally mix in synthetic samples derived from another\n"
+            "image source (typically a calibration bundle). Default (% = 0)\n"
+            "keeps the existing sharp-crops-only workflow."
+        )
+        ttk.Label(dlg, text=intro, font=('TkDefaultFont', 9),
+                  justify='left').pack(anchor='w', padx=12, pady=(10, 8))
+
+        body = ttk.Frame(dlg, padding=(10, 0))
+        body.pack(fill='x')
+
+        # Source folder
+        ttk.Label(body, text="Source folder:").grid(
+            row=0, column=0, sticky='w', pady=4)
+        ttk.Entry(body, textvariable=local_source, width=52).grid(
+            row=0, column=1, padx=5, pady=4)
+        ttk.Button(
+            body, text="Browse",
+            command=lambda: self._browse_synth_dialog_folder(local_source),
+        ).grid(row=0, column=2, pady=4)
+        ttk.Label(
+            body,
+            text="e.g. Calibration/runs/<bundle>/processed_images/  —"
+                 " appearance stats (background, interior, vignette, rim "
+                 " lighting, diameter range) are sampled from these PNGs."
+                 " The PNGs themselves are NOT used as direct templates"
+                 " (avoids mislabelling their physical defocus blur as"
+                 " 'sharp'). Each secondary sample is a freshly rendered"
+                 " sphere matching this source's appearance.",
+            font=('TkDefaultFont', 8), foreground='gray', wraplength=600,
+        ).grid(row=1, column=0, columnspan=3, sticky='w', padx=5)
+
+        # Source size
+        ttk.Label(body, text="Source size (px):").grid(
+            row=2, column=0, sticky='w', pady=(10, 4))
+        ttk.Entry(body, textvariable=local_size, width=12).grid(
+            row=2, column=1, sticky='w', padx=5, pady=(10, 4))
+        ttk.Label(
+            body,
+            text="Resolution synthesis happens at before downscale to "
+                 "model size. Blank = use Output Size. Set to e.g. 960 to "
+                 "match calibration's native resolution (so synthetic "
+                 "samples go through the same downsample as calibration).",
+            font=('TkDefaultFont', 8), foreground='gray', wraplength=600,
+        ).grid(row=3, column=0, columnspan=3, sticky='w', padx=5)
+
+        # % from this source
+        ttk.Label(body, text="% of total samples:").grid(
+            row=4, column=0, sticky='w', pady=(10, 4))
+        ttk.Entry(body, textvariable=local_pct, width=12).grid(
+            row=4, column=1, sticky='w', padx=5, pady=(10, 4))
+        ttk.Label(
+            body,
+            text="Fraction of generated dataset that comes from this "
+                 "source (rest are normal sharp crops). 0 = no synthetic "
+                 "mixing; 100 = pure synthetic.",
+            font=('TkDefaultFont', 8), foreground='gray', wraplength=600,
+        ).grid(row=5, column=0, columnspan=3, sticky='w', padx=5)
+
+        # Preview area
+        preview_status = tk.StringVar(value="")
+        preview_btn_row = ttk.Frame(dlg, padding=(10, 10))
+        preview_btn_row.pack(fill='x')
+        ttk.Button(
+            preview_btn_row, text="Preview samples",
+            command=lambda: self._preview_dialog_samples(
+                dlg, local_source, local_size, preview_status),
+        ).pack(side='left')
+        ttk.Label(preview_btn_row, textvariable=preview_status,
+                  font=('TkDefaultFont', 8), foreground='blue').pack(
+            side='left', padx=10)
+
+        # Status / downstream-impact note
+        impact_text = (
+            "Downstream effects when % > 0:\n"
+            " - Each secondary sample is a freshly rendered sphere using the\n"
+            "   source's appearance stats (donor-only). PNGs are NEVER used\n"
+            "   as direct templates, so labels stay exact.\n"
+            " - metadata.csv: secondary samples have source_image=''\n"
+            "   (rendered) and the configured Source size as crop_size_px.\n"
+            " - Diameter binning still uses sharp-crop diameters when present.\n"
+            " - Camera filter (Tab 1) still applies to sharp crops only.\n"
+            " - Calibration measurements (Calibration GUI) are unaffected."
+        )
+        ttk.Label(dlg, text=impact_text, font=('TkDefaultFont', 8),
+                  foreground='gray', justify='left',
+                  wraplength=640).pack(anchor='w', padx=12, pady=(4, 8))
+
+        # Apply / Cancel
+        btn_row = ttk.Frame(dlg, padding=(10, 8))
+        btn_row.pack(fill='x', side='bottom')
+
+        def _apply():
+            # Validate
+            src = local_source.get().strip()
+            if src and not Path(src).is_dir():
+                messagebox.showerror("Bad path",
+                                      f"Source folder doesn't exist: {src}",
+                                      parent=dlg)
+                return
+            sz = local_size.get().strip()
+            if sz:
+                try:
+                    n = int(sz)
+                    if n <= 0:
+                        raise ValueError()
+                except ValueError:
+                    messagebox.showerror("Bad size",
+                                          "Source size must be a positive integer or blank.",
+                                          parent=dlg)
+                    return
+            pct = local_pct.get().strip()
+            try:
+                p = float(pct) if pct else 0.0
+                if not (0 <= p <= 100):
+                    raise ValueError()
+            except ValueError:
+                messagebox.showerror("Bad %",
+                                      "% must be between 0 and 100.",
+                                      parent=dlg)
+                return
+            # Commit
+            self.synth_calib_source_var.set(src)
+            self.synth_calib_size_var.set(sz)
+            self.synth_calib_fraction_var.set(pct or "0")
+            self._update_synth_status_label()
+            dlg.destroy()
+
+        ttk.Button(btn_row, text="Apply", command=_apply).pack(side='right')
+        ttk.Button(btn_row, text="Cancel",
+                   command=dlg.destroy).pack(side='right', padx=(0, 8))
+
+    def _browse_synth_dialog_folder(self, target_var):
+        """Folder picker used inside the synth-config dialog.
+
+        Auto-resolves bundle root to its processed_images/ subdirectory
+        if present.
+        """
+        path = filedialog.askdirectory(
+            title="Select source folder (calibration bundle or any folder of PNGs)")
+        if not path:
+            return
+        p = Path(path)
+        processed = p / "processed_images"
+        if processed.is_dir():
+            target_var.set(str(processed))
+        else:
+            target_var.set(str(p))
+
+    def _update_synth_status_label(self):
+        """Refresh the small status label next to the Configure button."""
+        try:
+            pct = float(self.synth_calib_fraction_var.get() or "0")
+        except ValueError:
+            pct = 0.0
+        src = self.synth_calib_source_var.get().strip()
+        if pct <= 0 or not src:
+            self.synth_calib_status_var.set("(not configured — sharp crops only)")
+        else:
+            sz = self.synth_calib_size_var.get().strip() or "output size"
+            self.synth_calib_status_var.set(
+                f"({pct:.0f}% from {Path(src).name} @ {sz})")
+
+    def _preview_dialog_samples(self, parent, source_var, size_var, status_var):
+        """Render 6 sample images at the dialog's current settings and
+        display in a sub-popup."""
+        import random
+        import cv2
+        import numpy as np
+        from PIL import Image, ImageTk
+
+        from synthetic_blur import (
+            SphereAppearanceStats, generate_realistic_sphere,
+            apply_gaussian_blur,
+        )
+
+        src = source_var.get().strip()
+        if not src or not Path(src).is_dir():
+            messagebox.showerror("Source missing",
+                                  "Pick a source folder first.", parent=parent)
+            return
+
+        try:
+            output_size = int(self.train_size_var.get())
+        except ValueError:
+            messagebox.showerror("Bad output size",
+                                  "Output Size on the Generate tab must be an integer.",
+                                  parent=parent)
+            return
+
+        sz_str = size_var.get().strip()
+        try:
+            source_size = int(sz_str) if sz_str else output_size
+        except ValueError:
+            messagebox.showerror("Bad size",
+                                  "Source size must be a positive integer or blank.",
+                                  parent=parent)
+            return
+
+        candidate_pngs = sorted(Path(src).glob("*.png"))
+        if not candidate_pngs:
+            messagebox.showerror("No PNGs",
+                                  f"No PNG files found in {src}.", parent=parent)
+            return
+
+        status_var.set("Rendering...")
+        parent.update_idletasks()
+        try:
+            stats = SphereAppearanceStats.from_real_crops(candidate_pngs[:30])
+
+            # Donor-only behaviour: each preview is a freshly rendered
+            # sphere using the source's appearance stats, then blurred.
+            # Show 6 samples spanning sigma values × diameters so the user
+            # sees the variety they'll get in the dataset.
+            samples = []
+            sigma_values = [output_size * 0.02, output_size * 0.05,
+                            output_size * 0.10]
+            for sigma_model in sigma_values:
+                sigma_at_synth = sigma_model * (source_size / output_size)
+                d_min = max(int(stats.diameter_min * source_size / stats.image_size),
+                            source_size // 5)
+                d_max = min(int(stats.diameter_max * source_size / stats.image_size),
+                            source_size * 4 // 5)
+                if d_min >= d_max:
+                    d_min = d_max - 1
+                # Two random diameters per sigma to show variety
+                for _ in range(2):
+                    diameter_px = random.randint(d_min, d_max)
+                    sphere = generate_realistic_sphere(
+                        diameter_px, source_size, stats=stats)
+                    blurred = apply_gaussian_blur(sphere, sigma_at_synth, 4)
+                    blurred = cv2.resize(blurred, (output_size, output_size),
+                                          interpolation=cv2.INTER_AREA)
+                    samples.append((
+                        f"rendered d={diameter_px}, sigma_model={sigma_model:.1f}px",
+                        (blurred * 255).clip(0, 255).astype(np.uint8),
+                    ))
+
+            popup = tk.Toplevel(parent)
+            popup.title("Preview")
+            popup.geometry("900x520")
+            ttk.Label(
+                popup,
+                text=(f"source: {src}\n"
+                      f"source_size = {source_size} px, "
+                      f"output_size = {output_size} px"),
+                font=('TkDefaultFont', 8), foreground='gray',
+                wraplength=880,
+            ).pack(anchor='w', padx=8, pady=4)
+
+            grid = ttk.Frame(popup)
+            grid.pack(fill='both', expand=True, padx=8, pady=8)
+
+            thumbs = []
+            for i, (caption, img_uint8) in enumerate(samples):
+                r, c = i // 3, i % 3
+                cell = ttk.Frame(grid, relief='groove', padding=4)
+                cell.grid(row=r, column=c, padx=4, pady=4, sticky='nsew')
+                grid.grid_columnconfigure(c, weight=1)
+                grid.grid_rowconfigure(r, weight=1)
+                display = cv2.resize(img_uint8, (200, 200), interpolation=cv2.INTER_AREA)
+                pil = Image.fromarray(display, mode='L')
+                photo = ImageTk.PhotoImage(pil)
+                thumbs.append(photo)
+                tk.Label(cell, image=photo).pack()
+                ttk.Label(cell, text=caption,
+                          font=('TkDefaultFont', 8)).pack(pady=(2, 0))
+            popup._thumbs = thumbs  # prevent GC
+
+            status_var.set("")
+        except Exception as e:
+            status_var.set(f"Failed: {e}")
+            messagebox.showerror("Preview failed", str(e), parent=parent)
+            import traceback
+            self._log(traceback.format_exc())
 
     def _browse_output_dir(self):
         """Browse for output directory."""
@@ -5460,13 +5773,60 @@ class TrainingGUI:
 
             camera_filter = self.camera_filter_var.get() if hasattr(self, 'camera_filter_var') else "all"
 
+            # Resolve synthetic-samples settings (from the dialog).
+            # When fraction = 0 OR no source set: behaves identically to
+            # the historical sharp-crops-only flow.
+            synth_calib_src = self.synth_calib_source_var.get().strip()
+            try:
+                synth_pct = float(self.synth_calib_fraction_var.get() or "0")
+            except ValueError:
+                synth_pct = 0.0
+            synth_calib_size_str = self.synth_calib_size_var.get().strip()
+            try:
+                synth_calib_size = int(synth_calib_size_str) if synth_calib_size_str else None
+            except ValueError:
+                synth_calib_size = None
+
+            primary_sharp_dir = (sharp_crops_dir
+                                  if sharp_crops_dir and sharp_crops_dir.exists()
+                                  else None)
+            secondary_dir = None
+            secondary_size = None
+            secondary_fraction = 0.0
+
+            if synth_pct > 0 and synth_calib_src and Path(synth_calib_src).is_dir():
+                if synth_pct >= 100.0:
+                    # Pure synthetic-from-calibration: replace primary source.
+                    primary_sharp_dir = Path(synth_calib_src)
+                    self._log(
+                        f"Synthetic samples: 100% from {synth_calib_src} "
+                        f"(replacing sharp crops as primary source)")
+                else:
+                    # Mix: primary stays sharp_crops; secondary is calibration.
+                    secondary_dir = Path(synth_calib_src)
+                    secondary_size = synth_calib_size
+                    secondary_fraction = synth_pct / 100.0
+                    self._log(
+                        f"Synthetic samples: mixing {synth_pct:.0f}% from "
+                        f"{synth_calib_src} (size={secondary_size or 'output'}) "
+                        f"with sharp crops")
+
             gen_metadata = generator.generate_dataset(
-                output_dir=data_dir, num_samples=num_samples, sharp_images_dir=sharp_crops_dir
-                if(sharp_crops_dir and sharp_crops_dir.exists()) else None,
+                output_dir=data_dir, num_samples=num_samples,
+                sharp_images_dir=primary_sharp_dir,
                 diameter_range_px=(10, 200),
                 camera_filter=camera_filter, save_blur_trace=self.save_blur_trace_var.get(),
                 erf_validation=self.erf_validation_var.get(),
-                erf_validation_count=erf_validation_count,)
+                erf_validation_count=erf_validation_count,
+                # When pure-synthetic (synth_pct = 100) AND synth_calib_size is
+                # set, propagate it as the primary synthesis size.
+                synthetic_source_size=(synth_calib_size
+                                        if synth_pct >= 100 else None),
+                # Two-source mixing (when 0 < synth_pct < 100):
+                secondary_source_dir=secondary_dir,
+                secondary_source_size=secondary_size,
+                secondary_fraction=secondary_fraction,
+            )
 
             if gen_metadata['diameter_bins_used'] and gen_metadata['diameter_bin_boundaries'] is not None:
                 config_path = output_dir / 'generation_config.yaml'
