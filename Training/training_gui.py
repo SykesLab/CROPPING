@@ -900,12 +900,16 @@ class TrainingGUI:
         ttk.Label(row2, text="px (smaller = faster training)").pack(side='left', padx=5)
 
         # Synthetic samples — opt-in via dialog. Defaults preserve the
-        # existing sharp-crops-only workflow (synth_calib_fraction = 0).
+        # existing sharp-crops-only workflow (all fractions = 0).
         # State variables (set/edited via the dialog only):
         self.synth_calib_source_var = tk.StringVar(value="")  # path to calib bundle / processed_images
         self.synth_calib_size_var = tk.StringVar(value="")    # source size in px (blank = output)
-        self.synth_calib_fraction_var = tk.StringVar(value="0")  # % of samples from calib (0 = off)
+        self.synth_calib_fraction_var = tk.StringVar(value="0")  # % rendered from calib stats
+        self.synth_real_calib_fraction_var = tk.StringVar(value="0")  # % real calib PNGs + ERF labels
         self.synth_calib_status_var = tk.StringVar(value="(not configured — sharp crops only)")
+        # Calibration loss anchor (gradient-level) — used by training, not generation
+        self.calib_anchor_enabled_var = tk.BooleanVar(value=False)
+        self.calib_anchor_alpha_var = tk.StringVar(value="0.5")
 
         synth_btn_row = ttk.Frame(settings_frame)
         synth_btn_row.pack(fill='x', pady=(10, 5))
@@ -1036,7 +1040,7 @@ class TrainingGUI:
         # Blur trace metadata option
         trace_frame = ttk.LabelFrame(right_column, text="Diagnostic Options", padding=5)
         trace_frame.pack(fill='x', padx=5, pady=(0, 10))
-        self.save_blur_trace_var = tk.BooleanVar(value=False)
+        self.save_blur_trace_var = tk.BooleanVar(value=True)
         ttk.Checkbutton(
             trace_frame,
             text="Save blur trace metadata",
@@ -2448,13 +2452,17 @@ class TrainingGUI:
         dlg = tk.Toplevel(self.root)
         dlg.title("Configure synthetic samples")
         dlg.transient(self.root)
-        dlg.geometry("680x540")
+        dlg.geometry("720x780")
+        dlg.minsize(720, 780)
 
         # Local working vars seeded from the persisted state vars; only
         # written back on Apply.
         local_source = tk.StringVar(value=self.synth_calib_source_var.get())
         local_size = tk.StringVar(value=self.synth_calib_size_var.get())
         local_pct = tk.StringVar(value=self.synth_calib_fraction_var.get())
+        local_real_pct = tk.StringVar(value=self.synth_real_calib_fraction_var.get())
+        local_anchor_enabled = tk.BooleanVar(value=self.calib_anchor_enabled_var.get())
+        local_anchor_alpha = tk.StringVar(value=self.calib_anchor_alpha_var.get())
 
         intro = (
             "Optionally mix in synthetic samples derived from another\n"
@@ -2502,18 +2510,60 @@ class TrainingGUI:
             font=('TkDefaultFont', 8), foreground='gray', wraplength=600,
         ).grid(row=3, column=0, columnspan=3, sticky='w', padx=5)
 
-        # % from this source
-        ttk.Label(body, text="% of total samples:").grid(
-            row=4, column=0, sticky='w', pady=(10, 4))
-        ttk.Entry(body, textvariable=local_pct, width=12).grid(
-            row=4, column=1, sticky='w', padx=5, pady=(10, 4))
-        ttk.Label(
-            body,
-            text="Fraction of generated dataset that comes from this "
-                 "source (rest are normal sharp crops). 0 = no synthetic "
-                 "mixing; 100 = pure synthetic.",
-            font=('TkDefaultFont', 8), foreground='gray', wraplength=600,
-        ).grid(row=5, column=0, columnspan=3, sticky='w', padx=5)
+        # Sample mix box — three percentages (rendered, real, primary)
+        mix_box = ttk.LabelFrame(dlg, text="Sample mix", padding=8)
+        mix_box.pack(fill='x', padx=12, pady=(10, 4))
+
+        mr = ttk.Frame(mix_box); mr.pack(fill='x', pady=2)
+        ttk.Label(mr, text="% rendered (calib stats):", width=24).pack(side='left')
+        ttk.Entry(mr, textvariable=local_pct, width=8).pack(side='left')
+        ttk.Label(mr, text="  donor-only spheres rendered using source's appearance",
+                  font=('TkDefaultFont', 8), foreground='gray').pack(side='left', padx=8)
+
+        mr2 = ttk.Frame(mix_box); mr2.pack(fill='x', pady=2)
+        ttk.Label(mr2, text="% real calibration:", width=24).pack(side='left')
+        ttk.Entry(mr2, textvariable=local_real_pct, width=8).pack(side='left')
+        ttk.Label(mr2, text="  actual source PNGs + ERF labels (uses measurements.csv)",
+                  font=('TkDefaultFont', 8), foreground='gray').pack(side='left', padx=8)
+
+        mr3 = ttk.Frame(mix_box); mr3.pack(fill='x', pady=2)
+        ttk.Label(mr3, text="% primary (sharp crops):", width=24).pack(side='left')
+        primary_pct_var = tk.StringVar()
+        primary_label = ttk.Label(mr3, textvariable=primary_pct_var, width=10,
+                                    foreground='blue')
+        primary_label.pack(side='left')
+        ttk.Label(mr3, text="  auto = 100 − rendered − real",
+                  font=('TkDefaultFont', 8), foreground='gray').pack(side='left', padx=8)
+
+        def _refresh_primary(*_):
+            try:
+                r = float(local_pct.get() or 0)
+                rc = float(local_real_pct.get() or 0)
+                primary_pct_var.set(f"{max(0.0, 100.0 - r - rc):.0f}%")
+            except ValueError:
+                primary_pct_var.set("?")
+        local_pct.trace_add("write", _refresh_primary)
+        local_real_pct.trace_add("write", _refresh_primary)
+        _refresh_primary()
+
+        # Calibration loss anchor box
+        anchor_box = ttk.LabelFrame(
+            dlg, text="Calibration loss anchor (gradient-level)", padding=8)
+        anchor_box.pack(fill='x', padx=12, pady=(8, 4))
+        ar = ttk.Frame(anchor_box); ar.pack(fill='x', pady=2)
+        ttk.Checkbutton(ar, text="Add calibration loss to training",
+                         variable=local_anchor_enabled).pack(side='left')
+        ar2 = ttk.Frame(anchor_box); ar2.pack(fill='x', pady=2)
+        ttk.Label(ar2, text="Loss weight α:", width=20).pack(side='left')
+        ttk.Entry(ar2, textvariable=local_anchor_alpha, width=8).pack(side='left')
+        ttk.Label(ar2, text="  default 0.5; uses all source PNGs each step",
+                  font=('TkDefaultFont', 8), foreground='gray').pack(side='left', padx=8)
+        ttk.Label(anchor_box,
+                  text="Independent of % mix above — adds gradient signal "
+                       "from real calibration data each training step. Forces "
+                       "the model to keep calibration accuracy high.",
+                  font=('TkDefaultFont', 8), foreground='gray',
+                  wraplength=600).pack(anchor='w', pady=(2, 0))
 
         # Preview area
         preview_status = tk.StringVar(value="")
@@ -2567,20 +2617,44 @@ class TrainingGUI:
                                           "Source size must be a positive integer or blank.",
                                           parent=dlg)
                     return
-            pct = local_pct.get().strip()
+            def _check_pct(s, label):
+                if not s.strip():
+                    return 0.0
+                try:
+                    v = float(s)
+                    if not (0 <= v <= 100):
+                        raise ValueError()
+                    return v
+                except ValueError:
+                    messagebox.showerror("Bad %",
+                                          f"{label} must be between 0 and 100.",
+                                          parent=dlg)
+                    return None
+            pct = _check_pct(local_pct.get(), "% rendered")
+            real_pct = _check_pct(local_real_pct.get(), "% real calibration")
+            if pct is None or real_pct is None:
+                return
+            if pct + real_pct > 100.0:
+                messagebox.showerror(
+                    "Bad mix", f"% rendered + % real = {pct+real_pct:.0f} > 100. "
+                                "Reduce one of them.", parent=dlg)
+                return
+            alpha_str = local_anchor_alpha.get().strip()
             try:
-                p = float(pct) if pct else 0.0
-                if not (0 <= p <= 100):
+                alpha = float(alpha_str) if alpha_str else 0.5
+                if alpha < 0:
                     raise ValueError()
             except ValueError:
-                messagebox.showerror("Bad %",
-                                      "% must be between 0 and 100.",
+                messagebox.showerror("Bad α", "Loss weight α must be ≥ 0.",
                                       parent=dlg)
                 return
             # Commit
             self.synth_calib_source_var.set(src)
             self.synth_calib_size_var.set(sz)
-            self.synth_calib_fraction_var.set(pct or "0")
+            self.synth_calib_fraction_var.set(str(pct) if pct else "0")
+            self.synth_real_calib_fraction_var.set(str(real_pct) if real_pct else "0")
+            self.calib_anchor_enabled_var.set(local_anchor_enabled.get())
+            self.calib_anchor_alpha_var.set(str(alpha))
             self._update_synth_status_label()
             dlg.destroy()
 
@@ -2609,15 +2683,23 @@ class TrainingGUI:
         """Refresh the small status label next to the Configure button."""
         try:
             pct = float(self.synth_calib_fraction_var.get() or "0")
+            real_pct = float(self.synth_real_calib_fraction_var.get() or "0")
         except ValueError:
-            pct = 0.0
+            pct = real_pct = 0.0
         src = self.synth_calib_source_var.get().strip()
-        if pct <= 0 or not src:
+        anchor = self.calib_anchor_enabled_var.get()
+        if (pct <= 0 and real_pct <= 0 and not anchor) or not src:
             self.synth_calib_status_var.set("(not configured — sharp crops only)")
         else:
-            sz = self.synth_calib_size_var.get().strip() or "output size"
+            sz = self.synth_calib_size_var.get().strip() or "output"
+            parts = []
+            if pct > 0: parts.append(f"{pct:.0f}% rendered")
+            if real_pct > 0: parts.append(f"{real_pct:.0f}% real")
+            if anchor:
+                a = self.calib_anchor_alpha_var.get() or "0.5"
+                parts.append(f"anchor α={a}")
             self.synth_calib_status_var.set(
-                f"({pct:.0f}% from {Path(src).name} @ {sz})")
+                f"({' + '.join(parts)} from {Path(src).name} @ {sz})")
 
     def _preview_dialog_samples(self, parent, source_var, size_var, status_var):
         """Render 6 sample images at the dialog's current settings and
@@ -2978,6 +3060,15 @@ class TrainingGUI:
         cfg['grad_clip_norm'] = float(self.grad_clip_var.get())
         cfg['log_eps'] = float(self.log_eps_var.get())
         cfg['seed'] = int(self.seed_var.get())
+        # Calibration loss anchor (set in synth-config dialog) — adds
+        # gradient signal from real calibration data each training step.
+        cfg['calibration_anchor_enabled'] = bool(
+            self.calib_anchor_enabled_var.get())
+        try:
+            cfg['calibration_anchor_alpha'] = float(
+                self.calib_anchor_alpha_var.get() or "0.5")
+        except ValueError:
+            cfg['calibration_anchor_alpha'] = 0.5
 
     def _browse_direct_calibration(self):
         """Browse and load direct calibration YAML file (USER CONSTRAINT: explicit browse only)."""
@@ -5787,29 +5878,45 @@ class TrainingGUI:
             except ValueError:
                 synth_calib_size = None
 
+            # Real calibration fraction (% from real calib PNGs + ERF labels)
+            try:
+                real_calib_pct = float(self.synth_real_calib_fraction_var.get() or "0")
+            except ValueError:
+                real_calib_pct = 0.0
+
             primary_sharp_dir = (sharp_crops_dir
                                   if sharp_crops_dir and sharp_crops_dir.exists()
                                   else None)
             secondary_dir = None
             secondary_size = None
             secondary_fraction = 0.0
+            tertiary_dir = None
+            tertiary_fraction = 0.0
 
-            if synth_pct > 0 and synth_calib_src and Path(synth_calib_src).is_dir():
-                if synth_pct >= 100.0:
-                    # Pure synthetic-from-calibration: replace primary source.
-                    primary_sharp_dir = Path(synth_calib_src)
-                    self._log(
-                        f"Synthetic samples: 100% from {synth_calib_src} "
-                        f"(replacing sharp crops as primary source)")
-                else:
-                    # Mix: primary stays sharp_crops; secondary is calibration.
-                    secondary_dir = Path(synth_calib_src)
+            calib_src_path = (Path(synth_calib_src)
+                              if synth_calib_src and Path(synth_calib_src).is_dir()
+                              else None)
+
+            if synth_pct >= 100.0 and calib_src_path:
+                # Pure rendered-from-calibration: replace primary source.
+                primary_sharp_dir = calib_src_path
+                self._log(
+                    f"Synthetic samples: 100% rendered from {synth_calib_src} "
+                    f"(replacing sharp crops as primary source)")
+            else:
+                if synth_pct > 0 and calib_src_path:
+                    secondary_dir = calib_src_path
                     secondary_size = synth_calib_size
                     secondary_fraction = synth_pct / 100.0
                     self._log(
-                        f"Synthetic samples: mixing {synth_pct:.0f}% from "
-                        f"{synth_calib_src} (size={secondary_size or 'output'}) "
-                        f"with sharp crops")
+                        f"Secondary samples: {synth_pct:.0f}% rendered from "
+                        f"{synth_calib_src} (size={secondary_size or 'output'})")
+                if real_calib_pct > 0 and calib_src_path:
+                    tertiary_dir = calib_src_path
+                    tertiary_fraction = real_calib_pct / 100.0
+                    self._log(
+                        f"Tertiary samples: {real_calib_pct:.0f}% real "
+                        f"calibration PNGs + ERF labels from {synth_calib_src}")
 
             gen_metadata = generator.generate_dataset(
                 output_dir=data_dir, num_samples=num_samples,
@@ -5818,14 +5925,13 @@ class TrainingGUI:
                 camera_filter=camera_filter, save_blur_trace=self.save_blur_trace_var.get(),
                 erf_validation=self.erf_validation_var.get(),
                 erf_validation_count=erf_validation_count,
-                # When pure-synthetic (synth_pct = 100) AND synth_calib_size is
-                # set, propagate it as the primary synthesis size.
                 synthetic_source_size=(synth_calib_size
                                         if synth_pct >= 100 else None),
-                # Two-source mixing (when 0 < synth_pct < 100):
                 secondary_source_dir=secondary_dir,
                 secondary_source_size=secondary_size,
                 secondary_fraction=secondary_fraction,
+                tertiary_source_dir=tertiary_dir,
+                tertiary_fraction=tertiary_fraction,
             )
 
             if gen_metadata['diameter_bins_used'] and gen_metadata['diameter_bin_boundaries'] is not None:
