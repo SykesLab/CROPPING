@@ -743,20 +743,42 @@ class TrainingGUI:
             row_browse, text="Browse...", command=self._browse_direct_calibration).pack(
             side='left')
 
+        # Phase 11: method display row (shows linear/quadrature/hybrid
+        # detected from the loaded yaml's calibration_model block)
+        row_method = ttk.Frame(self.direct_params_frame)
+        row_method.pack(fill='x', pady=2)
+        ttk.Label(row_method, text="Method:", width=20).pack(side='left')
+        self.calibration_method_var = tk.StringVar(value="(none loaded)")
+        ttk.Label(row_method, textvariable=self.calibration_method_var,
+                  font=('TkDefaultFont', 9, 'bold'),
+                  foreground='#3060a0').pack(side='left')
+
         # Read-only displays for loaded values (USER CONSTRAINT: no manual editing)
         row_rho = ttk.Frame(self.direct_params_frame)
         row_rho.pack(fill='x', pady=2)
-        ttk.Label(row_rho, text="ρ_direct (px/mm):", width=20).pack(side='left')
+        ttk.Label(row_rho, text="ρ (px/mm):", width=20).pack(side='left')
         self.rho_direct_var = tk.StringVar(value="")
         ttk.Entry(row_rho, textvariable=self.rho_direct_var,
                   width=12, state='readonly').pack(side='left')
 
         row_sigma = ttk.Frame(self.direct_params_frame)
         row_sigma.pack(fill='x', pady=2)
-        ttk.Label(row_sigma, text="σ₀ (px):", width=20).pack(side='left')
+        # Phase 11: this label is updated dynamically — σ₀ for linear,
+        # σ_floor for quadrature/hybrid. Label widget stored so we can
+        # configure its text at load time.
+        self._aux_param_label = ttk.Label(row_sigma, text="σ₀ (px):", width=20)
+        self._aux_param_label.pack(side='left')
         self.sigma_0_var = tk.StringVar(value="")
         ttk.Entry(row_sigma, textvariable=self.sigma_0_var,
                   width=12, state='readonly').pack(side='left')
+
+        # Phase 11: hybrid-specific extra info (LUT entries, max residual)
+        # Hidden by default; shown only when method=hybrid is loaded.
+        self._hybrid_info_row = ttk.Frame(self.direct_params_frame)
+        self._hybrid_info_var = tk.StringVar(value="")
+        ttk.Label(self._hybrid_info_row, text="Hybrid LUT:", width=20).pack(side='left')
+        ttk.Label(self._hybrid_info_row, textvariable=self._hybrid_info_var,
+                  font=('TkDefaultFont', 9), foreground='#306030').pack(side='left')
 
         # Info label
         ttk.Label(
@@ -3158,6 +3180,67 @@ class TrainingGUI:
             self.calib_scale_px_per_mm_var.set(f"{scale_calib_px_per_mm:.4f}")
             self.calib_reference_resolution_var.set(str(reference_resolution))
 
+            # Phase 11: also extract the unified `calibration_model:` block
+            # if present (hybrid/quadrature method need this — find_key
+            # would only have grabbed the legacy linear params from the
+            # `direct:` block above). Stash on GUI state so generate_dataset
+            # can pass it to SyntheticBlurGenerator. Also override the
+            # rho/sigma display fields with the chosen method's params
+            # so the GUI shows what will actually be used at synthesis.
+            cm_block = config.get('calibration_model') if isinstance(config, dict) else None
+            if cm_block:
+                self._loaded_calibration_model_dict = dict(cm_block)
+                method = cm_block.get('method', 'linear')
+                self.calibration_method_var.set(method.upper())
+                # Override displayed rho with the method's actual rho
+                cm_rho = cm_block.get('rho_px_per_mm')
+                if cm_rho is not None:
+                    self.rho_direct_var.set(f"{float(cm_rho):.6f}")
+                # Method-aware aux param (sigma_0 for linear, sigma_floor otherwise)
+                if method == 'linear':
+                    self._aux_param_label.configure(text="σ₀ (px):")
+                    aux_val = cm_block.get('sigma_0_calib_px')
+                    if aux_val is not None:
+                        self.sigma_0_var.set(f"{float(aux_val):.4f}")
+                    # Hide hybrid info row
+                    try:
+                        self._hybrid_info_row.pack_forget()
+                    except Exception:
+                        pass
+                else:
+                    # quadrature or hybrid — show sigma_floor
+                    self._aux_param_label.configure(text="σ_floor (px):")
+                    aux_val = cm_block.get('sigma_floor_calib_px')
+                    if aux_val is not None:
+                        self.sigma_0_var.set(f"{float(aux_val):.4f}")
+                    if method == 'hybrid':
+                        lut = cm_block.get('residual_lut_mm_px') or []
+                        max_res = (max(abs(p[1]) for p in lut) if lut else 0.0)
+                        self._hybrid_info_var.set(
+                            f"{len(lut)} entries  (max |Δσ| = {max_res:.4f} px)")
+                        try:
+                            self._hybrid_info_row.pack(fill='x', pady=2,
+                                                        before=self._aux_param_label.master.master.winfo_children()[-1])
+                        except Exception:
+                            self._hybrid_info_row.pack(fill='x', pady=2)
+                    else:
+                        try:
+                            self._hybrid_info_row.pack_forget()
+                        except Exception:
+                            pass
+                self._log(f"Loaded calibration_model block (method={method}); "
+                          f"synthesis will use method-aware σ math.")
+            else:
+                self._loaded_calibration_model_dict = None
+                self.calibration_method_var.set("LINEAR (legacy yaml — no calibration_model block)")
+                self._aux_param_label.configure(text="σ₀ (px):")
+                try:
+                    self._hybrid_info_row.pack_forget()
+                except Exception:
+                    pass
+                self._log(f"No calibration_model block in yaml; synthesis will "
+                          f"use legacy linear params (rho_direct={rho_direct:.4f}).")
+
             if isinstance(defocus_range, list) and len(defocus_range) == 2:
                 self.defocus_min_var.set(str(defocus_range[0]))
                 self.defocus_max_var.set(str(defocus_range[1]))
@@ -3165,11 +3248,33 @@ class TrainingGUI:
             # Store full path for logging (not displayed)
             self._loaded_calib_path = file_path
 
-            # Log success
+            # Log success — Phase 11: prefer the chosen-method values from
+            # `calibration_model:` block (linear/quadrature/hybrid) over
+            # the raw find_key result (which finds the legacy linear block
+            # first and would mislead). Falls back to legacy linear when
+            # no calibration_model block is present.
+            cm_block = (config.get('calibration_model')
+                        if isinstance(config, dict) else None)
+            if cm_block:
+                method_name = cm_block.get('method', 'linear')
+                cm_rho = cm_block.get('rho_px_per_mm', rho_direct)
+                if method_name == 'linear':
+                    aux_label = "σ₀"
+                    aux_val = cm_block.get('sigma_0_calib_px', sigma_0)
+                else:
+                    aux_label = "σ_floor"
+                    aux_val = cm_block.get('sigma_floor_calib_px', sigma_0)
+            else:
+                method_name = 'linear (no calibration_model block)'
+                cm_rho = rho_direct
+                aux_label = "σ₀"
+                aux_val = sigma_0
+
             self._log(f"Loaded direct calibration: {Path(file_path).name}")
             self._log(f"  mode = {calibration_mode}")
-            self._log(f"  ρ_direct = {rho_direct:.6f} px/mm")
-            self._log(f"  σ₀ = {sigma_0:.4f} px")
+            self._log(f"  fit method = {method_name}")
+            self._log(f"  ρ = {cm_rho:.6f} px/mm")
+            self._log(f"  {aux_label} = {aux_val:.4f} px")
             self._log(f"  scale_calib = {scale_calib_px_per_mm:.4f} px/mm")
             self._log(f"  reference_resolution = {reference_resolution} px")
             if isinstance(defocus_range, list) and len(defocus_range) == 2:
@@ -3177,8 +3282,9 @@ class TrainingGUI:
 
             messagebox.showinfo("Success",
                                 f"Loaded direct calibration parameters:\n\n"
-                                f"ρ_direct = {rho_direct:.6f} px/mm\n"
-                                f"σ₀ = {sigma_0:.4f} px\n"
+                                f"Method = {method_name}\n"
+                                f"ρ = {cm_rho:.6f} px/mm\n"
+                                f"{aux_label} = {aux_val:.4f} px\n"
                                 f"scale_calib = {scale_calib_px_per_mm:.4f} px/mm\n"
                                 f"reference_resolution = {reference_resolution} px\n"
                                 f"defocus_range = {defocus_range}")
@@ -5847,6 +5953,28 @@ class TrainingGUI:
                         ('log', "Warning: Invalid ERF validation count, validating all samples"))
                     erf_validation_count = None
 
+            # Phase 11: build CalibrationModel from the loaded yaml's
+            # calibration_model block (if present). This routes the chosen
+            # method (linear/quadrature/hybrid) into the synth generator.
+            # When None, generator falls back to legacy linear formula.
+            _cm_for_gen = None
+            _cm_dict_for_gen = getattr(self, '_loaded_calibration_model_dict', None)
+            if _cm_dict_for_gen:
+                # physics.py lives at CROPPING root (one level up from Training/)
+                _repo_root = str(Path(__file__).resolve().parent.parent)
+                if _repo_root not in sys.path:
+                    sys.path.insert(0, _repo_root)
+                try:
+                    from physics import CalibrationModel
+                    _cm_for_gen = CalibrationModel.from_dict(_cm_dict_for_gen)
+                    self._log(f"Synthesis will use CalibrationModel "
+                              f"(method={_cm_for_gen.method}, sha256={_cm_for_gen.sha256()[:12]}...)")
+                except Exception as e:
+                    self._log(f"WARNING: could not build CalibrationModel from "
+                              f"loaded yaml ({e}); synthesis will use legacy "
+                              f"linear params from rho_direct/sigma_0 fields")
+                    _cm_for_gen = None
+
             generator = SyntheticBlurGenerator(
                 optical_params=optical_params,
                 defocus_range_mm=(gui_defocus_min, gui_defocus_max),
@@ -5856,7 +5984,8 @@ class TrainingGUI:
                 blur_distribution=self.blur_distribution_var.get(),
                 beta_alpha=float(self.beta_alpha_var.get()),
                 beta_beta=float(self.beta_beta_var.get()),
-                min_blur_px=min_blur_px
+                min_blur_px=min_blur_px,
+                calibration_model=_cm_for_gen,
             )
 
             # Data files (blur/, sharp/, blur_map/, metadata.csv) go directly into the dataset folder
