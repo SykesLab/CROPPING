@@ -2406,6 +2406,14 @@ Linear LOO-CV uncertainty (legacy fallback):
                     f"   (asymmetric: neg up to {cm.z_max_trusted_neg_mm:.2f} mm, "
                     f"pos up to {cm.z_max_trusted_pos_mm:.2f} mm)"
                 )
+            sigma_neg = getattr(cm, 'sigma_max_trusted_neg_calib_px', None)
+            sigma_pos = getattr(cm, 'sigma_max_trusted_pos_calib_px', None)
+            if sigma_neg is not None and sigma_pos is not None:
+                trust_text += (
+                    f"\n  Per-side sigma ceilings: "
+                    f"neg <= {sigma_neg:.3f}, pos <= {sigma_pos:.3f}  "
+                    f"(SATURATED uses min = {min(sigma_neg, sigma_pos):.3f})"
+                )
 
             text = f"""{'=' * 60}
 {header}
