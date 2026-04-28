@@ -563,7 +563,9 @@ class BoundsFlag(str, Enum):
     BELOW_FLOOR  — σ ≤ σ_min_trusted (or ≤ σ_floor for quadrature/hybrid);
                     |z| returned as 0 (at or below resolution limit).
     SATURATED    — σ ≥ min(σ_max_trusted_calib, σ_max_model_observed);
-                    |z| returned as nan (no honest answer possible).
+                    |z| is the best-guess inverse (extrapolation / plateau
+                    region — caller should treat with low confidence).
+                    Returned as a finite value, not nan.
     """
     IN_RANGE = "IN_RANGE"
     BELOW_FLOOR = "BELOW_FLOOR"
@@ -611,9 +613,15 @@ class CalibrationModel:
     # Hybrid-only: per-|z| residuals, sorted by |z|
     residual_lut_mm_px: Optional[List[Tuple[float, float]]] = None
 
-    # Trust bounds
+    # Trust bounds.
+    # sigma_max_trusted_calib_px is the *cross-side conservative* ceiling
+    # (min of per-side σ maxes). Use it as the sign-blind SATURATED check.
+    # The per-side values below are diagnostic / available to consumers
+    # that know the sign.
     sigma_min_trusted_calib_px: float = 0.0
     sigma_max_trusted_calib_px: float = float("inf")
+    sigma_max_trusted_neg_calib_px: Optional[float] = None  # diagnostic
+    sigma_max_trusted_pos_calib_px: Optional[float] = None  # diagnostic
     sigma_max_model_observed_px: Optional[float] = None
     z_min_trusted_mm: float = 0.0
     z_max_trusted_mm: float = float("inf")
@@ -718,15 +726,24 @@ class CalibrationModel:
     def inverse(self, sigma_calib_px: float) -> Tuple[float, BoundsFlag]:
         """Invert σ at calib scale → (|z|_mm, BoundsFlag).
 
-        SATURATED  → returns (nan, SATURATED)
-        BELOW_FLOOR → returns (0.0, BELOW_FLOOR)
-        IN_RANGE    → returns (|z|, IN_RANGE)
+        Always returns the best-guess |z| from the method's inverse, even
+        when in the saturated regime. The BoundsFlag communicates trust:
+
+        SATURATED  → best-guess |z| (extrapolation/plateau — caller should
+                    treat with low confidence). Returns (z_guess, SATURATED).
+        BELOW_FLOOR → (0.0, BELOW_FLOOR) — at or beyond resolution limit.
+        IN_RANGE    → (|z|, IN_RANGE) — prediction is within the fit's domain.
+
+        Rationale: returning NaN on SATURATED throws away a still-useful
+        best estimate. Letting the inversion proceed and flagging the
+        result lets the caller decide what to do (e.g. report with a
+        wider error bar, exclude downstream, or accept).
         """
         sigma = float(sigma_calib_px)
 
-        # Saturation check first — overrides everything else
-        if sigma >= self._saturation_threshold():
-            return float("nan"), BoundsFlag.SATURATED
+        # Capture the saturation status, but DON'T short-circuit the
+        # inversion. We always compute the best-guess z below.
+        saturated = sigma >= self._saturation_threshold()
 
         # Method-specific inversion
         if self.method == "linear":
@@ -782,9 +799,15 @@ class CalibrationModel:
         else:
             raise RuntimeError(f"Unhandled method: {self.method}")
 
-        # Below-floor flag — applies after we have a |z| estimate
+        # Below-floor takes precedence over saturation when both could
+        # apply (degenerate calibration where σ_min > σ_max). For a sane
+        # calibration only one branch is ever true.
         if sigma < self.sigma_min_trusted_calib_px:
             return 0.0, BoundsFlag.BELOW_FLOOR
+        if saturated:
+            # Best-guess z is what the inverse produced — return it with
+            # the SATURATED flag so callers can decide what to do.
+            return z, BoundsFlag.SATURATED
         return z, BoundsFlag.IN_RANGE
 
     # ── Boundary wrappers: cross-camera + model-resolution scaling ───────
@@ -958,6 +981,8 @@ class CalibrationModel:
                 if self.residual_lut_mm_px else None),
             "sigma_min_trusted_calib_px": self.sigma_min_trusted_calib_px,
             "sigma_max_trusted_calib_px": self.sigma_max_trusted_calib_px,
+            "sigma_max_trusted_neg_calib_px": self.sigma_max_trusted_neg_calib_px,
+            "sigma_max_trusted_pos_calib_px": self.sigma_max_trusted_pos_calib_px,
             "sigma_max_model_observed_px": self.sigma_max_model_observed_px,
             "z_min_trusted_mm": self.z_min_trusted_mm,
             "z_max_trusted_mm": self.z_max_trusted_mm,
@@ -1017,6 +1042,7 @@ class CalibrationModel:
             "sigma_0_calib_px", "sigma_floor_calib_px",
             "residual_lut_mm_px",
             "sigma_min_trusted_calib_px", "sigma_max_trusted_calib_px",
+            "sigma_max_trusted_neg_calib_px", "sigma_max_trusted_pos_calib_px",
             "sigma_max_model_observed_px",
             "z_min_trusted_mm", "z_max_trusted_mm",
             "z_max_trusted_neg_mm", "z_max_trusted_pos_mm",
