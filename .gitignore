@@ -35,5 +35,20 @@ inference_results/
 OUTPUTNEW*/
 OUTPUT/
 
-# Calibration outputs
+# Calibration outputs (per-run dirs hold processed PNGs, measurements,
+# fitted yaml, plots — generated, not tracked)
 calibration_output/
+Calibration/runs/
+Calibration/lab_capture/
+
+# Raw calibration data (sphere .cine files + per-size subfolders)
+calibration spheres/
+
+# Extras / test-script output directories
+Extras/*_output/
+Extras/*/cache/
+
+# Tools per-script caches and outputs
+tools/*/cache/
+tools/*/output/
+tools/*/runs/
