@@ -176,7 +176,9 @@ class RealCropInference:
                 self.rho_std = float(loo.get('rho_std', 0.0))
                 self.sigma_0_std = float(loo.get('sigma_0_std', 0.0))
                 logger.info(f"  Direct calibration (from file): rho={self.direct_slope} px/mm, "
-                            f"sigma_0={self.direct_offset} px  |z| = (sigma - sigma_0) / rho")
+                            f"sigma_0={self.direct_offset} px  "
+                            f"(legacy linear params; CalibrationModel from "
+                            f"checkpoint takes precedence if present)")
                 if self.rho_std > 0:
                     logger.info(f"  LOO-CV uncertainty: rho_std={self.rho_std:.4f}, "
                                 f"sigma_0_std={self.sigma_0_std:.4f}")
@@ -196,7 +198,16 @@ class RealCropInference:
                 self.sigma_0_std = float(training_cfg.get('sigma_0_std', 0.0))
                 logger.info(
                     f"  Direct calibration (from checkpoint): rho={self.direct_slope} px/mm, "
-                    f"sigma_0={self.direct_offset} px  |z| = (sigma - sigma_0) / rho")
+                    f"sigma_0={self.direct_offset} px "
+                    f"(legacy linear params; CalibrationModel from checkpoint "
+                    f"takes precedence if present)")
+
+        # Phase 7: build the unified CalibrationModel from the
+        # checkpoint config when present. Used for inverse_at + bounds_flag
+        # at inference. Falls back to None for legacy paths (callers
+        # then continue using the linear ScalingParams flow with
+        # bounds_flag = "IN_RANGE").
+        self.calibration_model = self._build_calibration_model_from_config()
 
         # Apply cross-camera scale correction to rho (direct mode only)
         # rho was measured on the calibration camera; if inference is on a different camera
@@ -394,6 +405,53 @@ class RealCropInference:
         from physics import denormalise_label
         return denormalise_label(val, self.max_blur)
 
+    def _build_calibration_model_from_config(self):
+        """Phase 7: build a CalibrationModel from the checkpoint config.
+
+        Same fallback chain as inference_engine.py:
+        1. ``training.calibration_model`` block (Phase 6) — preferred.
+        2. Legacy ``training.rho_direct`` / ``sigma_0`` — back-compat.
+        3. None when neither route works.
+        """
+        try:
+            from physics import CalibrationModel
+        except Exception:
+            return None
+        training_cfg = self.config.get('training', {}) if self.config else {}
+
+        cm_dict = training_cfg.get('calibration_model')
+        if isinstance(cm_dict, dict) and cm_dict:
+            try:
+                model = CalibrationModel.from_dict(cm_dict)
+                method_label = training_cfg.get('inversion_method', model.method)
+                logger.info(
+                    f"  Loaded CalibrationModel from checkpoint "
+                    f"(method={method_label}, sha256={model.sha256()[:12]}...)")
+                return model
+            except Exception as e:
+                logger.warning(
+                    f"Could not deserialise calibration_model from "
+                    f"checkpoint ({e}); falling back to linear")
+
+        rho = training_cfg.get('rho_direct')
+        sigma_0 = training_cfg.get('sigma_0')
+        if rho is None or sigma_0 is None:
+            return None
+        s_calib = training_cfg.get('scale_calib_px_per_mm')
+        try:
+            model = CalibrationModel.from_legacy_scaling(
+                rho=float(rho), sigma_0=float(sigma_0),
+                s_calib_px_per_mm=(float(s_calib)
+                                    if s_calib is not None else None),
+            )
+            logger.info(
+                f"  Built fallback linear CalibrationModel "
+                f"(no inversion_method in checkpoint — defaulting to linear)")
+            return model
+        except Exception as e:
+            logger.warning(f"Could not build CalibrationModel: {e}")
+            return None
+
     def estimate_blur_from_image(self, img: np.ndarray) -> float:
         """
         Estimate blur (sigma or CoC) from a numpy image (BGR format).
@@ -512,6 +570,32 @@ class RealCropInference:
             )
             inv = invert_prediction(pred_val, params, native_size)
             defocus_mm = inv.defocus_mm
+            # Phase 7: prefer the unified CalibrationModel result
+            # (method-aware + bounds_flag) when available. Override
+            # legacy linear defocus with the model's answer.
+            bounds_flag_value = "IN_RANGE"
+            inversion_method_value = "linear"
+            cm_eval = getattr(self, 'calibration_model', None)
+            if cm_eval is not None:
+                try:
+                    z_cm, flag_cm = cm_eval.inverse_at(
+                        sigma_model_px=inv.sigma_model,
+                        s_inf_px_per_mm=(self.inference_camera_scale_px_per_mm
+                                          or scale_calib),
+                        model_size=self.model_size,
+                        native_size=native_size,
+                    )
+                    bounds_flag_value = str(flag_cm.value)
+                    inversion_method_value = cm_eval.method
+                    import math as _math
+                    if not _math.isnan(z_cm):
+                        defocus_mm = float(z_cm)
+                    else:
+                        defocus_mm = float('nan')
+                except Exception as e:
+                    logger.warning(
+                        f"CalibrationModel.inverse_at failed for {img_path.name} "
+                        f"({e}); using legacy linear result")
 
             # Log full inversion chain for the first crop
             if not self._first_crop_logged:
@@ -533,7 +617,26 @@ class RealCropInference:
         unc_mm = 0.0
         rho_std = getattr(self, 'rho_std', 0.0)
         sigma_0_std = getattr(self, 'sigma_0_std', 0.0)
-        if rho_std > 0 and self.training_mode == 'direct' and self.direct_slope > 0:
+        # Phase 10: prefer method-aware uncertainty via CalibrationModel
+        # when its loo_cv field is populated. Falls back to legacy linear
+        # propagation otherwise.
+        cm_unc = getattr(self, 'calibration_model', None)
+        if (cm_unc is not None
+                and getattr(cm_unc, 'loo_cv', None)
+                and self.training_mode == 'direct'):
+            try:
+                unc_mm = cm_unc.defocus_uncertainty_at(
+                    sigma_model_px=inv.sigma_model,
+                    s_inf_px_per_mm=(self.inference_camera_scale_px_per_mm
+                                       or scale_calib),
+                    model_size=self.model_size,
+                    native_size=native_size,
+                )
+            except Exception as e:
+                logger.warning(f"per-method uncertainty failed for "
+                                f"{img_path.name} ({e}); falling back")
+                unc_mm = 0.0
+        elif rho_std > 0 and self.training_mode == 'direct' and self.direct_slope > 0:
             unc_mm = defocus_uncertainty(
                 blur_px, self.direct_slope,
                 self.direct_offset if self.direct_offset else 0.0,
@@ -544,62 +647,249 @@ class RealCropInference:
 
         # Use correct column name: sigma_px for direct mode, coc_px for optical mode
         blur_col = 'sigma_px' if self.training_mode == 'direct' else 'coc_px'
+        # Phase 7: bounds_flag tells the user if the prediction is in the
+        # trustworthy regime, below the focus floor, or saturated. Legacy
+        # checkpoints (no calibration_model) report IN_RANGE for everything.
         results = {
             'filename': img_path.name,
             blur_col: blur_px,
             'defocus_mm': defocus_mm,
             'defocus_uncertainty_mm': unc_mm,
             'focus_status': focus_status,
+            'bounds_flag': locals().get('bounds_flag_value', 'IN_RANGE'),
+            'inversion_method': locals().get('inversion_method_value', 'linear'),
             'diameter_original_px': diameter_original,
             'original_size': original_size
         }
 
-        if save_visualization and output_dir is not None:
-            viz_dir = output_dir / 'visualizations'
-            viz_dir.mkdir(exist_ok=True, parents=True)
-
-            self._create_comparison_viz(
-                original_img,
-                blur_px,
-                defocus_mm,
-                diameter_original,
-                img_path.stem,
-                viz_dir,
-                defocus_uncertainty_mm=unc_mm,
-            )
-
+        # Per-frame visualisation is generated in a second pass by
+        # process_material_folder so it has access to the full-stack
+        # DataFrame for the V-curve panel. This branch is a no-op now.
         return results
 
-    def _create_comparison_viz(
+    def _create_calibration_viz(
         self,
-        original: np.ndarray,
+        crop_path: Path,
         blur_px: float,
         defocus_mm: float,
-        diameter_original: float,
-        name: str,
+        defocus_uncertainty_mm: float,
+        df_full: 'pd.DataFrame',
+        blur_col: str,
         output_dir: Path,
-        defocus_uncertainty_mm: float = 0.0,
     ):
-        """Create visualization showing the original image with blur/defocus annotations."""
+        """Three-panel diagnostic for one calibration frame:
 
-        fig, ax = plt.subplots(1, 1, figsize=(7, 6))
+        1. The crop itself.
+        2. The radial edge intensity profile + an erf curve derived from
+           the model's predicted sigma at native resolution.
+        3. The \u03c3-vs-z V-curve over the whole stack with this frame
+           highlighted, so saturation / off-curve points are obvious.
+        """
+        from scipy.special import erf as _erf
+        from run_paths import parse_true_z_from_filename
 
-        unc_str = f" \u00b1 {defocus_uncertainty_mm:.2f}" if defocus_uncertainty_mm > 0 else ""
+        original = cv2.imread(str(crop_path), cv2.IMREAD_GRAYSCALE)
+        if original is None:
+            return
+        native_size = max(original.shape[:2])
+        true_z = parse_true_z_from_filename(crop_path.name)
+        name = crop_path.stem
+
+        # Predicted sigma was at model resolution \u2192 scale to native pixels
+        sigma_native = blur_px * native_size / max(self.model_size, 1)
+
+        fig, axes = plt.subplots(1, 3, figsize=(16, 5),
+                                  gridspec_kw={'width_ratios': [1, 1.2, 1.2]})
+
+        # \u2500\u2500\u2500 Panel 1: the crop \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        ax = axes[0]
         ax.imshow(original, cmap='gray', vmin=0, vmax=255)
-        ax.set_title(
-            f'{name}\n{self.blur_term}: {blur_px:.2f} px | Defocus: {defocus_mm:.2f}{unc_str} mm',
-            fontsize=12, fontweight='bold')
         ax.axis('off')
-        self._add_diameter_arrow(ax, original / 255.0)
+        ax.set_title(f'{name}', fontsize=11, fontweight='bold')
 
+        # \u2500\u2500\u2500 Panel 2: edge profile + Gaussian-step overlay \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        ax = axes[1]
+        try:
+            r_axis, profile, edge_r = self._radial_edge_profile(original)
+            ax.plot(r_axis, profile, '-', color='black', lw=1.4,
+                    label='Measured radial intensity')
+            # Theoretical step convolved with N(0, \u03c3_native_pred):
+            #   I(r) = I_in + (I_out - I_in) * 0.5 * (1 + erf((r - r_edge)/(\u03c3\u221a2)))
+            i_in, i_out = profile[0], profile[-1]
+            if sigma_native > 0:
+                model_curve = i_in + (i_out - i_in) * 0.5 * (
+                    1.0 + _erf((r_axis - edge_r) / (sigma_native * np.sqrt(2.0)))
+                )
+                ax.plot(r_axis, model_curve, '--', color='#C0544E', lw=1.6,
+                        label=f'Predicted Gaussian (\u03c3={sigma_native:.2f} px @ native)')
+            ax.axvline(edge_r, color='gray', lw=0.8, ls=':', alpha=0.6)
+            ax.set_xlabel('Radius from sphere centre (px)')
+            ax.set_ylabel('Mean intensity (0\u2013255)')
+            ax.set_title('Edge profile vs predicted blur', fontsize=11, fontweight='bold')
+            ax.grid(alpha=0.3)
+            ax.legend(fontsize=8, loc='best')
+        except Exception as e:
+            ax.text(0.5, 0.5, f'edge profile failed:\n{e}',
+                    ha='center', va='center', transform=ax.transAxes, fontsize=9)
+            ax.axis('off')
+
+        # \u2500\u2500\u2500 Panel 3: V-curve with this frame highlighted \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        ax = axes[2]
+        df_v = df_full.copy()
+        df_v['true_z'] = df_v['filename'].apply(parse_true_z_from_filename)
+        df_v_known = df_v[df_v['true_z'].notna()]
+        if len(df_v_known) >= 3:
+            zs = df_v_known['true_z'].astype(float).values
+            ss = df_v_known[blur_col].astype(float).values
+            ax.scatter(zs, ss, s=20, color='#3B6CB5', alpha=0.55,
+                       label='Predicted \u03c3 (all frames)')
+            # Highlight current
+            if true_z is not None:
+                ax.scatter([true_z], [blur_px], s=130, color='#E8833A',
+                           edgecolor='black', lw=1.2, zorder=5,
+                           label='This frame')
+            ax.set_xlabel('True z (mm)')
+            ax.set_ylabel('Predicted \u03c3 (model-px)')
+            ax.set_title('Stack-wide V-curve', fontsize=11, fontweight='bold')
+            ax.grid(alpha=0.3)
+            ax.legend(fontsize=8, loc='best')
+        else:
+            ax.text(0.5, 0.5, 'No true-z available\nin filenames',
+                    ha='center', va='center', transform=ax.transAxes, fontsize=10)
+            ax.axis('off')
+
+        # \u2500\u2500\u2500 Title with full diagnostic line \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+        unc_str = f" \u00b1 {defocus_uncertainty_mm:.2f}" if defocus_uncertainty_mm > 0 else ""
+        truth_str = (f"true |z|={abs(true_z):.2f} mm  |  "
+                     f"err={defocus_mm - abs(true_z):+.2f} mm  |  "
+                     if true_z is not None else "")
         plt.suptitle(
-            f'Diameter: {diameter_original:.1f} px',
-            fontsize=11, fontweight='bold', y=1.02
-        )
+            f"\u03c3_pred = {blur_px:.2f} px  |  "
+            f"pred |z| = {defocus_mm:.2f}{unc_str} mm  |  "
+            f"{truth_str}native_size = {native_size} px",
+            fontsize=11, fontweight='bold', y=1.02)
 
-        plt.tight_layout(rect=[0, 0, 1, 0.95])
-        plt.savefig(output_dir / f'{name}_comparison.png', dpi=150, bbox_inches='tight')
+        plt.tight_layout(rect=[0, 0, 1, 0.96])
+        plt.savefig(output_dir / f'{name}_comparison.png', dpi=130,
+                    bbox_inches='tight')
         plt.close()
+
+    def _write_run_manifest(self, output_base: Path, input_base: Path) -> None:
+        """Save a per-run manifest recording which checkpoint and
+        configuration produced these predictions.
+
+        Writes both ``run_manifest.json`` (machine-parseable) and
+        ``run_manifest.txt`` (human-readable) at the test's top level.
+        """
+        import json
+        from datetime import datetime
+
+        ckpt_path = Path(self.model_path)
+        # Extract checkpoint metadata if accessible
+        ckpt_epoch = None
+        ckpt_val_mae_px = None
+        ckpt_calib_history = None
+        try:
+            meta = torch.load(ckpt_path, map_location='cpu', weights_only=False)
+            ckpt_epoch = meta.get('epoch')
+            ckpt_val_mae_px = meta.get('val_mae_px')
+            ckpt_calib_history = meta.get('calibration_history')
+        except Exception:
+            pass
+
+        train_cfg = (self.config or {}).get('training', {})
+        manifest = {
+            'timestamp': datetime.now().isoformat(timespec='seconds'),
+            'checkpoint': {
+                'path': str(ckpt_path),
+                'name': ckpt_path.name,
+                'epoch': ckpt_epoch,
+                'val_mae_px': ckpt_val_mae_px,
+                'rho_direct': train_cfg.get('rho_direct'),
+                'sigma_0': train_cfg.get('sigma_0'),
+                'scale_calib_px_per_mm': train_cfg.get('scale_calib_px_per_mm'),
+                'calibration_history_n': (len(ckpt_calib_history)
+                                           if ckpt_calib_history else 0),
+            },
+            'inference': {
+                'training_mode': self.training_mode,
+                'model_size': self.model_size,
+                'max_blur': self.max_blur,
+                'inference_camera_scale_px_per_mm':
+                    self.inference_camera_scale_px_per_mm,
+                'device': str(self.device),
+            },
+            'input_dir': str(input_base),
+            'output_dir': str(output_base),
+        }
+
+        with open(output_base / 'run_manifest.json', 'w') as f:
+            json.dump(manifest, f, indent=2, default=str)
+
+        # Human-readable mirror
+        lines = [
+            f"Inference run manifest",
+            f"=" * 60,
+            f"Timestamp:           {manifest['timestamp']}",
+            f"",
+            f"Checkpoint:          {manifest['checkpoint']['name']}",
+            f"  full path:         {manifest['checkpoint']['path']}",
+            f"  epoch:             {ckpt_epoch}",
+            f"  val_mae_px:        {ckpt_val_mae_px}",
+            f"  rho_direct:        {train_cfg.get('rho_direct')}",
+            f"  sigma_0:           {train_cfg.get('sigma_0')}",
+            f"  scale_calib:       {train_cfg.get('scale_calib_px_per_mm')} px/mm",
+            f"  calib edits saved: {manifest['checkpoint']['calibration_history_n']}",
+            f"",
+            f"Inference config:",
+            f"  training mode:     {self.training_mode}",
+            f"  model size:        {self.model_size} px",
+            f"  max blur:          {self.max_blur:.4f} px",
+            f"  inf camera scale:  {self.inference_camera_scale_px_per_mm}",
+            f"  device:            {self.device}",
+            f"",
+            f"Input dir:           {input_base}",
+            f"Output dir:          {output_base}",
+        ]
+        with open(output_base / 'run_manifest.txt', 'w') as f:
+            f.write('\n'.join(lines) + '\n')
+
+        logger.info(f"  → Manifest: {output_base / 'run_manifest.txt'}")
+
+    def _radial_edge_profile(self, img: np.ndarray) -> tuple:
+        """Return (r_axis, mean_intensity_per_radius, edge_radius).
+
+        Detects the sphere via the existing diameter measurer, then
+        averages intensity over concentric rings around the centre.
+        Sampled across the edge transition (\u00b125% of radius around the
+        detected edge) so the plot focuses on the diagnostic region.
+        """
+        diameter, _, (cx, cy) = self.diameter_measurer.measure_diameter(
+            img.astype(np.float32) / 255.0)
+        if diameter <= 0:
+            raise ValueError("sphere not detected")
+        edge_r = diameter / 2.0
+
+        h, w = img.shape[:2]
+        ys, xs = np.indices((h, w))
+        r_map = np.sqrt((xs - cx) ** 2 + (ys - cy) ** 2)
+        # Sample a band \u00b135% of radius around the detected edge
+        r_lo = max(0.0, edge_r * 0.65)
+        r_hi = edge_r * 1.35
+        bin_edges = np.linspace(r_lo, r_hi, 60)
+        bin_centres = 0.5 * (bin_edges[:-1] + bin_edges[1:])
+        flat_img = img.astype(np.float32).flatten()
+        flat_r = r_map.flatten()
+        idx = np.digitize(flat_r, bin_edges) - 1
+        valid = (idx >= 0) & (idx < len(bin_centres))
+        means = np.full(len(bin_centres), np.nan)
+        for k in range(len(bin_centres)):
+            sel = valid & (idx == k)
+            if sel.any():
+                means[k] = flat_img[sel].mean()
+        # Drop empty bins
+        ok = ~np.isnan(means)
+        return bin_centres[ok], means[ok], edge_r
 
     def _add_diameter_arrow(self, ax, img: np.ndarray):
         """Add a horizontal arrow showing diameter measurement.
@@ -673,20 +963,22 @@ class RealCropInference:
         output_dir = output_base / material_name
         output_dir.mkdir(exist_ok=True, parents=True)
 
+        # Pass 1 — predictions only, no visualizations.
+        # We build the full DataFrame first so the per-frame viz (Pass 2)
+        # can render the V-curve panel showing every frame's prediction
+        # and highlight where the current frame sits.
         results = []
 
         for i, crop_path in enumerate(tqdm(crop_files, desc=f"Processing {material_name}")):
-            # Decide whether to save visualization (sample every Nth)
-            save_viz = save_visualizations and (i % viz_sample_rate == 0)
-
             try:
                 result = self.process_single_crop(
                     crop_path,
-                    save_visualization=save_viz,
+                    save_visualization=False,
                     output_dir=output_dir,
                     blur_threshold=blur_threshold
                 )
                 result['material'] = material_name
+                result['_crop_path'] = str(crop_path)
                 results.append(result)
 
             except Exception as e:
@@ -694,6 +986,33 @@ class RealCropInference:
                 continue
 
         df = pd.DataFrame(results)
+
+        # Pass 2 — calibration-diagnostic viz for sampled frames, with
+        # the full-stack context available.
+        if save_visualizations and len(df) > 0:
+            viz_dir = output_dir / 'visualizations'
+            viz_dir.mkdir(exist_ok=True, parents=True)
+            blur_col = 'sigma_px' if self.training_mode == 'direct' else 'coc_px'
+            sampled_idx = list(range(0, len(df), viz_sample_rate))
+            for i in sampled_idx:
+                row = df.iloc[i]
+                crop_path = Path(row['_crop_path'])
+                try:
+                    self._create_calibration_viz(
+                        crop_path=crop_path,
+                        blur_px=float(row[blur_col]),
+                        defocus_mm=float(row['defocus_mm']),
+                        defocus_uncertainty_mm=float(row.get('defocus_uncertainty_mm', 0.0)),
+                        df_full=df,
+                        blur_col=blur_col,
+                        output_dir=viz_dir,
+                    )
+                except Exception as e:
+                    logger.warning(f"Calibration viz failed for {crop_path.name}: {e}")
+
+        # Drop the internal helper column before returning
+        if '_crop_path' in df.columns:
+            df = df.drop(columns=['_crop_path'])
 
         if len(df) > 0:
             csv_path = output_dir / 'blur_results.csv'
@@ -739,6 +1058,14 @@ class RealCropInference:
         logger.info(f"{'='*60}")
         logger.info(f"Input:  {input_base}")
         logger.info(f"Output: {output_base}")
+
+        # Write a manifest so we always know which checkpoint produced
+        # this test's predictions (and on what input). Plain text + JSON
+        # so it's both human-readable and machine-parseable.
+        try:
+            self._write_run_manifest(output_base, input_base)
+        except Exception as e:
+            logger.warning(f"Could not write run manifest: {e}")
 
         # Find all material subdirectories OR process flat folder
         material_dirs = [d for d in input_base.iterdir() if d.is_dir()]
@@ -793,7 +1120,8 @@ class RealCropInference:
             combined_df.to_csv(summary_path, index=False)
             logger.info(f"Saved combined summary to: {summary_path}")
 
-            self._create_summary_plots(combined_df, output_base)
+            self._create_summary_plots(combined_df, output_base,
+                                       input_base=input_base)
 
             # Print overall statistics
             logger.info(f"{'='*60}")
@@ -825,12 +1153,17 @@ class RealCropInference:
         from run_paths import parse_true_z_from_filename
         return parse_true_z_from_filename(filename)
 
-    def _create_summary_plots(self, df: pd.DataFrame, output_dir: Path):
+    def _create_summary_plots(self, df: pd.DataFrame, output_dir: Path,
+                              input_base: Optional[Path] = None):
         """Create summary visualizations.
 
         If true z-positions can be parsed from filenames, produces a 5-panel
         z-stack validation figure (pred vs true, residuals, symmetry, per-range
         MAE, sample strip). Otherwise falls back to basic distribution plots.
+
+        ``input_base`` is the original source directory — passed through so
+        the sample strip can load the actual full-resolution crops, not
+        just the sparse visualizations.
         """
         blur_col = 'sigma_px' if 'sigma_px' in df.columns else 'coc_px'
 
@@ -840,11 +1173,13 @@ class RealCropInference:
         has_ground_truth = df['true_z'].notna().sum() > 0
 
         if has_ground_truth:
-            self._create_zstack_validation_plots(df, blur_col, output_dir)
+            self._create_zstack_validation_plots(df, blur_col, output_dir,
+                                                 input_base=input_base)
         else:
             self._create_basic_summary_plots(df, blur_col, output_dir)
 
-    def _create_zstack_validation_plots(self, df: pd.DataFrame, blur_col: str, output_dir: Path):
+    def _create_zstack_validation_plots(self, df: pd.DataFrame, blur_col: str, output_dir: Path,
+                                          input_base: Optional[Path] = None):
         """Create 5-panel z-stack validation figure when ground truth is available."""
         import numpy as np
         from scipy import stats
@@ -870,8 +1205,8 @@ class RealCropInference:
             logger.info(f"  Excluded {n_excluded} frames outside calibration range "
                         f"(|z| < {z_min} mm or |z| > {z_max} mm), {len(df)} remaining")
 
-        # --- Figure 1: Main 4-panel analysis ---
-        fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+        # --- Figure 1: Main analysis (5 panels in a 2x3 grid; (1,2) hosts bounds_flag) ---
+        fig, axes = plt.subplots(2, 3, figsize=(20, 10))
 
         # Panel 1: Predicted vs True Defocus (the money plot)
         ax = axes[0, 0]
@@ -972,6 +1307,46 @@ class RealCropInference:
         if len(bin_stats) > 0 and bin_stats['mae'].max() > 0:
             ax.set_ylim(top=bin_stats['mae'].max() * 1.25)
 
+        # Panel 5: bounds_flag distribution (uses df_all so we count
+        # everything the model produced, not just the in-trust subset)
+        ax = axes[0, 2]
+        flag_order = ['IN_RANGE', 'BELOW_FLOOR', 'SATURATED']
+        flag_colours = {'IN_RANGE': '#4A9E4A',
+                        'BELOW_FLOOR': '#E8833A',
+                        'SATURATED': '#C0544E'}
+        if 'bounds_flag' in df_all.columns:
+            counts = df_all['bounds_flag'].astype(str).value_counts()
+            present = [f for f in flag_order if f in counts.index]
+            extras = [f for f in counts.index if f not in flag_order]
+            present.extend(extras)
+            values = [int(counts.get(f, 0)) for f in present]
+            colours = [flag_colours.get(f, '#5C5C5C') for f in present]
+            bars = ax.bar(range(len(present)), values, color=colours,
+                          edgecolor='white', linewidth=1.5)
+            ax.set_xticks(range(len(present)))
+            ax.set_xticklabels(present, fontsize=10, rotation=0)
+            ax.set_ylabel('Frame count', fontsize=11)
+            total = sum(values)
+            for bar, v in zip(bars, values):
+                pct = (100.0 * v / total) if total > 0 else 0.0
+                ax.text(bar.get_x() + bar.get_width() / 2,
+                        bar.get_height() + max(values) * 0.02,
+                        f'{v}\n({pct:.1f}%)', ha='center', va='bottom',
+                        fontsize=10, fontweight='bold')
+            ax.set_ylim(top=max(values) * 1.25 if values else 1)
+            ax.set_title(f'Bounds Flag Distribution (n={total})',
+                         fontsize=12, fontweight='bold')
+            ax.grid(True, alpha=0.3, axis='y')
+        else:
+            ax.text(0.5, 0.5, 'bounds_flag not in CSV\n(legacy checkpoint)',
+                    ha='center', va='center', transform=ax.transAxes,
+                    fontsize=11)
+            ax.set_title('Bounds Flag Distribution', fontsize=12, fontweight='bold')
+            ax.axis('off')
+
+        # Hide the unused (1,2) cell
+        axes[1, 2].axis('off')
+
         plt.tight_layout()
         plot_path = output_dir / 'summary_analysis.png'
         plt.savefig(plot_path, dpi=200, bbox_inches='tight')
@@ -979,13 +1354,23 @@ class RealCropInference:
         logger.info(f"Saved z-stack validation plots to: {plot_path}")
 
         # --- Figure 2: Sample crop strip (use full df including excluded frames) ---
-        self._create_sample_strip(df_all, output_dir)
+        self._create_sample_strip(df_all, output_dir, input_base=input_base)
 
         # --- Print validation summary to console and file ---
         self._print_validation_summary(df, slope, intercept, r_value, output_dir)
 
-    def _create_sample_strip(self, df: pd.DataFrame, output_dir: Path):
-        """Create a strip of sample crops at evenly-spaced z-positions."""
+    def _create_sample_strip(self, df: pd.DataFrame, output_dir: Path,
+                              input_base: Optional[Path] = None):
+        """Create a strip of sample crops at evenly-spaced z-positions.
+
+        Loads each crop directly from the ``_crop_path`` column written by
+        ``process_material_folder`` — that's the actual file the inference
+        engine processed, so the strip always renders the right image
+        (no string-matching, no ``<name>_comparison.png`` collisions).
+
+        ``input_base`` is retained for backward compat with callers that
+        don't write ``_crop_path``; it's tried as a last resort.
+        """
         import numpy as np
 
         # Pick ~8 evenly-spaced z-positions across the full range
@@ -994,7 +1379,6 @@ class RealCropInference:
         indices = np.linspace(0, len(z_values) - 1, n_samples, dtype=int)
         selected_z = z_values[indices]
 
-        # Find the parent directory of crops (look for the image files)
         sample_rows = []
         for z in selected_z:
             row = df[df['true_z'] == z].iloc[0]
@@ -1007,20 +1391,27 @@ class RealCropInference:
         if len(sample_rows) == 1:
             axes = [axes]
 
-        for ax, row in zip(axes, sample_rows):
-            # Try to load the image from the material folder
-            # Reconstruct path: output_dir / material / visualizations or search for file
-            img = None
-            for search_dir in output_dir.rglob('*.png'):
-                if row['filename'].replace('.png', '') in search_dir.name:
-                    img = cv2.imread(str(search_dir), cv2.IMREAD_GRAYSCALE)
-                    break
+        # Backup search roots for legacy rows without _crop_path
+        legacy_roots: list[Path] = []
+        if input_base is not None and Path(input_base).is_dir():
+            legacy_roots.append(Path(input_base))
+        legacy_roots.append(output_dir)
 
+        for ax, row in zip(axes, sample_rows):
+            img = None
+            # Primary: use the exact crop the model saw
+            crop_path = row.get('_crop_path') if hasattr(row, 'get') else None
+            if crop_path and Path(crop_path).is_file():
+                img = cv2.imread(str(crop_path), cv2.IMREAD_GRAYSCALE)
+
+            # Fallback for legacy callers without _crop_path
             if img is None:
-                # Try loading from the original input path
-                for parent in output_dir.parent.rglob(row['filename']):
-                    img = cv2.imread(str(parent), cv2.IMREAD_GRAYSCALE)
-                    break
+                fname = row['filename']
+                for root in legacy_roots:
+                    cand = Path(root) / fname
+                    if cand.is_file():
+                        img = cv2.imread(str(cand), cv2.IMREAD_GRAYSCALE)
+                        break
 
             if img is not None:
                 ax.imshow(img, cmap='gray', vmin=0, vmax=255)
@@ -1031,11 +1422,16 @@ class RealCropInference:
             ax.set_title(f'z = {row["true_z"]:+.1f} mm', fontsize=10, fontweight='bold')
             pred = row['defocus_mm']
             true = abs(row['true_z'])
-            ax.set_xlabel(f'Pred: {pred:.2f} mm\nTrue: {true:.1f} mm', fontsize=9)
+            flag = row.get('bounds_flag', 'IN_RANGE') if hasattr(row, 'get') else 'IN_RANGE'
+            flag_short = {'IN_RANGE': '', 'BELOW_FLOOR': ' (BELOW_FLOOR)',
+                            'SATURATED': ' (SATURATED)'}.get(str(flag), f' ({flag})')
+            ax.set_xlabel(f'Pred: {pred:.2f} mm{flag_short}\nTrue: {true:.1f} mm',
+                          fontsize=9)
             ax.set_xticks([])
             ax.set_yticks([])
 
-        plt.suptitle('Sample Crops Across Z-Stack', fontsize=13, fontweight='bold')
+        plt.suptitle('Sample Crops Across Z-Stack (actual model inputs)',
+                     fontsize=13, fontweight='bold')
         plt.tight_layout(rect=[0, 0, 1, 0.93])
         strip_path = output_dir / 'sample_strip.png'
         plt.savefig(strip_path, dpi=200, bbox_inches='tight')

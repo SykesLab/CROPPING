@@ -86,6 +86,20 @@ class CalibrationEditorDialog(tk.Toplevel):
                   foreground='gray', font=('TkDefaultFont', 8)).pack(
             anchor='w', padx=12)
 
+        # Phase 8: read-only label showing the calibration method baked
+        # into this checkpoint (linear / quadrature / hybrid). Set on
+        # checkpoint load. The fit-correction panel is disabled for
+        # hybrid (residual LUT carries corrections; linear remap doesn't
+        # apply meaningfully).
+        self.method_var = tk.StringVar(value="(no checkpoint loaded)")
+        method_row = ttk.Frame(self)
+        method_row.pack(fill='x', padx=12, pady=(0, 4))
+        ttk.Label(method_row, text="Inversion method:",
+                  font=('TkDefaultFont', 8, 'bold')).pack(side='left')
+        ttk.Label(method_row, textvariable=self.method_var,
+                  font=('TkDefaultFont', 8), foreground='#3060a0').pack(
+            side='left', padx=(4, 0))
+
         vals_frame = ttk.LabelFrame(self, text="Calibration constants", padding=8)
         vals_frame.pack(fill='x', **pad)
         r1 = ttk.Frame(vals_frame)
@@ -115,8 +129,13 @@ class CalibrationEditorDialog(tk.Toplevel):
             side='left', padx=(0, 8))
         ttk.Label(r3, text="offset b:", width=10).pack(side='left')
         ttk.Entry(r3, textvariable=self.b_var, width=10).pack(side='left')
-        ttk.Button(fit_frame, text="Apply fit → ρ, σ₀",
-                   command=self._apply_fit).pack(anchor='w', pady=(4, 0))
+        # Phase 8: hold a reference so we can disable for hybrid method
+        self._apply_fit_btn = ttk.Button(
+            fit_frame, text="Apply fit → ρ, σ₀",
+            command=self._apply_fit)
+        self._apply_fit_btn.pack(anchor='w', pady=(4, 0))
+        self._fit_frame = fit_frame  # ref for tooltip / re-labelling
+        # Initially enabled — _load_checkpoint_from_var sets state per method
 
         hist_frame = ttk.LabelFrame(self, text="History", padding=8)
         hist_frame.pack(fill='both', expand=True, **pad)
@@ -202,6 +221,33 @@ class CalibrationEditorDialog(tk.Toplevel):
         self._sigma_0_loaded = sigma_0
         self._mode = (ckpt.get('config', {}).get('training', {})
                       .get('training_mode', 'unknown'))
+
+        # Phase 8: read inversion method from checkpoint config and update
+        # UI. linear/quadrature → leave linear-correction panel enabled.
+        # hybrid → disable it (residual LUT carries the corrections;
+        # naive linear remap on top is incorrect / ambiguous).
+        training_cfg = ckpt.get('config', {}).get('training', {})
+        inv_method = training_cfg.get('inversion_method', 'linear')
+        cm_dict = training_cfg.get('calibration_model')
+        if not isinstance(cm_dict, dict) or not cm_dict:
+            inv_method = 'linear'  # legacy ckpt → treat as linear
+        self.method_var.set(inv_method)
+        self._inversion_method = inv_method
+        if inv_method == 'hybrid':
+            self._apply_fit_btn.configure(state='disabled')
+            try:
+                self._fit_frame.configure(
+                    text="Auto-fill from linear fit  (disabled for hybrid — "
+                         "edit residual LUT instead)")
+            except Exception:
+                pass
+        else:
+            self._apply_fit_btn.configure(state='normal')
+            try:
+                self._fit_frame.configure(
+                    text="Auto-fill from linear fit  (ẑ_corr = a·ẑ + b)")
+            except Exception:
+                pass
         self._history = read_history(ckpt)
         if not self._history:
             self._history.append(CalibrationSnapshot(

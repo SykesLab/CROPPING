@@ -43,6 +43,15 @@ except ImportError:
     from model import DefocusNet                                      # noqa: E402
     from physics import ScalingParams, invert_prediction, defocus_uncertainty  # noqa: E402
 
+# flatten_sphere_crop lives in Calibration/sphere_processing.py
+try:
+    from Calibration.sphere_processing import flatten_sphere_crop
+except ImportError:
+    _calib_dir = _REPO_ROOT / "Calibration"
+    if str(_calib_dir) not in sys.path:
+        sys.path.insert(0, str(_calib_dir))
+    from sphere_processing import flatten_sphere_crop  # type: ignore  # noqa: E402
+
 
 # ── Default calibration constants ──────────────────────────────────────────
 DEFAULT_RHO = 1.548              # px/mm  (calibration slope)
@@ -52,6 +61,8 @@ DEFAULT_S_C = 102.57             # px/mm  (inference camera scale — same camer
 DEFAULT_FEATHER_PX = 40          # Gaussian feather width in pixels
 DEFAULT_CROP_SIZE = 299          # Training crop size
 MODEL_INPUT_SIZE = 256           # Network input resolution
+DEFAULT_FLATTEN_MODE = "calibration"  # "calibration" (cfg1) or "boundary_normalise" (cfg4)
+DEFAULT_INNER_MARGIN_PX = 20     # cfg1 inner margin — preserves blur up to this distance from edge
 
 
 # ── Boundary Normalisation ─────────────────────────────────────────────────
@@ -194,6 +205,11 @@ class InferenceEngine:
         training_cfg = self.config.get("training", {})
         self.scale_calib = training_cfg.get("scale_calib_px_per_mm")
 
+        # Phase 7: build the unified CalibrationModel from checkpoint config
+        # if present. Falls back to building a linear model from
+        # rho_direct/sigma_0 (legacy checkpoints).
+        self.calibration_model = self._build_calibration_model_from_config()
+
         user_crop = int(self.settings.get("crop_size", DEFAULT_CROP_SIZE))
         mismatch_msg = ""
         if user_crop != self.model_size:
@@ -280,9 +296,36 @@ class InferenceEngine:
         Returns (normalised_image_for_display, model_tensor).
         normalised_image_for_display is float32 in [0, 1].
         model_tensor is (1, 1, 256, 256) float32 in [-1, 1].
+
+        The flatten recipe is selected by ``settings['flatten_mode']``:
+          - ``"calibration"`` (default): flatten_sphere_crop with
+            inner_margin=20, flatten_exterior=False — matches what tertiary
+            training samples were processed with. Empirically gives
+            6-21x lower MAE than ``"boundary_normalise"`` on calibration
+            spheres in the trustworthy regime.
+          - ``"boundary_normalise"``: legacy Otsu + cosine feather.
         """
         feather_px = int(self.settings.get("feather_px", DEFAULT_FEATHER_PX))
-        norm_img = boundary_normalise(crop, feather_px=feather_px)
+        flatten_mode = str(self.settings.get("flatten_mode",
+                                              DEFAULT_FLATTEN_MODE))
+        if flatten_mode == "calibration":
+            inner_margin = int(self.settings.get("inner_margin_px",
+                                                  DEFAULT_INNER_MARGIN_PX))
+            if crop.dtype == np.uint8:
+                img_f = crop.astype(np.float32) / 255.0
+            else:
+                img_f = crop.astype(np.float32)
+                if img_f.max() > 1.5:
+                    img_f = img_f / 255.0
+            flat, info = flatten_sphere_crop(img_f, inner_margin=inner_margin,
+                                              flatten_exterior=False)
+            if info is None:
+                # sphere detection failed — fall back to legacy recipe
+                norm_img = boundary_normalise(crop, feather_px=feather_px)
+            else:
+                norm_img = flat
+        else:
+            norm_img = boundary_normalise(crop, feather_px=feather_px)
 
         h, w = norm_img.shape[:2]
         if h > self.model_size or w > self.model_size:
@@ -298,6 +341,59 @@ class InferenceEngine:
             tensor_input = tensor_input.to(self.device)
 
         return norm_img, tensor_input
+
+    def _build_calibration_model_from_config(self):
+        """Phase 7: build a CalibrationModel from the checkpoint config.
+
+        Three sources, in order of preference:
+        1. ``training.calibration_model`` block (Phase 6 emit) — most info,
+           includes method, all bounds, and sigma_max_model_observed.
+        2. Legacy ``training.rho_direct`` / ``sigma_0`` — builds a linear
+           model with no trust bounds (back-compat).
+        3. Returns None if neither available (caller falls back to
+           ScalingParams flow with no bounds_flag).
+        """
+        try:
+            sys_path = sys.path
+            from physics import CalibrationModel
+        except Exception:
+            try:
+                from CROPPING.physics import CalibrationModel  # type: ignore
+            except Exception:
+                return None
+        training_cfg = self.config.get("training", {}) if self.config else {}
+
+        cm_dict = training_cfg.get("calibration_model")
+        if isinstance(cm_dict, dict) and cm_dict:
+            try:
+                model = CalibrationModel.from_dict(cm_dict)
+                method_label = training_cfg.get("inversion_method", model.method)
+                print(f"  Loaded CalibrationModel from checkpoint "
+                      f"(method={method_label}, sha256={model.sha256()[:12]}...)")
+                return model
+            except Exception as e:
+                print(f"  WARNING: could not deserialise calibration_model "
+                      f"from checkpoint ({e}); falling back to linear")
+
+        rho = training_cfg.get("rho_direct")
+        sigma_0 = training_cfg.get("sigma_0")
+        if rho is None or sigma_0 is None:
+            print("  Checkpoint has no inversion_method or rho_direct; "
+                  "calibration model unavailable.")
+            return None
+        s_calib = training_cfg.get("scale_calib_px_per_mm")
+        try:
+            model = CalibrationModel.from_legacy_scaling(
+                rho=float(rho), sigma_0=float(sigma_0),
+                s_calib_px_per_mm=(float(s_calib) if s_calib is not None else None),
+            )
+            print(f"  Built fallback linear CalibrationModel from "
+                  f"rho_direct={rho}, sigma_0={sigma_0} (no inversion_method "
+                  f"in checkpoint — defaulting to linear)")
+            return model
+        except Exception as e:
+            print(f"  Could not build CalibrationModel: {e}")
+            return None
 
     # ── Model forward pass + inversion chain ───────────────────────────
 
@@ -342,11 +438,55 @@ class InferenceEngine:
         rho_std = float(self.settings.get("rho_std", 0.0))
         sigma_0_std = float(self.settings.get("sigma_0_std", 0.0))
         unc_mm = 0.0
-        if rho_std > 0 and params.rho_eff > 0:
+        # Phase 10: prefer method-aware uncertainty from CalibrationModel
+        # when its loo_cv field is populated. Falls back to legacy linear
+        # propagation if not present (back-compat).
+        cm_unc = getattr(self, 'calibration_model', None)
+        if cm_unc is not None and getattr(cm_unc, 'loo_cv', None):
+            try:
+                unc_mm = cm_unc.defocus_uncertainty_at(
+                    sigma_model_px=result.sigma_model,
+                    s_inf_px_per_mm=s_c,
+                    model_size=self.model_size,
+                    native_size=native_crop_size,
+                )
+            except Exception as e:
+                print(f"  WARNING: per-method uncertainty failed ({e}); "
+                      f"falling back to legacy linear")
+                unc_mm = 0.0
+        elif rho_std > 0 and params.rho_eff > 0:
             unc_mm = defocus_uncertainty(
                 result.sigma_native, params.rho_eff, params.sigma_0_eff,
                 rho_std * params.scale_ratio, sigma_0_std * params.scale_ratio,
             )
+
+        # Phase 7: get bounds_flag + method-aware defocus from CalibrationModel
+        # when present in the checkpoint. SATURATED rows write nan to
+        # defocus_mm; BELOW_FLOOR rows write 0.0. Legacy checkpoints
+        # without a calibration_model leave bounds_flag = "IN_RANGE".
+        bounds_flag = "IN_RANGE"
+        inversion_method = "linear"
+        cm = getattr(self, 'calibration_model', None)
+        if cm is not None:
+            try:
+                z_cm, flag_cm = cm.inverse_at(
+                    sigma_model_px=result.sigma_model,
+                    s_inf_px_per_mm=s_c,
+                    model_size=self.model_size,
+                    native_size=native_crop_size,
+                )
+                bounds_flag = str(flag_cm.value)
+                inversion_method = cm.method
+                # Override defocus_mm with method-aware result. SATURATED
+                # → nan (no honest answer); BELOW_FLOOR → 0.0.
+                import math as _math
+                if not _math.isnan(z_cm):
+                    result.defocus_mm = z_cm
+                else:
+                    result.defocus_mm = float('nan')
+            except Exception as e:
+                print(f"  WARNING: CalibrationModel.inverse_at failed ({e}); "
+                      f"using legacy linear result")
 
         return {
             "pred_norm": result.pred_norm,
@@ -356,6 +496,8 @@ class InferenceEngine:
             "defocus_uncertainty_mm": unc_mm,
             "saturated": result.saturated,
             "clamped": result.clamped,
+            "bounds_flag": bounds_flag,
+            "inversion_method": inversion_method,
             "training_mode": self.training_mode,
             "model_path": str(self.settings.get("model_path", "")),
             "rho": rho,
@@ -364,6 +506,10 @@ class InferenceEngine:
             "s_c": s_c,
             "feather_px": feather_px,
             "crop_size": crop_size,
+            "flatten_mode": str(self.settings.get("flatten_mode",
+                                                    DEFAULT_FLATTEN_MODE)),
+            "inner_margin_px": int(self.settings.get("inner_margin_px",
+                                                       DEFAULT_INNER_MARGIN_PX)),
         }
 
     # ── Full pipeline convenience method ───────────────────────────────

@@ -120,11 +120,43 @@ def read_calibration(checkpoint: dict) -> Tuple[float, float]:
 
 
 def write_calibration(checkpoint: dict, rho: float, sigma_0: float) -> None:
-    """Set training.rho_direct/sigma_0 in-place on the loaded checkpoint dict."""
+    """Set training.rho_direct/sigma_0 in-place on the loaded checkpoint dict.
+
+    Phase 11: also updates the embedded ``calibration_model`` block when
+    present so that new (Phase-7+) inference picks up the corrected
+    parameters. Otherwise inference would silently use the stale
+    pre-correction values from the calibration_model block while legacy
+    inference uses the new rho_direct/sigma_0 — same checkpoint, two
+    different answers.
+
+    This function ASSUMES linear method (verified upstream by
+    ``save_corrected_checkpoint`` which refuses non-linear edits).
+    """
     cfg = checkpoint.setdefault('config', {})
     train_cfg = cfg.setdefault('training', {})
     train_cfg['rho_direct'] = float(rho)
     train_cfg['sigma_0'] = float(sigma_0)
+
+    # Sync the unified calibration_model block (Phase-6+ inference reads this)
+    cm_dict = train_cfg.get('calibration_model')
+    if isinstance(cm_dict, dict) and cm_dict:
+        cm_dict['rho_px_per_mm'] = float(rho)
+        cm_dict['sigma_0_calib_px'] = float(sigma_0)
+        # method should already be 'linear' (refused otherwise upstream)
+        # bump method just in case
+        cm_dict['method'] = 'linear'
+        # Update sha256 chain marker so downstream knows this changed
+        try:
+            import sys as _sys
+            from pathlib import Path as _P
+            _root = _P(__file__).resolve().parent.parent
+            if str(_root) not in _sys.path:
+                _sys.path.insert(0, str(_root))
+            from physics import CalibrationModel
+            cm_obj = CalibrationModel.from_dict(cm_dict)
+            train_cfg['calibration_source_sha256'] = cm_obj.sha256()
+        except Exception:
+            pass
 
 
 def read_history(checkpoint: dict) -> List[CalibrationSnapshot]:
@@ -152,6 +184,15 @@ def save_corrected_checkpoint(
     pre-edit values marked ``source='training'`` so the lineage always
     traces back to the trained snapshot.
 
+    **Linear-only**: this editor saves a (ρ, σ₀) pair which is the
+    parameterisation of the linear method. For quadrature/hybrid
+    checkpoints, applying a linear correction to the embedded
+    `calibration_model` block would be conceptually muddled — the
+    correction acts on (ρ, σ_floor) for those methods, not (ρ, σ₀).
+    For now, refuse the operation when method != linear; users with
+    hybrid models should re-fit the calibration with the corrected
+    data instead of editing in place.
+
     Returns the new snapshot that was appended.
     """
     source_checkpoint_path = Path(source_checkpoint_path)
@@ -161,6 +202,23 @@ def save_corrected_checkpoint(
             "source and output paths are the same — refusing to overwrite the source")
 
     ckpt = load_checkpoint(source_checkpoint_path)
+    # Phase 10: refuse to apply linear-only correction to non-linear
+    # calibration models (would silently corrupt the calibration_model
+    # block which uses sigma_floor instead of sigma_0).
+    train_cfg = ckpt.get('config', {}).get('training', {})
+    inv_method = train_cfg.get('inversion_method')
+    cm_dict = train_cfg.get('calibration_model')
+    if inv_method and inv_method != 'linear':
+        raise CalibrationError(
+            f"Cannot apply linear (rho, sigma_0) correction to a "
+            f"checkpoint with inversion_method='{inv_method}'. "
+            f"For quadrature/hybrid models, re-run calibration with "
+            f"the corrected data instead of editing in place.")
+    if isinstance(cm_dict, dict) and cm_dict.get('method', 'linear') != 'linear':
+        raise CalibrationError(
+            f"Cannot apply linear correction: checkpoint's calibration_model "
+            f"block has method='{cm_dict.get('method')}'. "
+            f"This editor is linear-only.")
     rho_old, sigma_0_old = read_calibration(ckpt)
 
     history = read_history(ckpt)

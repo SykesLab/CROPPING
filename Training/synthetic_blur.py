@@ -168,12 +168,18 @@ class BlurCalculator:
     and blur kernel size. Supports both optical (CoC) and direct (sigma) modes.
     """
 
-    def __init__(self, params: BlurParams):
+    def __init__(self, params: BlurParams, calibration_model=None):
         """
         Args:
             params: Optical system parameters
+            calibration_model: Optional ``physics.CalibrationModel``. When
+                provided, ``defocus_to_sigma`` (direct mode) delegates to
+                its ``forward`` method — supports linear / quadrature /
+                hybrid. When None, the legacy linear formula via
+                ``params.rho_direct`` / ``params.sigma_0`` is used.
         """
         self.params = params
+        self.calibration_model = calibration_model
 
         # Pre-compute constants
         self.F = params.focal_length_mm
@@ -253,10 +259,16 @@ class BlurCalculator:
             coc_px = self.defocus_to_coc_px(defocus_mm)
             return self.coc_to_sigma(coc_px)
         elif mode == "direct":
-            # Full calibration model: σ(z) = ρ × |z| + σ₀
-            # σ₀ is the system baseline blur at perfect focus.
-            # native_blur_sigma (per-crop measured blur) is handled separately
-            # by the quadrature subtraction in generate_sample() — no double-counting.
+            # Direct mode: σ(z) at calibration native pixel scale.
+            #
+            # If a CalibrationModel was provided (Phase 5), delegate so the
+            # selected method (linear/quadrature/hybrid) is honoured.
+            # Otherwise fall back to the legacy linear formula via
+            # rho_direct / sigma_0 — byte-identical to pre-Phase-5
+            # behaviour for old callers.
+            cm = getattr(self, 'calibration_model', None)
+            if cm is not None:
+                return float(cm.forward(abs(defocus_mm)))
             sigma_0 = self.params.sigma_0 if self.params.sigma_0 is not None else 0.0
             return self.params.rho_direct * abs(defocus_mm) + sigma_0
         else:
@@ -855,7 +867,8 @@ class SyntheticBlurGenerator:
         blur_distribution: str = "uniform",
         beta_alpha: float = 2.0,
         beta_beta: float = 5.0,
-        min_blur_px: Optional[float] = None
+        min_blur_px: Optional[float] = None,
+        calibration_model=None,  # type: Optional[Any]
     ):
         """
         Args:
@@ -872,10 +885,19 @@ class SyntheticBlurGenerator:
             blur_distribution: "uniform" or "weighted" - how to sample blur values
             beta_alpha: Beta distribution alpha parameter (for weighted sampling)
             beta_beta: Beta distribution beta parameter (for weighted sampling)
-            min_blur_px: Optional minimum blur threshold at NATIVE scale
+            min_blur_px: Optional minimum blur threshold at calibration native scale
+            calibration_model: Optional ``physics.CalibrationModel`` instance.
+                When provided, ``defocus_to_sigma`` and ``_save_tertiary_sample``
+                delegate to this model for σ↔z math (supports linear /
+                quadrature / hybrid methods). When None, the legacy
+                linear formula via ``optical_params.rho_direct`` /
+                ``optical_params.sigma_0`` is used (bit-identical to
+                pre-Phase-5 behaviour). New datasets should pass this in
+                so the chosen calibration method propagates downstream.
         """
         self.params = optical_params
-        self.blur_calc = BlurCalculator(optical_params)
+        self.blur_calc = BlurCalculator(optical_params,
+                                          calibration_model=calibration_model)
         self.image_size = image_size
         self.crop_size = crop_size if crop_size is not None else image_size
         self.radius_factor = radius_factor
@@ -883,6 +905,9 @@ class SyntheticBlurGenerator:
         self.beta_alpha = beta_alpha
         self.beta_beta = beta_beta
         self.min_blur_px = min_blur_px
+        # Phase 5: optional CalibrationModel for unified σ↔z math.
+        # When None, legacy linear formula is used (back-compat).
+        self.calibration_model = calibration_model
         self.sphere_stats: Optional[SphereAppearanceStats] = None  # Set by generate_dataset
         # When set (by generate_dataset), synthesis (sphere rendering + blur)
         # happens at this resolution before a final resize to image_size.
@@ -1049,6 +1074,19 @@ class SyntheticBlurGenerator:
             sigma_0 = self.params.sigma_0 if self.params.sigma_0 is not None else 0.0
             scale_calib = self.params.scale_calib_px_per_mm
 
+            # Phase 5: prefer the CalibrationModel for σ↔z math when available.
+            # Falls back to legacy linear formula if model not set (back-compat).
+            cm = getattr(self, 'calibration_model', None)
+
+            def _sigma_calib_to_abs_z(sigma_calib_local: float) -> float:
+                """σ_calib → |z|_mm.  Method-aware when CalibrationModel set."""
+                if cm is not None:
+                    z, _flag = cm.inverse(sigma_calib_local)
+                    return float(z) if z == z else 0.0  # nan-safe
+                if rho and rho > 0:
+                    return max((sigma_calib_local - sigma_0) / rho, 0.0)
+                return 0.0
+
             # Determine cross-camera correction factor for this crop
             cc_factor = 1.0
             if scale_px_per_mm is not None and scale_calib is not None and scale_calib > 0:
@@ -1065,18 +1103,23 @@ class SyntheticBlurGenerator:
 
                 # Back-compute calibration-space sigma and physical defocus
                 sigma_calib = sigma_model / (cc_factor * self.native_to_model_scale)
-                abs_defocus = (sigma_calib - sigma_0) / rho if rho and rho > 0 else 0.0
-                abs_defocus = max(abs_defocus, 0.0)
+                abs_defocus = _sigma_calib_to_abs_z(sigma_calib)
             else:
                 # Fallback: sample in calibration space (no scale_map available)
                 max_defocus_mag = max(abs(self.defocus_range[0]), abs(self.defocus_range[1]))
-                max_sigma_calib = (rho * max_defocus_mag + sigma_0) if rho else 0.0
-                min_sigma_calib = sigma_0
+                # Forward bound: use calibration model when present (correct
+                # for quadrature/hybrid where σ = √((ρz)² + floor²) ≠ ρz + σ_0).
+                if cm is not None:
+                    max_sigma_calib = float(cm.forward(max_defocus_mag))
+                    min_sigma_calib = float(cm.forward(0.0))
+                else:
+                    max_sigma_calib = (rho * max_defocus_mag + sigma_0) if rho else 0.0
+                    min_sigma_calib = sigma_0
                 if self.min_blur_px is not None and self.min_blur_px > min_sigma_calib:
                     min_sigma_calib = self.min_blur_px
 
                 sigma_defocus = self._sample_in_range(min_sigma_calib, max_sigma_calib)
-                abs_defocus = (sigma_defocus - sigma_0) / rho if rho and rho > 0 else 0.0
+                abs_defocus = _sigma_calib_to_abs_z(sigma_defocus)
                 sigma_defocus *= cc_factor
                 sigma_model = sigma_defocus * self.native_to_model_scale
 
@@ -1170,6 +1213,8 @@ class SyntheticBlurGenerator:
         secondary_source_dir: Optional[Union[str, Path]] = None,
         secondary_source_size: Optional[int] = None,
         secondary_fraction: float = 0.0,
+        tertiary_source_dir: Optional[Union[str, Path]] = None,
+        tertiary_fraction: float = 0.0,
     ) -> dict:
         """
         Generate full training dataset.
@@ -1299,6 +1344,64 @@ class SyntheticBlurGenerator:
                 log(f"WARNING: secondary_source_dir {sec_dir} not found — "
                     f"secondary mixing disabled")
                 sec_frac = 0.0
+
+        # Load TERTIARY pool — REAL calibration PNGs with ERF-measured sigma
+        # labels (no Gaussian blur applied; the image IS the blur, the
+        # label measures it). Used for direct supervised learning on real
+        # calibration data.
+        # tertiary_pool: list of (PIL-readable Path, source_size, ERF_sigma_at_source_px)
+        tertiary_pool: list[tuple[Path, int, float]] = []
+        ter_frac = max(0.0, min(1.0, float(tertiary_fraction or 0.0)))
+        if ter_frac > 0 and tertiary_source_dir is not None:
+            import pandas as pd  # local import — module-level may not be loaded
+            ter_dir = Path(tertiary_source_dir)
+            # Find measurements.csv (in dir or its parent — bundle convention)
+            csv_candidates = [
+                ter_dir / "measurements.csv",
+                ter_dir.parent / "measurements.csv",
+            ]
+            csv_path = next((c for c in csv_candidates if c.is_file()), None)
+            if not ter_dir.is_dir():
+                log(f"WARNING: tertiary_source_dir {ter_dir} not found — "
+                    f"tertiary mixing disabled")
+                ter_frac = 0.0
+            elif csv_path is None:
+                log(f"WARNING: no measurements.csv near {ter_dir} — "
+                    f"tertiary mixing disabled (need ERF labels)")
+                ter_frac = 0.0
+            else:
+                try:
+                    csv_df = pd.read_csv(csv_path)
+                    if "filename" not in csv_df.columns or "sigma_px" not in csv_df.columns:
+                        raise ValueError("measurements.csv missing filename/sigma_px columns")
+                    # Determine source size by reading one frame
+                    first_png = next(ter_dir.glob("*.png"), None)
+                    if first_png is None:
+                        raise FileNotFoundError(f"No PNGs in {ter_dir}")
+                    _probe = cv2.imread(str(first_png), cv2.IMREAD_GRAYSCALE)
+                    ter_source_size = max(_probe.shape[:2])
+                    # Build pool
+                    for _, r in csv_df.iterrows():
+                        fn = str(r["filename"])
+                        sigma = r["sigma_px"]
+                        if pd.isna(sigma):
+                            continue
+                        png_path = ter_dir / fn
+                        if not png_path.is_file():
+                            continue
+                        tertiary_pool.append((png_path, ter_source_size, float(sigma)))
+                    if not tertiary_pool:
+                        log(f"WARNING: tertiary pool is empty (no matching PNG/CSV "
+                            f"rows in {ter_dir}) — tertiary mixing disabled")
+                        ter_frac = 0.0
+                    else:
+                        log(f"Tertiary source: {len(tertiary_pool)} real calibration "
+                            f"PNGs from {ter_dir} (source_size={ter_source_size}px, "
+                            f"sigma range {min(s for _,_,s in tertiary_pool):.2f}-"
+                            f"{max(s for _,_,s in tertiary_pool):.2f} source-px)")
+                except Exception as e:
+                    log(f"WARNING: could not load tertiary pool from {ter_dir}: {e}")
+                    ter_frac = 0.0
         # Cache the primary stats reference for swap-back after secondary samples
         primary_sphere_stats = None  # set after self.sphere_stats is populated
 
@@ -1437,18 +1540,48 @@ class SyntheticBlurGenerator:
                     # reachable in model space across all training crops.
                     min_training_scale = min(training_scales)
                     min_scale_ratio = min_training_scale / scale_calib
-                    min_sigma_calib = sigma_0
+                    # Phase 11: use the calibration's actual minimum σ via the
+                    # CalibrationModel (forward(0)). For linear this equals
+                    # σ_0; for quadrature/hybrid this equals σ_floor — the
+                    # diffraction-limited focal-plane blur, which is the real
+                    # physical floor.
+                    cm_for_min = getattr(self.blur_calc, 'calibration_model', None)
+                    if cm_for_min is not None:
+                        min_sigma_calib = float(cm_for_min.forward(0.0))
+                    else:
+                        min_sigma_calib = sigma_0
                     if self.min_blur_px is not None and self.min_blur_px > min_sigma_calib:
                         min_sigma_calib = self.min_blur_px
                     self.min_sigma_model = (min_sigma_calib
                                             * min_scale_ratio
                                             * self.native_to_model_scale)
 
-                    # Log the full derivation so it's auditable
-                    log(f"\nmax_sigma computation (direct mode):")
+                    # Log the full derivation so it's auditable. Method-aware
+                    # formula display so quadrature/hybrid users see what
+                    # actually got computed (not the linear formula).
+                    cm_for_log = getattr(self.blur_calc, 'calibration_model', None)
+                    if cm_for_log is None or cm_for_log.method == 'linear':
+                        method_formula = (
+                            f"    σ_calib = ρ × |z_max| + σ₀\n"
+                            f"           = {rho:.4f} × {max_defocus:.1f} + {sigma_0:.4f}")
+                    elif cm_for_log.method == 'quadrature':
+                        sigma_floor_log = float(cm_for_log.sigma_floor_calib_px or 0.0)
+                        method_formula = (
+                            f"    σ_calib = sqrt((ρ × |z_max|)² + σ_floor²)\n"
+                            f"           = sqrt(({rho:.4f} × {max_defocus:.1f})² "
+                            f"+ {sigma_floor_log:.4f}²)")
+                    else:  # hybrid
+                        sigma_floor_log = float(cm_for_log.sigma_floor_calib_px or 0.0)
+                        lut_n = (len(cm_for_log.residual_lut_mm_px)
+                                  if cm_for_log.residual_lut_mm_px else 0)
+                        method_formula = (
+                            f"    σ_calib = sqrt((ρ × |z_max|)² + σ_floor²) + "
+                            f"Δσ_lut(|z_max|)\n"
+                            f"           [hybrid; LUT n={lut_n}]")
+                    log(f"\nmax_sigma computation (direct mode, "
+                        f"method={cm_for_log.method if cm_for_log else 'linear'}):")
                     log(f"  Step 1 — Calibration blur at max defocus:")
-                    log(f"    σ_calib = ρ × |z_max| + σ₀")
-                    log(f"           = {rho:.4f} × {max_defocus:.1f} + {sigma_0:.4f}")
+                    log(method_formula)
                     log(f"           = {self.max_sigma_calib:.4f} px  (at {scale_calib:.1f} px/mm)")
                     log(f"  Step 2 — Cross-camera correction (calib → training crop):")
                     log(f"    σ_crop  = σ_calib × (s_train / s_calib)")
@@ -1564,16 +1697,20 @@ class SyntheticBlurGenerator:
 
         log(f"Starting generation of {num_samples} samples...")
         if sec_frac > 0 and secondary_sharps:
-            primary_pct = (1.0 - sec_frac) * 100
+            primary_pct = (1.0 - sec_frac - ter_frac) * 100
             sec_pct = sec_frac * 100
+            ter_pct = ter_frac * 100
             log(
-                f"Two-source mixing enabled:\n"
-                f"  Primary pool   (sharp crops, real templates):    "
+                f"Three-source mixing enabled:\n"
+                f"  Primary pool   (sharp crops + Gaussian):           "
                 f"~{int(primary_pct)}% of {num_samples:,} = "
-                f"{int(num_samples * (1 - sec_frac)):,} samples\n"
+                f"{int(num_samples * (1 - sec_frac - ter_frac)):,} samples\n"
                 f"  Secondary pool (calibration-rendered, donor-only): "
                 f"~{int(sec_pct)}% of {num_samples:,} = "
-                f"{int(num_samples * sec_frac):,} samples"
+                f"{int(num_samples * sec_frac):,} samples\n"
+                f"  Tertiary pool  (real calib PNGs + ERF labels):     "
+                f"~{int(ter_pct)}% of {num_samples:,} = "
+                f"{int(num_samples * ter_frac):,} samples"
             )
         pbar = tqdm(total=num_samples, desc="Generating synthetic data")
         attempt = 0
@@ -1582,15 +1719,38 @@ class SyntheticBlurGenerator:
         while sample_idx < num_samples and attempt < max_attempts:
             attempt += 1
             sharp_path = None  # Reset each iteration; set below if a real image is used
+            use_secondary = False
+            use_tertiary = False
 
-            # ── Per-sample two-source dispatch ──────────────────────
-            # If secondary mixing is on, with prob sec_frac use the
-            # secondary appearance stats to RENDER a fresh sphere
-            # (donor-only — secondary PNGs are NOT used as direct
-            # templates, so we avoid mislabelling pre-existing physical
-            # blur as "sharp"). Otherwise primary flow.
-            use_secondary = (sec_frac > 0 and secondary_sharps
-                              and random.random() < sec_frac)
+            # ── Per-sample three-source dispatch ─────────────────────
+            # Roll a random number, partition into three regions:
+            #   [0, sec_frac)                   → secondary
+            #   [sec_frac, sec_frac+ter_frac)   → tertiary
+            #   [..., 1)                        → primary
+            roll = random.random()
+            if sec_frac > 0 and secondary_sharps and roll < sec_frac:
+                use_secondary = True
+            elif (ter_frac > 0 and tertiary_pool
+                    and roll < (sec_frac + ter_frac)):
+                use_tertiary = True
+
+            if use_tertiary:
+                # TERTIARY: bypass the synthesis pipeline entirely. Load a
+                # real calibration PNG, augment lightly, scale label to
+                # model space, write the sample directly without going
+                # through generate_sample().
+                self._save_tertiary_sample(
+                    tertiary_pool, sample_idx, output_dir, _sharp_cache,
+                    metadata, save_blur_trace, secondary_scale_px_per_mm,
+                )
+                sample_idx += 1
+                pbar.update(1)
+                progress_interval = max(1, num_samples // 10)
+                if sample_idx % progress_interval == 0:
+                    log(f"Progress: {sample_idx}/{num_samples} "
+                        f"({100*sample_idx//num_samples}%)")
+                continue
+
             if use_secondary:
                 self.synthesis_size = secondary_synthesis_size
                 if secondary_stats is not None:
@@ -1750,10 +1910,16 @@ class SyntheticBlurGenerator:
             value_key = 'sigma_value' if self.params.training_mode == 'direct' else 'coc_value'
             _diam_model = (round(diameter_px * self.native_to_model_scale)
                            if diameter_px is not None else '')
+            # Phase 5: store abs_z_mm alongside legacy signed defocus_mm.
+            # source_z_signed_mm is empty for primary/secondary (the sign
+            # in defocus_mm is randomly assigned, not physical truth —
+            # only tertiary samples have meaningful signed z).
             row = {
                 'index': idx_str,
                 blur_key: sample[value_key],
                 'defocus_mm': sample['defocus_mm'],
+                'abs_z_mm': abs(sample['defocus_mm']),
+                'source_z_signed_mm': '',
                 'diameter_px': diameter_px if diameter_px is not None else '',
                 'diameter_model_px': _diam_model,
             }
@@ -1835,9 +2001,13 @@ class SyntheticBlurGenerator:
 
         # Print diameter category distribution
         if 'diameter_px' in df.columns:
-            diameter_values = df['diameter_px'].values
+            # Coerce to numeric — secondary/tertiary samples write '' for
+            # diameter_px (their effective diameter is internal); drop those.
+            diameter_values = pd.to_numeric(
+                df['diameter_px'], errors='coerce').dropna().values
 
-            if use_binning and bin_boundaries is not None:
+            if (use_binning and bin_boundaries is not None
+                    and len(diameter_values) > 0):
                 # Use actual tertile boundaries from stratified sampling
                 p33, p67 = bin_boundaries
                 min_diam = diameter_values.min()
@@ -1849,11 +2019,12 @@ class SyntheticBlurGenerator:
 
                 total_with_diam = len(diameter_values)
 
-                log("\nDiameter Category Distribution (Stratified Sampling):")
+                log("\nDiameter Category Distribution (Primary pool only — "
+                    "secondary/tertiary samples don't have droplet diameters):")
                 log(f"  Small  ({min_diam:.0f}-{p33:.0f} px):   {small:5d} ({small/total_with_diam*100:5.1f}%)")
                 log(f"  Medium ({p33:.0f}-{p67:.0f} px):  {medium:5d} ({medium/total_with_diam*100:5.1f}%)")
                 log(f"  Large  ({p67:.0f}-{max_diam:.0f} px): {large:5d} ({large/total_with_diam*100:5.1f}%)")
-                log(f"  Total: {total_with_diam}")
+                log(f"  Total with diameter: {total_with_diam}  (out of {len(df)} total samples)")
                 log("  Note: Bins sampled uniformly for balanced distribution")
             else:
                 # Fallback: show basic statistics without stratified info
@@ -1903,10 +2074,163 @@ class SyntheticBlurGenerator:
         with open(output_dir / 'dataset_summary.json', 'w') as f:
             json.dump(summary, f, indent=2)
 
+        # Phase 5: persist the unified CalibrationModel as its own
+        # `calibration_model.yaml` next to generation_config.yaml. This is
+        # the source of truth for downstream stages (training reads it,
+        # bakes into checkpoint; inference reads from checkpoint).
+        # When missing, training falls back to building a linear model
+        # from rho_direct/sigma_0 in generation_config.yaml (back-compat).
+        cm = getattr(self, 'calibration_model', None)
+        if cm is not None:
+            try:
+                import yaml as _yaml
+                cm_doc = {
+                    'calibration_model': cm.to_dict(),
+                    'sha256': cm.sha256(),
+                    'method': cm.method,
+                }
+                with open(output_dir / 'calibration_model.yaml', 'w') as f:
+                    _yaml.dump(cm_doc, f, default_flow_style=False, sort_keys=False)
+                log(f"  Wrote calibration_model.yaml (method={cm.method}, sha256={cm.sha256()[:12]}...)")
+            except Exception as e:
+                log(f"  WARNING: could not write calibration_model.yaml: {e}")
+
         return {
             'diameter_bins_used': use_binning,
             'diameter_bin_boundaries': bin_boundaries if use_binning else None
         }
+
+    def _save_tertiary_sample(
+        self,
+        tertiary_pool: list,
+        sample_idx: int,
+        output_dir: Path,
+        sharp_cache: dict,
+        metadata: list,
+        save_blur_trace: bool,
+        calib_scale_px_per_mm: Optional[float],
+    ) -> None:
+        """Save one TERTIARY sample (real calibration PNG + ERF label).
+
+        Bypasses the synthesis pipeline. The PNG is the blur, the ERF
+        sigma from measurements.csv is the label. Light augmentation
+        (small position offset, brightness shift, optional flip)
+        prevents memorisation of the ~61 unique calibration frames.
+        """
+        png_path, source_size, sigma_at_source = random.choice(tertiary_pool)
+        cache_key = f"_ter_{png_path}"
+        if cache_key in sharp_cache:
+            img = sharp_cache[cache_key].copy()
+        else:
+            img = cv2.imread(str(png_path), cv2.IMREAD_GRAYSCALE)
+            if img is None:
+                # Fallback: skip and let outer loop re-roll
+                return
+            sharp_cache[cache_key] = img.copy()
+
+        # Light augmentation (preserves sigma)
+        # Random small position offset (±2% of width)
+        h, w = img.shape[:2]
+        max_off = max(1, int(min(h, w) * 0.02))
+        off_y = random.randint(-max_off, max_off)
+        off_x = random.randint(-max_off, max_off)
+        if off_y or off_x:
+            M = np.float32([[1, 0, off_x], [0, 1, off_y]])
+            img = cv2.warpAffine(img, M, (w, h), borderMode=cv2.BORDER_REFLECT)
+        # Brightness ±5%
+        bright = 1.0 + random.uniform(-0.05, 0.05)
+        img_f = np.clip(img.astype(np.float32) * bright, 0, 255)
+        # Optional horizontal flip (sphere is rotationally symmetric → label unchanged)
+        if random.random() < 0.5:
+            img_f = img_f[:, ::-1].copy()
+
+        # Resize to model size
+        ms = self.image_size
+        if max(img_f.shape) != ms:
+            interp = cv2.INTER_AREA if max(img_f.shape) > ms else cv2.INTER_CUBIC
+            img_f = cv2.resize(img_f, (ms, ms), interpolation=interp)
+        img_uint8 = img_f.astype(np.uint8)
+
+        # Scale ERF sigma from source-px to model-px
+        sigma_model = sigma_at_source * (ms / source_size)
+
+        # Save image
+        idx_str = f"{sample_idx:06d}"
+        cv2.imwrite(str(output_dir / 'sharp' / f'{idx_str}.png'), img_uint8)
+        cv2.imwrite(str(output_dir / 'blur' / f'{idx_str}.png'), img_uint8)
+        # Blur map: constant normalised sigma
+        norm = min(sigma_model / self.max_sigma, 1.0) if self.max_sigma > 0 else 0.0
+        sigma_map_img = np.full_like(img_uint8, int(round(norm * 255)))
+        cv2.imwrite(str(output_dir / 'blur_map' / f'{idx_str}.png'), sigma_map_img)
+
+        # Build metadata row
+        blur_key = 'sigma_px' if self.params.training_mode == 'direct' else 'coc_px'
+        # Recover defocus from sigma using calibration.
+        # Phase 5: prefer the CalibrationModel when set (handles
+        # quadrature/hybrid correctly — fixes bug #2: tertiary frames at
+        # true z=0 were getting fictional ±0.63 defocus from the linear
+        # formula because σ_0 (linear y-intercept) ≈ 0.35 underestimates
+        # the true focal-plane blur ≈ 1.0 px).
+        rho = self.params.rho_direct
+        sigma_0 = self.params.sigma_0 if self.params.sigma_0 is not None else 0.0
+        cm = getattr(self, 'calibration_model', None)
+        if cm is not None:
+            sigma_calib = sigma_at_source  # already in calibration source-px
+            abs_def, _flag = cm.inverse(sigma_calib)
+            if abs_def != abs_def:  # nan-safe (SATURATED case)
+                abs_def = 0.0
+            defocus_mm = abs_def * (1 if random.random() < 0.5 else -1)
+        elif rho and rho > 0 and calib_scale_px_per_mm:
+            sigma_calib = sigma_at_source  # already in calibration source-px
+            abs_def = max((sigma_calib - sigma_0) / rho, 0.0)
+            # Sign: random ± since the sphere image alone doesn't disambiguate
+            defocus_mm = abs_def * (1 if random.random() < 0.5 else -1)
+        else:
+            abs_def = 0.0
+            defocus_mm = 0.0
+        # Phase 5: extract the REAL signed z from the calibration PNG
+        # filename (e.g. `9mm_z-3.5mm.png` → −3.5). Stored as
+        # `source_z_signed_mm` for diagnostic / asymmetry analysis.
+        # Primary/secondary samples leave this column empty.
+        try:
+            from run_paths import parse_true_z_from_filename
+            source_z_signed = parse_true_z_from_filename(png_path.name)
+        except Exception:
+            source_z_signed = None
+        row = {
+            'index': idx_str,
+            blur_key: sigma_model,
+            'defocus_mm': defocus_mm,
+            # Phase 5: new honest columns alongside legacy defocus_mm
+            'abs_z_mm': abs_def,
+            'source_z_signed_mm': (source_z_signed
+                                    if source_z_signed is not None else ''),
+            'diameter_px': '',
+            'diameter_model_px': '',
+        }
+        if save_blur_trace and self.params.training_mode == 'direct':
+            row.update({
+                'source_image': f'calib_real_{png_path.name}',
+                'camera': 'calibration',
+                'scale_px_per_mm': (calib_scale_px_per_mm
+                                    if calib_scale_px_per_mm else ''),
+                'scale_calib_px_per_mm': (
+                    self.params.scale_calib_px_per_mm
+                    if self.params.scale_calib_px_per_mm else ''),
+                'cc_factor': 1.0,
+                'rho_direct': rho,
+                'sigma_calib_px': round(sigma_at_source, 6),
+                'sigma_native_expected_px': round(sigma_at_source, 6),
+                'sigma_model_expected_px': round(sigma_model, 6),
+                'sigma_applied_px': round(sigma_model, 6),
+                'native_blur_crop_px': round(sigma_at_source, 6),
+                'native_blur_model_px': round(sigma_model, 6),
+                'quadrature_error_px': 0.0,
+                'quadrature_error_pct': 0.0,
+                'crop_size_px': source_size,
+                'model_size_px': self.image_size,
+            })
+        metadata.append(row)
 
     def _prepare_image(self, image: np.ndarray) -> np.ndarray:
         """Resize image to target size (preserves droplet, scales down).

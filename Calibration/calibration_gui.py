@@ -160,6 +160,9 @@ class CalibrationGUI:
         self.calibration_b: Optional[CalibrationResultB] = None
         self.calibration_hybrid: Optional[CalibrationResultHybrid] = None
         self.calibration_direct: Optional[CalibrationResultA] = None
+        # Phase 4: holds the unified CalibrationModel (any of the 3 methods)
+        # alongside the legacy CalibrationResultA for backward compat.
+        self.calibration_model = None  # type: Optional[Any]
 
         # Multi-camera storage
         self.camera_calibrations: Dict[str, CalibrationResultHybrid] = {}
@@ -628,6 +631,32 @@ class CalibrationGUI:
             foreground='gray'
         )
         cal_mode_desc.pack(anchor='w', pady=(5, 0))
+
+        # ── Fit method picker (direct mode only) ─────────────────────────
+        # Selects σ-vs-z curve shape: linear / quadrature / hybrid.
+        # Value flows through generation_config.yaml -> checkpoint -> inference.
+        self.fit_method_frame = ttk.LabelFrame(
+            calib_col, text="Fit method (Direct mode)", padding=5)
+        self.fit_method_var = tk.StringVar(value="linear")
+        fm_row = ttk.Frame(self.fit_method_frame)
+        fm_row.pack(fill='x', pady=2)
+        ttk.Label(fm_row, text="Method:").pack(side='left', padx=(0, 6))
+        self.fit_method_combo = ttk.Combobox(
+            fm_row, textvariable=self.fit_method_var,
+            values=("linear", "quadrature", "hybrid"),
+            state="readonly", width=14)
+        self.fit_method_combo.pack(side='left')
+        self.fit_method_combo.bind(
+            '<<ComboboxSelected>>',
+            lambda _e: self._on_fit_method_change())
+        self.fit_method_desc = ttk.Label(
+            self.fit_method_frame, text="", font=('', 8), foreground='gray',
+            wraplength=320, justify='left')
+        self.fit_method_desc.pack(anchor='w', pady=(4, 0))
+        self._on_fit_method_change()  # set initial description text
+        # Initially packed only if mode='direct' (handled in _on_calibration_mode_change)
+        if self.calibration_mode_var.get() == "direct":
+            self.fit_method_frame.pack(fill='x', pady=2)
 
         # Internal approach state (was previously a UI selector, now always "hybrid" = recommended)
         self.approach_var = tk.StringVar(value="hybrid")
@@ -1790,15 +1819,20 @@ The synthetic blur will match your camera!"""
         )
 
     @staticmethod
-    def _processed_image_name(source_name: str, index: int) -> str:
+    def _processed_image_name(source_name: str, index: int,
+                              z_mm: Optional[float] = None) -> str:
         """PNG filename for the i-th processed image — derived from the source
         .cine name so it stays human-recognisable and pairs unambiguously with
-        the matching row in measurements.csv.
+        the matching row in measurements.csv. When z_mm is provided, embeds
+        it as ``_z<value>mm`` so downstream tools (e.g. inference's
+        comparison fitter) can recover the true defocus from the filename
+        via the ``z([+-]?\\d+\\.?\\d*)mm`` regex.
         """
+        z_suffix = f"_z{z_mm:+.1f}mm" if z_mm is not None else ""
         if source_name:
             stem = Path(source_name).stem
-            return f"{stem}.png"
-        return f"crop_{index:04d}.png"
+            return f"{stem}{z_suffix}.png"
+        return f"crop_{index:04d}{z_suffix}.png"
 
     def _save_cropped_images(self):
         """Save cropped images into the run folder's 'processed_images/' subdir.
@@ -1818,7 +1852,8 @@ The synthetic blur will match your camera!"""
         self.root.update_idletasks()
 
         for i, (img, filename) in enumerate(zip(self.zstack_images, self.zstack_filenames)):
-            out_name = self._processed_image_name(filename, i)
+            z_mm = self.zstack_positions[i] if i < len(self.zstack_positions) else None
+            out_name = self._processed_image_name(filename, i, z_mm=z_mm)
             out_path = output_path / out_name
             if img.dtype != np.uint8:
                 img = cv2.normalize(img, None, 0, 255, cv2.NORM_MINMAX).astype(np.uint8)
@@ -2049,12 +2084,49 @@ The synthetic blur will match your camera!"""
             # Pack before calibrate button to maintain layout order
             self.optical_frame.pack(fill='x', pady=2, before=self.calibrate_btn)
             self.ref_row.pack(fill='x', pady=1)
+            # Hide fit method picker — only relevant for direct mode
+            if hasattr(self, 'fit_method_frame'):
+                self.fit_method_frame.pack_forget()
             print("Calibration Mode: Optical Formula")
 
         else:  # direct mode
             # Hide optical params entirely (not needed for direct mode)
             self.optical_frame.pack_forget()
+            # Show fit method picker (linear/quadrature/hybrid)
+            if hasattr(self, 'fit_method_frame'):
+                self.fit_method_frame.pack(fill='x', pady=2,
+                                            before=self.calibrate_btn)
             print("Calibration Mode: Direct Calibration")
+
+    def _on_fit_method_change(self):
+        """Update the fit method description label when picker changes.
+
+        Phase 11: also auto-rerun the fit when sigma values are already
+        measured, so switching method (e.g. quadrature -> hybrid) updates
+        the Results panel + curve + export preview immediately, without
+        needing the user to press 'Calibrate Rho' again.
+        """
+        method = self.fit_method_var.get()
+        descs = {
+            "linear":     "σ = ρ·|z| + σ₀  (legacy; misfits the focus floor)",
+            "quadrature": "σ = √((ρ·|z|)² + σ_floor²)  (PSF physics; correct floor)",
+            "hybrid":     "quadrature + per-|z| residual LUT  (most accurate)",
+        }
+        if hasattr(self, 'fit_method_desc'):
+            self.fit_method_desc.configure(text=descs.get(method, ""))
+
+        # Auto re-fit only if we already have measurements + a prior
+        # calibration in direct mode. Avoids no-op calls before the
+        # user has pressed 'Measure All' / 'Calibrate Rho' the first time.
+        if (self.calibration_mode_var.get() == 'direct'
+                and getattr(self, 'sigma_values', None)
+                and getattr(self, 'zstack_positions', None)
+                and getattr(self, 'calibration_direct', None) is not None):
+            try:
+                self._run_calibration()
+                print(f"  Auto re-fit on method change -> {method}")
+            except Exception as e:
+                print(f"  Auto re-fit on method change failed: {e}")
 
     def _run_calibration(self):
         """Run the calibration."""
@@ -2100,6 +2172,51 @@ The synthetic blur will match your camera!"""
                 # Direct mode: just fit σ = ρ × |z| + σ₀, no optical params needed
                 self.calibration_direct = calibrate_approach_a(filtered_positions, filtered_sigmas)
                 self.loo_result = loo_cv(filtered_positions, filtered_sigmas)
+
+                # Phase 4: build the unified CalibrationModel using the
+                # selected fit method (linear/quadrature/hybrid).
+                # Linear path uses calibrate_to_model too — the resulting
+                # model is mathematically equivalent to calibrate_approach_a
+                # (verified by Phase 1 bit-identity tests).
+                fit_method = getattr(self, 'fit_method_var', None)
+                fit_method = fit_method.get() if fit_method else 'linear'
+                try:
+                    from calibration_core import (calibrate_to_model,
+                                                    loo_cv_for_method)
+                    self.calibration_model = calibrate_to_model(
+                        method=fit_method,
+                        z_positions=filtered_positions,
+                        sigma_values=filtered_sigmas,
+                        s_calib_px_per_mm=self.scale_calib_px_per_mm,
+                    )
+                    # Phase 10: also compute METHOD-AWARE LOO so per-prediction
+                    # uncertainty bars at inference use the right Jacobian.
+                    # Skip for legacy linear (the existing self.loo_result
+                    # already covers that case).
+                    method_loo = loo_cv_for_method(
+                        fit_method, filtered_positions, filtered_sigmas)
+                    self.calibration_model.loo_cv = {
+                        'rho_std': method_loo['rho_std'],
+                        'aux_param_name': method_loo['aux_param_name'],
+                        'aux_param_std': method_loo['aux_param_std'],
+                        'loo_mae': method_loo['loo_mae'],
+                        'num_folds': method_loo['num_folds'],
+                    }
+                    print(f"  CalibrationModel built (method={fit_method}): "
+                          f"rho={self.calibration_model.rho_px_per_mm:.4f}")
+                    if fit_method != 'linear':
+                        print(f"    sigma_floor={self.calibration_model.sigma_floor_calib_px:.4f}")
+                    aux_name = method_loo['aux_param_name']
+                    print(f"  Method-aware LOO ({fit_method}): "
+                          f"rho_std={method_loo['rho_std']:.4f}, "
+                          f"{aux_name}_std={method_loo['aux_param_std']:.4f}, "
+                          f"MAE={method_loo['loo_mae']:.4f} px "
+                          f"(n={method_loo['num_folds']} folds)")
+                except Exception as e:
+                    print(f"  WARNING: CalibrationModel build failed ({e}); "
+                          f"falling back to legacy linear export")
+                    self.calibration_model = None
+
                 self._display_results_direct()
 
             elif approach == 'B':
@@ -2191,34 +2308,141 @@ The ρ value compensates for any errors in your estimates!
         self._set_results_text(text)
 
     def _display_results_direct(self):
-        """Display Direct Calibration results."""
-        a = self.calibration_direct
+        """Display Direct Calibration results.
+
+        Method-aware: shows the chosen fit method's params prominently
+        (linear / quadrature / hybrid). Linear fit + LOO-CV are kept
+        as a secondary diagnostic block since LOO uncertainty is fitted
+        on the linear model and applies to all methods as a rough bound.
+        """
+        a = self.calibration_direct  # legacy linear fit (always present)
+        cm = getattr(self, 'calibration_model', None)
         loo = getattr(self, 'loo_result', None)
+
+        # Phase 10: prefer the method-aware LOO from the CalibrationModel
+        # (computed by loo_cv_for_method on the chosen fit's Jacobians).
+        # Fall back to the legacy linear LOO only if no model is set.
         loo_text = ""
-        if loo and loo.rho_std > 0:
+        method_loo = (cm.loo_cv if (cm is not None and cm.loo_cv) else None)
+        if method_loo and method_loo.get('rho_std', 0) > 0:
+            aux_name = method_loo.get('aux_param_name', 'aux')
+            loo_text = (
+                f"\n{cm.method.capitalize()} LOO-CV uncertainty "
+                f"(per-method, used by inference): \n"
+                f"  rho_std         = {method_loo['rho_std']:.4f} px/mm\n"
+                f"  {aux_name}_std{' ' * (10 - len(aux_name))}= "
+                f"{method_loo['aux_param_std']:.4f} px\n"
+                f"  loo_mae         = {method_loo['loo_mae']:.4f} px "
+                f"(n={method_loo['num_folds']} folds)\n"
+            )
+        elif loo and loo.rho_std > 0:
             loo_text = f"""
-LOO Cross-Validation (n={len(loo.loo_residuals)}):
-  ρ = {loo.rho_mean:.4f} ± {loo.rho_std:.4f} px/mm
-  σ₀ = {loo.sigma_0_mean:.3f} ± {loo.sigma_0_std:.3f} px
+Linear LOO-CV uncertainty (legacy fallback):
+  rho = {loo.rho_mean:.4f} +/- {loo.rho_std:.4f} px/mm
+  sigma_0 = {loo.sigma_0_mean:.3f} +/- {loo.sigma_0_std:.3f} px
   MAE = {loo.loo_mae:.3f} px
 """
-        text = f"""{'=' * 50}
-DIRECT CALIBRATION - Linear Fit
-{'=' * 50}
+
+        # Headline block: chosen method
+        if cm is not None:
+            method = cm.method
+            header = f"DIRECT CALIBRATION - {method.upper()} fit"
+            if method == 'linear':
+                params_text = (
+                    f"  rho_px_per_mm  = {cm.rho_px_per_mm:.4f} px/mm\n"
+                    f"  sigma_0        = {cm.sigma_0_calib_px:.4f} px  "
+                    f"(linear y-intercept; NOT the focal-plane blur)\n"
+                    f"  Formula:  sigma = rho * |z| + sigma_0"
+                )
+            elif method == 'quadrature':
+                params_text = (
+                    f"  rho_px_per_mm  = {cm.rho_px_per_mm:.4f} px/mm\n"
+                    f"  sigma_floor    = {cm.sigma_floor_calib_px:.4f} px  "
+                    f"(measured focal-plane blur; matches real images at z=0)\n"
+                    f"  Formula:  sigma = sqrt((rho * |z|)^2 + sigma_floor^2)"
+                )
+            elif method == 'hybrid':
+                lut_n = (len(cm.residual_lut_mm_px)
+                         if cm.residual_lut_mm_px else 0)
+                max_res = (max(abs(d) for _, d in cm.residual_lut_mm_px)
+                           if cm.residual_lut_mm_px else 0.0)
+                params_text = (
+                    f"  rho_px_per_mm  = {cm.rho_px_per_mm:.4f} px/mm\n"
+                    f"  sigma_floor    = {cm.sigma_floor_calib_px:.4f} px\n"
+                    f"  Residual LUT   = {lut_n} entries  "
+                    f"(max |delta_sigma| = {max_res:.4f} px)\n"
+                    f"  Formula:  sqrt((rho|z|)^2 + sigma_floor^2) + delta_sigma(|z|)"
+                )
+            else:
+                params_text = "  (unknown method)"
+
+            r2 = cm.fit_metadata.get('r_squared', 0.0)
+            n_kept = cm.fit_metadata.get('num_points_kept', 0)
+            n_total = cm.fit_metadata.get('num_points_total', 0)
+            n_near = cm.fit_metadata.get('num_near_focus_excluded', 0)
+            n_plat = cm.fit_metadata.get('num_plateau_excluded', 0)
+            rho_per_side = cm.fit_metadata.get('rho_per_side', {})
+
+            asym_text = ""
+            if rho_per_side and rho_per_side.get('neg') and rho_per_side.get('pos'):
+                neg_rho = rho_per_side['neg']
+                pos_rho = rho_per_side['pos']
+                asym_pct = abs(neg_rho - pos_rho) / max(neg_rho, pos_rho) * 100
+                asym_text = (
+                    f"\nLens asymmetry diagnostic (linear fit per side):\n"
+                    f"  rho_neg = {neg_rho:.4f}, rho_pos = {pos_rho:.4f}  "
+                    f"(asymmetry: {asym_pct:.1f}%)"
+                )
+
+            trust_text = (
+                f"\nTrust bounds (used for SATURATED / BELOW_FLOOR flags):\n"
+                f"  sigma in [{cm.sigma_min_trusted_calib_px:.3f}, "
+                f"{cm.sigma_max_trusted_calib_px:.3f}] calib-px\n"
+                f"  |z|  in [{cm.z_min_trusted_mm:.2f}, "
+                f"{cm.z_max_trusted_mm:.2f}] mm"
+            )
+            if cm.z_max_trusted_neg_mm is not None and cm.z_max_trusted_pos_mm is not None:
+                trust_text += (
+                    f"   (asymmetric: neg up to {cm.z_max_trusted_neg_mm:.2f} mm, "
+                    f"pos up to {cm.z_max_trusted_pos_mm:.2f} mm)"
+                )
+
+            text = f"""{'=' * 60}
+{header}
+{'=' * 60}
+
+Chosen method's parameters (calibration-native pixel scale):
+{params_text}
+
+Fit quality:
+  R^2 = {r2:.4f}
+  Points used: {n_kept} of {n_total}  (excluded: {n_near} near-focus, {n_plat} plateau)
+{asym_text}{trust_text}
+{loo_text}
+{'=' * 60}
+FOR TRAINING GUI:
+{'=' * 60}
+  Export this calibration -> calibration_results.yaml will carry both
+  the legacy 'direct:' block and the new 'calibration_model:' block
+  (method='{method}'). The dataset generator and inference engines
+  read the latter to honour your chosen method end-to-end.
+"""
+        else:
+            # Fallback: no calibration_model built (legacy path / failure)
+            text = f"""{'=' * 60}
+DIRECT CALIBRATION - Linear Fit  (fallback display)
+{'=' * 60}
 
 Fitted from data (no optical params needed):
-  ρ_direct = {a.rho_px_per_mm:.4f} px/mm
-  σ₀ = {a.sigma_0:.2f} px (blur at focus)
-  R² = {a.r_squared:.4f}
+  rho_direct = {a.rho_px_per_mm:.4f} px/mm
+  sigma_0 = {a.sigma_0:.2f} px (linear y-intercept, NOT focal blur)
+  R^2 = {a.r_squared:.4f}
   Points used: {a.num_points}
 
-Formula: σ = ρ_direct × |defocus| + σ₀
+Formula: sigma = rho_direct * |defocus| + sigma_0
 {loo_text}
-{'=' * 50}
-FOR TRAINING GUI:
-{'=' * 50}
-  Export this calibration file, then load it in
-  Training GUI with "Direct Calibration" mode.
+WARNING: CalibrationModel not built — exported yaml will lack the
+new calibration_model block. Check console for the underlying error.
 """
         self._set_results_text(text)
 
@@ -2310,12 +2534,105 @@ FOR TRAINING GUI:
         self.calib_ax.scatter(z_valid, sigma_valid, c='blue', label='Measured', alpha=0.7, s=40)
 
         # Plot fit based on which calibration is active
-        if self.calibration_direct:
+        # Phase 11: rich method-aware plot. Color-codes kept vs excluded
+        # points, shades the trust region, draws the chosen method's
+        # curve, and adds method-specific annotations (sigma_floor line
+        # for quad/hybrid; LUT residual ticks for hybrid).
+        cm = getattr(self, 'calibration_model', None)
+        if self.calibration_direct and cm is not None:
+            a = self.calibration_direct
+            # Re-color the data points: kept (blue) vs excluded reasons.
+            # Override the generic blue scatter we already drew.
+            z_kept_arr = np.array(cm.fit_metadata.get("z_kept_mm", []))
+            near_focus_thr = float(cm.fit_metadata.get("exclude_near_focus_mm", 0.5))
+            # Clear our previous blue scatter to redraw with categories
+            # (matplotlib >=3.7 ArtistList has no .clear(); remove individually)
+            for _c in list(self.calib_ax.collections):
+                _c.remove()
+            # Recompute exclusion masks against the original z/sigma arrays
+            z_arr = np.asarray(z_valid)
+            sig_arr = np.asarray(sigma_valid)
+            kept_mask = np.zeros_like(z_arr, dtype=bool)
+            for zk in z_kept_arr:
+                kept_mask |= np.isclose(z_arr, zk, atol=1e-6)
+            near_mask = (np.abs(z_arr) < near_focus_thr) & ~kept_mask
+            plateau_mask = ~kept_mask & ~near_mask
+            # Plot each category with a distinct style
+            self.calib_ax.scatter(
+                z_arr[kept_mask], sig_arr[kept_mask],
+                c='steelblue', s=42, alpha=0.85, zorder=4,
+                label=f'Used in fit ({int(kept_mask.sum())})')
+            if near_mask.any():
+                self.calib_ax.scatter(
+                    z_arr[near_mask], sig_arr[near_mask],
+                    facecolors='none', edgecolors='goldenrod', s=42,
+                    linewidths=1.5, zorder=4,
+                    label=f'Excluded near-focus ({int(near_mask.sum())})')
+            if plateau_mask.any():
+                self.calib_ax.scatter(
+                    z_arr[plateau_mask], sig_arr[plateau_mask],
+                    facecolors='none', edgecolors='crimson', s=42,
+                    marker='X', linewidths=1.8, zorder=4,
+                    label=f'Excluded plateau ({int(plateau_mask.sum())})')
+
+            # Shade the trusted z range (where inference will return
+            # IN_RANGE flags). Asymmetric per-side caps if known.
+            z_neg = cm.z_max_trusted_neg_mm
+            z_pos = cm.z_max_trusted_pos_mm
+            z_floor = cm.z_min_trusted_mm
+            if z_neg is not None and z_pos is not None:
+                self.calib_ax.axvspan(-z_neg, -z_floor,
+                                       color='lightgreen', alpha=0.10, zorder=1)
+                self.calib_ax.axvspan(z_floor, z_pos,
+                                       color='lightgreen', alpha=0.10, zorder=1)
+            # Vertical lines at trust boundaries
+            for x in [-z_neg if z_neg else None, -z_floor if z_floor else None,
+                       z_floor if z_floor else None, z_pos if z_pos else None]:
+                if x is not None:
+                    self.calib_ax.axvline(x, color='green', alpha=0.25,
+                                            linestyle=':', linewidth=1)
+
+            # Method-specific σ-floor / σ_0 reference horizontal line
+            if cm.method == 'linear':
+                self.calib_ax.axhline(cm.sigma_0_calib_px, color='purple',
+                                       alpha=0.4, linestyle=':', linewidth=1,
+                                       label=f'σ₀ (y-intercept) = {cm.sigma_0_calib_px:.3f}')
+            else:
+                self.calib_ax.axhline(cm.sigma_floor_calib_px, color='purple',
+                                       alpha=0.4, linestyle=':', linewidth=1,
+                                       label=f'σ_floor = {cm.sigma_floor_calib_px:.3f}')
+
+            # Method-aware fit curve
+            z_fit = np.linspace(z_valid.min() - 0.2, z_valid.max() + 0.2, 400)
+            sigma_fit = np.array([cm.forward(abs(float(z))) for z in z_fit])
+            method_label = cm.method.capitalize()
+            if cm.method == 'linear':
+                aux_str = f", σ₀={cm.sigma_0_calib_px:.3f}"
+            elif cm.method == 'quadrature':
+                aux_str = f", σ_floor={cm.sigma_floor_calib_px:.3f}"
+            else:
+                lut_n = (len(cm.residual_lut_mm_px)
+                         if cm.residual_lut_mm_px else 0)
+                aux_str = (f", σ_floor={cm.sigma_floor_calib_px:.3f}, "
+                           f"LUT n={lut_n}")
+            self.calib_ax.plot(
+                z_fit, sigma_fit, 'r-', linewidth=2.0, zorder=3,
+                label=f'{method_label}: ρ={cm.rho_px_per_mm:.3f}{aux_str}')
+            # Linear reference dashed (when method is non-linear)
+            if cm.method != 'linear':
+                sigma_lin = a.rho_px_per_mm * np.abs(z_fit) + a.sigma_0
+                self.calib_ax.plot(
+                    z_fit, sigma_lin, '--', color='gray', alpha=0.45,
+                    linewidth=1, zorder=2,
+                    label=f'(linear ref: ρ={a.rho_px_per_mm:.3f}, σ₀={a.sigma_0:.2f})')
+        elif self.calibration_direct:
+            # Fallback: no CalibrationModel built (failure) — show legacy linear fit
             a = self.calibration_direct
             z_fit = np.linspace(z_valid.min(), z_valid.max(), 100)
             sigma_fit = a.rho_px_per_mm * np.abs(z_fit) + a.sigma_0
             self.calib_ax.plot(
-                z_fit, sigma_fit, 'r-', label=f'Direct: ρ = {a.rho_px_per_mm:.3f} px/mm',
+                z_fit, sigma_fit, 'r-',
+                label=f'Direct (linear fallback): ρ = {a.rho_px_per_mm:.3f} px/mm',
                 linewidth=2)
         elif self.calibration_hybrid:
             a = self.calibration_hybrid.direct_result
@@ -2377,11 +2694,14 @@ FOR TRAINING GUI:
             offset = 0.0
             self.focal_offset_var.set("0.0")
 
-        # Store calibration with its approach type and rho_px_per_mm
+        # Store calibration with its approach type, rho_px_per_mm, and
+        # (Phase 11) the unified CalibrationModel for the chosen method
+        # so multi-camera depth resolution can use method-aware inversion.
         self.camera_calibrations[camera] = {
             'approach': approach,
             'calibration': calib,
-            'rho_px_per_mm': rho
+            'rho_px_per_mm': rho,
+            'calibration_model': getattr(self, 'calibration_model', None),
         }
         self.focal_plane_offsets[camera] = offset
 
@@ -2435,9 +2755,28 @@ FOR TRAINING GUI:
         rho2 = self.camera_calibrations[cam2]['rho_px_per_mm']
         offset = self.focal_plane_offsets[cam2] - self.focal_plane_offsets[cam1]
 
-        # Calculate depths
-        d1 = sigma1 / rho1
-        d2 = sigma2 / rho2
+        # Phase 11: prefer method-aware inversion when each camera has a
+        # CalibrationModel (handles σ_floor / hybrid LUT correctly).
+        # Falls back to the legacy d = σ/ρ heuristic when models are
+        # absent (it was already a rough approximation — ignored σ_0 too).
+        cm1 = self.camera_calibrations[cam1].get('calibration_model')
+        cm2 = self.camera_calibrations[cam2].get('calibration_model')
+        if cm1 is not None and cm2 is not None:
+            try:
+                d1, _flag1 = cm1.inverse(sigma1)
+                d2, _flag2 = cm2.inverse(sigma2)
+                # nan-safe: SATURATED → fall back to heuristic for that camera
+                if d1 != d1:
+                    d1 = sigma1 / rho1
+                if d2 != d2:
+                    d2 = sigma2 / rho2
+            except Exception:
+                d1 = sigma1 / rho1
+                d2 = sigma2 / rho2
+        else:
+            # Legacy heuristic
+            d1 = sigma1 / rho1
+            d2 = sigma2 / rho2
 
         # Average magnitude
         depth_mag = (d1 + d2) / 2
@@ -2519,6 +2858,10 @@ FOR TRAINING GUI:
                 calibration_mode=self.calibration_mode_var.get(),
                 scale_calib_px_per_mm=self.scale_calib_px_per_mm,)
 
+        # Phase 4: include unified calibration_model block in preview too
+        if getattr(self, 'calibration_model', None) is not None:
+            yaml_dict['calibration_model'] = self.calibration_model.to_dict()
+
         yaml_str = yaml.dump(yaml_dict, default_flow_style=False, sort_keys=False)
 
         self.export_preview.configure(state='normal')
@@ -2531,6 +2874,32 @@ FOR TRAINING GUI:
         if not self.calibration_hybrid and not self.calibration_direct:
             messagebox.showerror("Error", "Run calibration first")
             return
+
+        # Phase 11: confirm the chosen method (and its sha256) before
+        # writing — surfaces stale state if the user forgot to re-run
+        # Calibrate after switching the dropdown.
+        cm_for_confirm = getattr(self, 'calibration_model', None)
+        if cm_for_confirm is not None:
+            method_name = cm_for_confirm.method.upper()
+            sha = cm_for_confirm.sha256()[:12]
+            if cm_for_confirm.method == 'linear':
+                aux_str = f"σ₀ = {cm_for_confirm.sigma_0_calib_px:.4f}"
+            else:
+                aux_str = f"σ_floor = {cm_for_confirm.sigma_floor_calib_px:.4f}"
+            confirm_msg = (
+                f"Exporting calibration with:\n\n"
+                f"  Method:  {method_name}\n"
+                f"  ρ:       {cm_for_confirm.rho_px_per_mm:.4f} px/mm\n"
+                f"  {aux_str}\n"
+                f"  R²:      {cm_for_confirm.fit_metadata.get('r_squared', 0):.4f}\n"
+                f"  sha256:  {sha}...\n\n"
+                f"This is the most recent fit you ran. "
+                f"If you switched the dropdown but haven't re-run "
+                f"'Calibrate ρ' yet, press Cancel and re-run first.\n\n"
+                f"Proceed with export?"
+            )
+            if not messagebox.askyesno("Confirm export method", confirm_msg):
+                return
 
         output_dir = Path(self.export_folder_var.get())
         output_dir.mkdir(parents=True, exist_ok=True)
@@ -2596,6 +2965,15 @@ FOR TRAINING GUI:
                     reference_resolution=reference_resolution,
                     calibration_mode=self.calibration_mode_var.get(),
                     scale_calib_px_per_mm=self.scale_calib_px_per_mm,)
+
+            # Phase 4: emit the unified `calibration_model:` block alongside
+            # legacy fields. Downstream pipeline (synthesis / training /
+            # inference) reads this block; legacy fields preserved so
+            # existing tools that only read `direct.rho_px_per_mm` etc.
+            # keep working.
+            if getattr(self, 'calibration_model', None) is not None:
+                yaml_dict['calibration_model'] = self.calibration_model.to_dict()
+
             yaml_path = output_dir / "calibration_results.yaml"
             with open(yaml_path, 'w') as f:
                 yaml.dump(yaml_dict, f, default_flow_style=False, sort_keys=False)
@@ -2608,7 +2986,11 @@ FOR TRAINING GUI:
             import pandas as pd
             n = len(self.sigma_values)
             png_names = [
-                self._processed_image_name(self.zstack_filenames[i], i)
+                self._processed_image_name(
+                    self.zstack_filenames[i], i,
+                    z_mm=(self.zstack_positions[i]
+                          if i < len(self.zstack_positions) else None),
+                )
                 for i in range(n)
             ]
             df = pd.DataFrame({
@@ -2637,12 +3019,26 @@ FOR TRAINING GUI:
                 cal_result, report_path,
                 loo_result=loo,
                 camera=self.camera_var.get(),
+                calibration_model=getattr(self, 'calibration_model', None),
             )
             exported.append("calibration_report.png")
 
-        self.export_status_var.set(f"✓ Exported to {output_dir.name}/")
+        # Phase 11: surface the exported method in the success dialog
+        # so the user can confirm it matches what they intended.
+        method_tag = ""
+        cm_done = getattr(self, 'calibration_model', None)
+        if cm_done is not None:
+            method_tag = (f"\n\nMethod baked into calibration_model: "
+                          f"{cm_done.method.upper()}  "
+                          f"(sha256 {cm_done.sha256()[:12]}...)")
+        self.export_status_var.set(
+            f"✓ Exported "
+            f"({cm_done.method if cm_done is not None else 'linear'}) "
+            f"to {output_dir.name}/")
         messagebox.showinfo(
-            "Export Complete", f"Calibration exported to:\n{output_dir}\n\nFiles:\n" + "\n".join(exported))
+            "Export Complete",
+            f"Calibration exported to:\n{output_dir}\n\nFiles:\n"
+            + "\n".join(exported) + method_tag)
 
     def _copy_rho(self):
         """Copy ρ value to clipboard."""

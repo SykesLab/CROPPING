@@ -160,7 +160,12 @@ class LOOCVResult:
 
 
 def linear_model(z: np.ndarray, rho: float, sigma_0: float) -> np.ndarray:
-    """Linear blur model: σ = ρ × |z| + σ_0"""
+    """Linear blur model: σ = ρ × |z| + σ_0.
+
+    Used by ``calibrate_approach_a`` and other linear-fit pathways.
+    For method-aware forward σ↔z conversion supporting all three
+    methods, use ``physics.CalibrationModel.forward(abs_z_mm)``.
+    """
     return rho * np.abs(z) + sigma_0
 
 
@@ -411,9 +416,15 @@ def calibrate_hybrid(
 
 def sigma_to_depth_approach_a(sigma: float, rho_px_per_mm: float, sigma_0: float = 0) -> float:
     """
-    Convert blur sigma to depth using Approach A.
+    Convert blur sigma to depth using Approach A (LINEAR ONLY).
 
     depth = (σ - σ_0) / ρ
+
+    .. note::
+        Linear-formula only. For quadrature/hybrid calibrations, prefer
+        ``physics.CalibrationModel.inverse(sigma_calib_px)`` which handles
+        all three methods correctly. This function is preserved for the
+        legacy Approach A pathway and back-compat callers.
 
     Args:
         sigma: Measured blur sigma (pixels)
@@ -763,11 +774,103 @@ def loo_cv(
     )
 
 
+def loo_cv_for_method(
+    method: str,
+    z_positions: List[float],
+    sigma_values: List[float],
+    exclude_near_focus: float = 0.5,
+) -> dict:
+    """Method-aware leave-one-out cross-validation.
+
+    Like ``loo_cv`` but refits the requested method (linear / quadrature /
+    hybrid) each fold. The returned uncertainty bars apply to THAT
+    method, unlike ``loo_cv`` which is linear-only.
+
+    Returns a dict with the same shape across methods so callers can
+    consume it generically:
+
+    - ``rho_mean`` / ``rho_std`` — slope uncertainty (px/mm)
+    - ``aux_param_name`` — 'sigma_0' for linear, 'sigma_floor' for
+      quadrature/hybrid
+    - ``aux_param_mean`` / ``aux_param_std`` — uncertainty on the
+      method's second parameter
+    - ``loo_mae`` — mean absolute prediction error on held-out points
+    - ``loo_residuals`` — per-fold prediction errors
+    - ``num_folds`` — actual number of successful folds
+    - ``method`` — echoed back for clarity
+
+    For hybrid, the residual LUT is refitted each fold but only its
+    parametric part (rho, sigma_floor) is tracked for uncertainty —
+    the LUT itself doesn't have a meaningful "std" since each entry
+    is a deterministic per-point residual.
+    """
+    z = np.asarray(z_positions, dtype=float)
+    sigma = np.asarray(sigma_values, dtype=float)
+    valid = ~np.isnan(sigma) & (np.abs(z) >= exclude_near_focus)
+    z = z[valid]
+    sigma = sigma[valid]
+    n = len(z)
+
+    aux_name = 'sigma_0' if method == 'linear' else 'sigma_floor'
+
+    if n < 4:
+        return {
+            'method': method,
+            'rho_mean': 0.0, 'rho_std': 0.0,
+            'aux_param_name': aux_name,
+            'aux_param_mean': 0.0, 'aux_param_std': 0.0,
+            'loo_residuals': [], 'loo_mae': 0.0, 'num_folds': 0,
+        }
+
+    rho_values = []
+    aux_values = []
+    residuals = []
+
+    for i in range(n):
+        z_train = list(np.delete(z, i))
+        sigma_train = list(np.delete(sigma, i))
+        try:
+            model = calibrate_to_model(
+                method, z_train, sigma_train,
+                exclude_near_focus=0.0,  # already filtered above
+            )
+            rho_values.append(model.rho_px_per_mm)
+            aux_values.append(model.sigma_0_calib_px if method == 'linear'
+                                 else model.sigma_floor_calib_px)
+            # Predict held-out point
+            pred = float(model.forward(abs(float(z[i]))))
+            residuals.append(pred - float(sigma[i]))
+        except Exception:
+            continue
+
+    if not rho_values:
+        return {
+            'method': method,
+            'rho_mean': 0.0, 'rho_std': 0.0,
+            'aux_param_name': aux_name,
+            'aux_param_mean': 0.0, 'aux_param_std': 0.0,
+            'loo_residuals': [], 'loo_mae': 0.0, 'num_folds': 0,
+        }
+
+    return {
+        'method': method,
+        'rho_mean': float(np.mean(rho_values)),
+        'rho_std': float(np.std(rho_values)),
+        'aux_param_name': aux_name,
+        'aux_param_mean': float(np.mean(aux_values)),
+        'aux_param_std': float(np.std(aux_values)),
+        'loo_residuals': [float(r) for r in residuals],
+        'loo_mae': float(np.mean(np.abs(residuals))),
+        'num_folds': len(rho_values),
+    }
+
+
 def generate_quality_report(
     result: CalibrationResultA,
     output_path: Path,
     loo_result: Optional[LOOCVResult] = None,
     camera: str = "unknown",
+    calibration_model=None,  # type: Optional[Any]
 ) -> None:
     """
     Generate a standalone calibration quality report as a PNG image.
@@ -775,11 +878,19 @@ def generate_quality_report(
     Contains: summary statistics, calibration curve with fit,
     residual plot, and optionally LOO-CV results.
 
+    Phase 11: when ``calibration_model`` (the unified
+    ``physics.CalibrationModel``) is provided, the report is method-aware:
+    the fit curve, residuals, and LOO numbers all reflect the chosen
+    method (linear / quadrature / hybrid). Without it, falls back to
+    the linear fit embedded in ``result``.
+
     Args:
-        result: Calibration result from Approach A
+        result: Calibration result from Approach A (linear-only legacy)
         output_path: Path to save the report image
-        loo_result: Optional LOO-CV results for uncertainty display
+        loo_result: Optional LOO-CV results (linear) for uncertainty display
         camera: Camera identifier for the title
+        calibration_model: Optional CalibrationModel for method-aware
+            display. Carries its own loo_cv field with per-method LOO.
     """
     try:
         import matplotlib
@@ -788,19 +899,50 @@ def generate_quality_report(
     except ImportError:
         return
 
+    cm = calibration_model
+    method_label = cm.method.upper() if cm is not None else "LINEAR"
     fig, axes = plt.subplots(1, 2, figsize=(12, 5))
-    fig.suptitle(f"Calibration Quality Report — Camera {camera}", fontsize=13)
+    fig.suptitle(
+        f"Calibration Quality Report — Camera {camera} "
+        f"(method: {method_label})",
+        fontsize=13)
 
     z = np.array(result.z_values)
     sigma = np.array(result.sigma_values)
-    sigma_fit = np.array(result.sigma_fitted)
+    if cm is not None:
+        # Method-aware fit curve via the unified CalibrationModel
+        sigma_fit = np.array([float(cm.forward(abs(float(zi)))) for zi in z])
+    else:
+        sigma_fit = np.array(result.sigma_fitted)
 
     # Left panel: calibration curve + fit
     ax1 = axes[0]
     ax1.scatter(z, sigma, s=20, c="steelblue", zorder=3, label="Measured")
     sort_idx = np.argsort(z)
+    # Method-aware fit-line label
+    if cm is not None:
+        if cm.method == 'linear':
+            _fit_lbl = (f"Fit (linear): \u03c1={cm.rho_px_per_mm:.4f}, "
+                        f"\u03c3\u2080={cm.sigma_0_calib_px:.3f}")
+        elif cm.method == 'quadrature':
+            _fit_lbl = (f"Fit (quadrature): \u03c1={cm.rho_px_per_mm:.4f}, "
+                        f"\u03c3_floor={cm.sigma_floor_calib_px:.3f}")
+        else:
+            _lut_n = (len(cm.residual_lut_mm_px)
+                      if cm.residual_lut_mm_px else 0)
+            _fit_lbl = (f"Fit (hybrid): \u03c1={cm.rho_px_per_mm:.4f}, "
+                        f"\u03c3_floor={cm.sigma_floor_calib_px:.3f}, "
+                        f"LUT n={_lut_n}")
+    else:
+        _fit_lbl = f"Fit: \u03c1={result.rho_px_per_mm:.4f} px/mm"
     ax1.plot(z[sort_idx], sigma_fit[sort_idx], "r-", linewidth=1.5,
-             label=f"Fit: \u03c1={result.rho_px_per_mm:.4f} px/mm")
+             label=_fit_lbl)
+    # Show linear fit as faint reference when chosen method is non-linear
+    if cm is not None and cm.method != 'linear':
+        sigma_lin = np.array(result.sigma_fitted)
+        ax1.plot(z[sort_idx], sigma_lin[sort_idx], "--", color="gray",
+                 alpha=0.5, linewidth=1,
+                 label=f"(linear ref: \u03c1={result.rho_px_per_mm:.4f})")
     ax1.set_xlabel("Defocus z (mm)")
     ax1.set_ylabel("Blur \u03c3 (px)")
     ax1.set_title("Calibration Curve")
@@ -825,10 +967,21 @@ def generate_quality_report(
         f"\u03c3\u2080 = {result.sigma_0:.3f} px",
         f"n = {result.num_points} points",
     ]
-    if loo_result and loo_result.rho_std > 0:
-        lines.append(f"\u03c1 (LOO-CV) = {loo_result.rho_mean:.4f} \u00b1 {loo_result.rho_std:.4f}")
+    # Method-aware LOO when present on the CalibrationModel; else linear fallback
+    method_loo = (cm.loo_cv if (cm is not None and cm.loo_cv) else None)
+    if method_loo and method_loo.get('rho_std', 0) > 0:
+        aux_name = method_loo.get('aux_param_name', 'aux')
         lines.append(
-            f"\u03c3\u2080 (LOO-CV) = {loo_result.sigma_0_mean:.3f} \u00b1 {loo_result.sigma_0_std:.3f}")
+            f"\u03c1 (LOO-CV, {method_label.lower()}) = "
+            f"{cm.rho_px_per_mm:.4f} \u00b1 {method_loo['rho_std']:.4f}")
+        lines.append(
+            f"{aux_name} std (LOO-CV) = "
+            f"\u00b1 {method_loo['aux_param_std']:.4f}")
+        lines.append(f"LOO MAE = {method_loo['loo_mae']:.3f} px")
+    elif loo_result and loo_result.rho_std > 0:
+        lines.append(f"\u03c1 (LOO-CV, linear) = {loo_result.rho_mean:.4f} \u00b1 {loo_result.rho_std:.4f}")
+        lines.append(
+            f"\u03c3\u2080 (LOO-CV, linear) = {loo_result.sigma_0_mean:.3f} \u00b1 {loo_result.sigma_0_std:.3f}")
         lines.append(f"LOO MAE = {loo_result.loo_mae:.3f} px")
     lines.append(f"Generated: {datetime.now().strftime('%Y-%m-%d %H:%M')}")
 
@@ -839,3 +992,320 @@ def generate_quality_report(
     fig.tight_layout(rect=[0, 0.08, 1, 0.95])
     fig.savefig(output_path, dpi=150, bbox_inches="tight")
     plt.close(fig)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# Phase 3 — Quadrature and hybrid calibration fits
+# (Linear fit `calibrate_approach_a` above is unchanged for backward compat;
+# these new fits return a `CalibrationModel` directly so downstream pipeline
+# stages can use the unified abstraction.)
+# ══════════════════════════════════════════════════════════════════════════
+
+
+def _ensure_repo_in_syspath():
+    """physics.py lives at the CROPPING root. When this module is imported
+    from a context that didn't already add the root (e.g. a test or
+    standalone script), make sure it's available."""
+    import sys as _sys
+    from pathlib import Path as _P
+    _root = _P(__file__).resolve().parent.parent
+    if str(_root) not in _sys.path:
+        _sys.path.insert(0, str(_root))
+
+
+def _filter_for_fit(z_positions, sigma_values, exclude_near_focus=0.5):
+    """Apply the same near-focus + plateau filtering that
+    ``calibrate_approach_a`` uses, returning the kept (z, sigma) arrays
+    plus the count of excluded points by reason.
+
+    Returns
+    -------
+    z_kept : np.ndarray
+    sigma_kept : np.ndarray
+    n_near_focus_excluded : int
+    n_plateau_excluded : int
+    """
+    z = np.asarray(z_positions, dtype=float)
+    sigma = np.asarray(sigma_values, dtype=float)
+
+    valid = ~np.isnan(sigma)
+    z = z[valid]
+    sigma = sigma[valid]
+
+    # Near-focus exclusion
+    far_from_focus = np.abs(z) >= exclude_near_focus
+    n_near_focus = int(np.sum(~far_from_focus))
+    z_far = z[far_from_focus]
+    sigma_far = sigma[far_from_focus]
+
+    if len(z_far) < 3:
+        return z, sigma, n_near_focus, 0  # too few; skip plateau detection
+
+    # Plateau detection (mirrors calibrate_approach_a logic)
+    sort_idx = np.argsort(z_far)
+    z_sorted = z_far[sort_idx]
+    s_sorted = sigma_far[sort_idx]
+    deltas = np.abs(np.diff(s_sorted))
+    median_delta = np.median(deltas) if len(deltas) > 0 else 0.0
+    threshold = median_delta * 0.3
+
+    neg_plateau_end = 0
+    consecutive = 0
+    for i in range(len(deltas)):
+        if deltas[i] < threshold:
+            consecutive += 1
+        else:
+            if consecutive >= 3:
+                neg_plateau_end = i
+            break
+    else:
+        if consecutive >= 3:
+            neg_plateau_end = len(deltas)
+
+    pos_plateau_start = len(z_sorted)
+    consecutive = 0
+    for i in range(len(deltas) - 1, -1, -1):
+        if deltas[i] < threshold:
+            consecutive += 1
+        else:
+            if consecutive >= 3:
+                pos_plateau_start = i + 1
+            break
+    else:
+        if consecutive >= 3:
+            pos_plateau_start = 0
+
+    keep_mask = np.ones(len(z_sorted), dtype=bool)
+    keep_mask[:neg_plateau_end] = False
+    keep_mask[pos_plateau_start:] = False
+    n_plateau = int(np.sum(~keep_mask))
+
+    return z_sorted[keep_mask], s_sorted[keep_mask], n_near_focus, n_plateau
+
+
+def _per_side_slopes(z_kept, sigma_kept):
+    """Diagnostic only: fit ρ separately for +z and −z subsets.
+
+    Returns ``{'neg': ρ_neg, 'pos': ρ_pos}`` (each None if insufficient
+    data on that side). Used as ``fit_metadata.rho_per_side`` to
+    quantify lens asymmetry.
+    """
+    out = {"neg": None, "pos": None}
+    z = np.asarray(z_kept, dtype=float)
+    s = np.asarray(sigma_kept, dtype=float)
+    for side, mask in [("neg", z < 0), ("pos", z > 0)]:
+        if int(np.sum(mask)) < 3:
+            continue
+        z_side = np.abs(z[mask])
+        s_side = s[mask]
+        try:
+            popt, _ = curve_fit(linear_model, z_side, s_side,
+                                  p0=[1.0, np.min(s_side)],
+                                  bounds=([0.01, 0], [100, 50]))
+            out[side] = float(popt[0])
+        except (RuntimeError, ValueError):
+            pass
+    return out
+
+
+def _bounds_from_fit(z_kept, sigma_kept, model):
+    """Compute trust bounds (σ_min/max_trusted, z_min/max_trusted, plus
+    asymmetric per-side z caps) from the kept-after-filter points and
+    the fitted CalibrationModel."""
+    sigma_min = float(np.min(sigma_kept))
+    sigma_max = float(np.max(sigma_kept))
+    z_kept_arr = np.asarray(z_kept, dtype=float)
+    abs_z_min = float(np.min(np.abs(z_kept_arr)))
+    abs_z_max = float(np.max(np.abs(z_kept_arr)))
+    z_max_neg = float(np.max(np.abs(z_kept_arr[z_kept_arr < 0]))) if np.any(z_kept_arr < 0) else None
+    z_max_pos = float(np.max(z_kept_arr[z_kept_arr > 0])) if np.any(z_kept_arr > 0) else None
+    return {
+        "sigma_min_trusted_calib_px": sigma_min,
+        "sigma_max_trusted_calib_px": sigma_max,
+        "z_min_trusted_mm": abs_z_min,
+        "z_max_trusted_mm": abs_z_max,
+        "z_max_trusted_neg_mm": z_max_neg,
+        "z_max_trusted_pos_mm": z_max_pos,
+    }
+
+
+def _quadrature_model_func(z, rho, sigma_floor):
+    """σ = √((ρ|z|)² + σ_floor²) — least-squares target for quadrature fit."""
+    return np.sqrt((rho * np.abs(z)) ** 2 + sigma_floor ** 2)
+
+
+def calibrate_to_model(
+    method: str,
+    z_positions: List[float],
+    sigma_values: List[float],
+    s_calib_px_per_mm: Optional[float] = None,
+    exclude_near_focus: float = 0.5,
+    source_csv: Optional[str] = None,
+):
+    """Unified entry point — fit a calibration of the requested method
+    and return a ``physics.CalibrationModel`` ready for the pipeline.
+
+    Method dispatch:
+    - ``linear``     — σ = ρ|z| + σ₀  (delegates to calibrate_approach_a)
+    - ``quadrature`` — σ = √((ρ|z|)² + σ_floor²)
+    - ``hybrid``     — quadrature + per-|z| residual LUT
+
+    Trust bounds derived from the post-plateau-filter kept points (53 of
+    61 in the user's calibration). Per-side slopes recorded in
+    ``fit_metadata.rho_per_side`` for asymmetry diagnostics.
+    """
+    _ensure_repo_in_syspath()
+    from physics import CalibrationModel
+
+    if method not in ("linear", "quadrature", "hybrid"):
+        raise ValueError(
+            f"Unknown calibration method '{method}'. "
+            f"Must be one of: linear, quadrature, hybrid")
+
+    z_kept, sigma_kept, n_near_focus, n_plateau = _filter_for_fit(
+        z_positions, sigma_values, exclude_near_focus)
+    n_total = int(len(z_positions))
+    n_kept = int(len(z_kept))
+
+    if n_kept < 3:
+        raise ValueError(
+            f"Insufficient calibration points after filtering: {n_kept} kept "
+            f"from {n_total} (filtered {n_near_focus} near focus, {n_plateau} "
+            f"plateau). Need at least 3 to fit.")
+
+    # Diagnostic: per-side slopes (always recorded)
+    rho_per_side = _per_side_slopes(z_kept, sigma_kept)
+
+    fit_metadata_base = {
+        "num_points_total": n_total,
+        "num_points_kept": n_kept,
+        "num_near_focus_excluded": n_near_focus,
+        "num_plateau_excluded": n_plateau,
+        "rho_per_side": rho_per_side,
+        "fit_timestamp": datetime.now().isoformat(timespec="seconds"),
+        "source_csv": source_csv,
+        # Phase 11: arrays so plot code can color-code kept vs excluded.
+        # Lists of floats; not vectorised here for yaml-friendliness.
+        "z_kept_mm": [float(zi) for zi in z_kept],
+        "sigma_kept_calib_px": [float(si) for si in sigma_kept],
+        "exclude_near_focus_mm": float(exclude_near_focus),
+    }
+
+    # Method-specific fits
+    abs_z_kept = np.abs(z_kept)
+
+    if method == "linear":
+        try:
+            popt, _ = curve_fit(
+                linear_model, z_kept, sigma_kept,
+                p0=[1.0, max(np.min(sigma_kept) - 0.5, 0.0)],
+                bounds=([0.01, 0], [100, 50]),
+            )
+            rho, sigma_0 = float(popt[0]), float(popt[1])
+            sigma_pred = linear_model(z_kept, rho, sigma_0)
+            ss_res = float(np.sum((sigma_kept - sigma_pred) ** 2))
+            ss_tot = float(np.sum((sigma_kept - np.mean(sigma_kept)) ** 2))
+            r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+        except (RuntimeError, ValueError) as e:
+            raise ValueError(f"Linear fit failed: {e}")
+
+        bounds = _bounds_from_fit(z_kept, sigma_kept, None)
+        fit_metadata = {**fit_metadata_base, "r_squared": r_squared}
+        return CalibrationModel(
+            method="linear",
+            rho_px_per_mm=rho,
+            sigma_0_calib_px=sigma_0,
+            s_calib_px_per_mm=s_calib_px_per_mm,
+            fit_metadata=fit_metadata,
+            **bounds,
+        )
+
+    if method == "quadrature":
+        # Fit σ² = (ρ|z|)² + σ_floor² as σ = √(...) directly
+        try:
+            popt, _ = curve_fit(
+                _quadrature_model_func, z_kept, sigma_kept,
+                p0=[1.0, max(np.min(sigma_kept), 0.1)],
+                bounds=([0.01, 0.0], [100, 50]),
+            )
+            rho, sigma_floor_raw = float(popt[0]), float(popt[1])
+        except (RuntimeError, ValueError) as e:
+            raise ValueError(f"Quadrature fit failed: {e}")
+
+        sigma_floor = sigma_floor_raw
+        if sigma_floor < 0:
+            print(f"  WARNING: quadrature fit returned negative sigma_floor "
+                  f"({sigma_floor_raw}); clamping to 0")
+            sigma_floor = 0.0
+
+        sigma_pred = _quadrature_model_func(z_kept, rho, sigma_floor)
+        ss_res = float(np.sum((sigma_kept - sigma_pred) ** 2))
+        ss_tot = float(np.sum((sigma_kept - np.mean(sigma_kept)) ** 2))
+        r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+
+        bounds = _bounds_from_fit(z_kept, sigma_kept, None)
+        fit_metadata = {
+            **fit_metadata_base,
+            "r_squared": r_squared,
+            "sigma_floor_raw_px": sigma_floor_raw,
+        }
+        return CalibrationModel(
+            method="quadrature",
+            rho_px_per_mm=rho,
+            sigma_floor_calib_px=sigma_floor,
+            s_calib_px_per_mm=s_calib_px_per_mm,
+            fit_metadata=fit_metadata,
+            **bounds,
+        )
+
+    if method == "hybrid":
+        # Step 1: fit quadrature first
+        try:
+            popt, _ = curve_fit(
+                _quadrature_model_func, z_kept, sigma_kept,
+                p0=[1.0, max(np.min(sigma_kept), 0.1)],
+                bounds=([0.01, 0.0], [100, 50]),
+            )
+            rho, sigma_floor_raw = float(popt[0]), float(popt[1])
+        except (RuntimeError, ValueError) as e:
+            raise ValueError(f"Hybrid (quadrature step) fit failed: {e}")
+
+        sigma_floor = max(sigma_floor_raw, 0.0)
+        sigma_pred = _quadrature_model_func(z_kept, rho, sigma_floor)
+        residuals = sigma_kept - sigma_pred  # Δσ per point at calib scale
+
+        # Step 2: build per-|z| residual LUT, averaging ±z at same magnitude.
+        # Round abs_z to 4 decimals so e.g. -0.6 and +0.6 collide cleanly.
+        rounded_abs_z = np.round(abs_z_kept, 4)
+        unique_abs = np.unique(rounded_abs_z)
+        lut: List[Tuple[float, float]] = []
+        for az in unique_abs:
+            mask = rounded_abs_z == az
+            d_mean = float(np.mean(residuals[mask]))
+            lut.append((float(az), d_mean))
+        lut.sort(key=lambda p: p[0])
+
+        ss_res = float(np.sum(residuals ** 2))
+        ss_tot = float(np.sum((sigma_kept - np.mean(sigma_kept)) ** 2))
+        r_squared = 1.0 - ss_res / ss_tot if ss_tot > 0 else 0.0
+
+        bounds = _bounds_from_fit(z_kept, sigma_kept, None)
+        max_abs_residual = float(np.max(np.abs(residuals)))
+        fit_metadata = {
+            **fit_metadata_base,
+            "r_squared": r_squared,
+            "sigma_floor_raw_px": sigma_floor_raw,
+            "max_abs_residual_px": max_abs_residual,
+            "n_lut_points": len(lut),
+        }
+        return CalibrationModel(
+            method="hybrid",
+            rho_px_per_mm=rho,
+            sigma_floor_calib_px=sigma_floor,
+            residual_lut_mm_px=lut,
+            s_calib_px_per_mm=s_calib_px_per_mm,
+            fit_metadata=fit_metadata,
+            **bounds,
+        )
+
+    raise RuntimeError(f"Unhandled method branch: {method}")  # defensive
