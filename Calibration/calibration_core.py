@@ -1110,18 +1110,37 @@ def _per_side_slopes(z_kept, sigma_kept):
 
 def _bounds_from_fit(z_kept, sigma_kept, model):
     """Compute trust bounds (σ_min/max_trusted, z_min/max_trusted, plus
-    asymmetric per-side z caps) from the kept-after-filter points and
-    the fitted CalibrationModel."""
-    sigma_min = float(np.min(sigma_kept))
-    sigma_max = float(np.max(sigma_kept))
+    asymmetric per-side σ and z caps) from the kept-after-filter points
+    and the fitted CalibrationModel.
+
+    sigma_max_trusted is the *cross-side conservative* min — the
+    smaller of the per-side σ ceilings. This is what a sign-blind model
+    can trust regardless of which side a prediction came from. The
+    per-side values are also recorded for diagnostics and for downstream
+    consumers that know the sign.
+    """
     z_kept_arr = np.asarray(z_kept, dtype=float)
+    sigma_kept_arr = np.asarray(sigma_kept, dtype=float)
+
+    sigma_min = float(np.min(sigma_kept_arr))
+
+    # Per-side σ ceilings — the fit's σ domain on each side independently.
+    neg_mask = z_kept_arr < 0
+    pos_mask = z_kept_arr > 0
+    sigma_max_neg = float(sigma_kept_arr[neg_mask].max()) if np.any(neg_mask) else None
+    sigma_max_pos = float(sigma_kept_arr[pos_mask].max()) if np.any(pos_mask) else None
+    candidates = [s for s in (sigma_max_neg, sigma_max_pos) if s is not None]
+    sigma_max = min(candidates) if candidates else float(sigma_kept_arr.max())
+
     abs_z_min = float(np.min(np.abs(z_kept_arr)))
     abs_z_max = float(np.max(np.abs(z_kept_arr)))
-    z_max_neg = float(np.max(np.abs(z_kept_arr[z_kept_arr < 0]))) if np.any(z_kept_arr < 0) else None
-    z_max_pos = float(np.max(z_kept_arr[z_kept_arr > 0])) if np.any(z_kept_arr > 0) else None
+    z_max_neg = float(np.max(np.abs(z_kept_arr[neg_mask]))) if np.any(neg_mask) else None
+    z_max_pos = float(np.max(z_kept_arr[pos_mask])) if np.any(pos_mask) else None
     return {
         "sigma_min_trusted_calib_px": sigma_min,
         "sigma_max_trusted_calib_px": sigma_max,
+        "sigma_max_trusted_neg_calib_px": sigma_max_neg,
+        "sigma_max_trusted_pos_calib_px": sigma_max_pos,
         "z_min_trusted_mm": abs_z_min,
         "z_max_trusted_mm": abs_z_max,
         "z_max_trusted_neg_mm": z_max_neg,
