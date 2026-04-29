@@ -210,6 +210,36 @@ class InferenceEngine:
         # rho_direct/sigma_0 (legacy checkpoints).
         self.calibration_model = self._build_calibration_model_from_config()
 
+        # Honesty layer: when a CalibrationModel is baked into the
+        # checkpoint, override the user-configurable settings (rho,
+        # sigma_0, s_calib, rho_std, sigma_0_std) with the values from
+        # the checkpoint. The checkpoint is the source of truth — what's
+        # actually used in the inversion is the CalibrationModel, so the
+        # settings dict should reflect that, not stale GUI defaults.
+        # `s_c` (inference camera scale) is left alone because it's
+        # deployment-specific and not knowable from the checkpoint.
+        self._calibration_source = "settings (no calibration_model in checkpoint)"
+        cm = self.calibration_model
+        if cm is not None:
+            cm_overrides = {
+                "rho": float(cm.rho_px_per_mm),
+                "sigma_0": float(cm.sigma_floor_calib_px or cm.sigma_0_calib_px or 0.0),
+                "s_calib": float(cm.s_calib_px_per_mm or self.settings.get("s_calib", DEFAULT_S_CALIB)),
+            }
+            loo = getattr(cm, "loo_cv", None) or {}
+            if loo:
+                cm_overrides["rho_std"] = float(loo.get("rho_std", 0.0))
+                cm_overrides["sigma_0_std"] = float(loo.get("aux_param_std", 0.0))
+            for k, v in cm_overrides.items():
+                self.settings[k] = v
+            self._calibration_source = (
+                f"checkpoint (method={cm.method}, sha256={cm.sha256()[:12]}...)")
+            print(f"  Calibration source: {self._calibration_source}")
+            print(f"  Settings overridden from checkpoint: "
+                  f"rho={cm_overrides['rho']:.4f}, "
+                  f"sigma_0/floor={cm_overrides['sigma_0']:.4f}, "
+                  f"s_calib={cm_overrides['s_calib']:.4f}")
+
         user_crop = int(self.settings.get("crop_size", DEFAULT_CROP_SIZE))
         mismatch_msg = ""
         if user_crop != self.model_size:
@@ -221,7 +251,8 @@ class InferenceEngine:
         return (
             f"Model loaded  |  mode={self.training_mode}  |  "
             f"max_blur={self.max_blur:.2f} px  |  "
-            f"model_size={self.model_size}{mismatch_msg}"
+            f"model_size={self.model_size}{mismatch_msg}\n"
+            f"  Calibration source: {self._calibration_source}"
         )
 
     # ── Frame selection ────────────────────────────────────────────────
@@ -299,24 +330,33 @@ class InferenceEngine:
 
         The flatten recipe is selected by ``settings['flatten_mode']``:
           - ``"calibration"`` (default): flatten_sphere_crop with
-            inner_margin=20, flatten_exterior=False — matches what tertiary
-            training samples were processed with. Empirically gives
-            6-21x lower MAE than ``"boundary_normalise"`` on calibration
-            spheres in the trustworthy regime.
-          - ``"boundary_normalise"``: legacy Otsu + cosine feather.
+            inner_margin=20, flatten_exterior=False — matches what
+            tertiary training samples were processed with. Empirically
+            gives 6-21x lower MAE than ``"boundary_normalise"`` on
+            calibration spheres in the trustworthy regime.
+          - ``"boundary_normalise"``: Otsu + cosine feather (cfg4).
+          - ``"simple"``: flatten_sphere_crop with default args
+            (cfg3 — inner_margin=0, flatten_exterior=True).
+          - ``"none"``: pass-through (no flatten — just resize to model
+            size). Use for inputs that have already been preprocessed
+            externally, e.g. calibration `processed_images/*.png` which
+            ARE the tertiary training inputs themselves.
         """
         feather_px = int(self.settings.get("feather_px", DEFAULT_FEATHER_PX))
         flatten_mode = str(self.settings.get("flatten_mode",
                                               DEFAULT_FLATTEN_MODE))
+
+        # Normalise the input crop to float32 in [0, 1] once
+        if crop.dtype == np.uint8:
+            img_f = crop.astype(np.float32) / 255.0
+        else:
+            img_f = crop.astype(np.float32)
+            if img_f.max() > 1.5:
+                img_f = img_f / 255.0
+
         if flatten_mode == "calibration":
             inner_margin = int(self.settings.get("inner_margin_px",
                                                   DEFAULT_INNER_MARGIN_PX))
-            if crop.dtype == np.uint8:
-                img_f = crop.astype(np.float32) / 255.0
-            else:
-                img_f = crop.astype(np.float32)
-                if img_f.max() > 1.5:
-                    img_f = img_f / 255.0
             flat, info = flatten_sphere_crop(img_f, inner_margin=inner_margin,
                                               flatten_exterior=False)
             if info is None:
@@ -324,7 +364,23 @@ class InferenceEngine:
                 norm_img = boundary_normalise(crop, feather_px=feather_px)
             else:
                 norm_img = flat
+        elif flatten_mode == "simple":
+            flat, info = flatten_sphere_crop(img_f)  # cfg3 defaults
+            if info is None:
+                norm_img = boundary_normalise(crop, feather_px=feather_px)
+            else:
+                norm_img = flat
+        elif flatten_mode == "none":
+            # Pass-through: input is already preprocessed (e.g. calibration
+            # `processed_images/*.png`). Just normalise dtype + range.
+            norm_img = img_f
+        elif flatten_mode == "boundary_normalise":
+            norm_img = boundary_normalise(crop, feather_px=feather_px)
         else:
+            # Unknown mode — log once + fall through to boundary_normalise
+            # (matches old behaviour for back-compat)
+            print(f"  WARNING: unknown flatten_mode='{flatten_mode}', "
+                  f"falling back to boundary_normalise")
             norm_img = boundary_normalise(crop, feather_px=feather_px)
 
         h, w = norm_img.shape[:2]
@@ -461,9 +517,10 @@ class InferenceEngine:
             )
 
         # Phase 7: get bounds_flag + method-aware defocus from CalibrationModel
-        # when present in the checkpoint. SATURATED rows write nan to
-        # defocus_mm; BELOW_FLOOR rows write 0.0. Legacy checkpoints
-        # without a calibration_model leave bounds_flag = "IN_RANGE".
+        # when present in the checkpoint. The inverse always returns a
+        # finite best-guess z; bounds_flag (IN_RANGE / BELOW_FLOOR /
+        # SATURATED) tells the caller how much to trust it. Legacy
+        # checkpoints without a calibration_model leave bounds_flag = "IN_RANGE".
         bounds_flag = "IN_RANGE"
         inversion_method = "linear"
         cm = getattr(self, 'calibration_model', None)
@@ -477,13 +534,12 @@ class InferenceEngine:
                 )
                 bounds_flag = str(flag_cm.value)
                 inversion_method = cm.method
-                # Override defocus_mm with method-aware result. SATURATED
-                # → nan (no honest answer); BELOW_FLOOR → 0.0.
+                # inverse_at always returns a finite best-guess z, even
+                # for SATURATED. The bounds_flag is what tells callers
+                # whether to trust it.
                 import math as _math
                 if not _math.isnan(z_cm):
                     result.defocus_mm = z_cm
-                else:
-                    result.defocus_mm = float('nan')
             except Exception as e:
                 print(f"  WARNING: CalibrationModel.inverse_at failed ({e}); "
                       f"using legacy linear result")
