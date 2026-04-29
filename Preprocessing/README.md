@@ -1,366 +1,355 @@
-# Droplet Preprocessing Pipeline
+# Preprocessing
 
-[![Python 3.x](https://img.shields.io/badge/python-3.x-blue.svg)](https://www.python.org/downloads/)
-[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+Turns raw Phantom `.cine` recordings of droplets falling onto a calibration
+sphere into the curated, per-pixel-flattened crops that Training reads.
 
-Extracts droplet crops from Phantom .cine files for CNN training. Handles frame selection, cropping, and focus-based filtering.
+Three things in order, per droplet:
 
-## How It Works
+1. Pick the best pre-collision frame (droplet fully formed, not yet touching
+   the sphere).
+2. Crop the droplet at a fixed size while shifting the crop box upward to
+   keep the sphere out.
+3. Flatten the residual sphere-illumination gradient via
+   `Calibration.sphere_processing.flatten_sphere_crop`. Every saved crop is
+   post-flattened — this is undocumented in older versions but load-bearing.
 
-Each .cine file contains a high-speed recording of a droplet falling onto a sphere. The pipeline finds the best frame to crop from, where "best" means the droplet is fully visible, hasn't yet collided with the sphere, and is roughly centred in the frame.
+Output is a `Focus/sharp_crops.csv` manifest plus the matching crops sorted
+by camera. Training discovers it automatically.
 
-Frame selection uses connected component analysis to locate the droplet and sphere in each frame. It scores frames by how symmetric the gaps are (droplet-to-image-top vs droplet-to-sphere), with a small weight on darkness to prefer frames where the droplet is more opaque. Frames where the droplet has already touched the sphere are rejected. When darkness analysis is disabled, an early-stop optimisation detects collision and stops scanning (~4x speedup).
+## Quick start
 
-Crops are sized to fit the droplet while excluding the sphere. If the crop would otherwise include the sphere, it shifts upward. In Global mode, a calibration pass computes the maximum safe crop height for each sample, then takes a low percentile (default 5th) as the uniform crop size. Set `calibration.percentile` to 0 for guaranteed sphere exclusion if detection is reliable. See [Calibration and Crop Sizing](#calibration-and-crop-sizing) for tuning.
+Prereqs: pyphantom installed and the project installed in editable mode.
+See the repo-root [INSTALL.md](../INSTALL.md) for both.
 
-Focus quality is measured using six edge-based metrics (Laplacian variance, Tenengrad, Brenner, etc). Classification into sharp/medium/blurry uses per-folder, per-camera thresholds at the 75th and 25th percentiles, so each camera within each folder contributes its sharpest ~25% regardless of lighting conditions or optical setup.
-
-The GUI shows live thumbnails, progress, and ETA. Processing runs in parallel across all CPU cores, with options for quick validation runs, single-process mode for debugging, and step sampling to process every Nth droplet.
-
-## Quick Start
-
-### 1. Install Python
-
-**IMPORTANT:** Python version requirements depend on your Phantom SDK version. Check your SDK documentation.
-
-Example: Many SDK versions require Python 3.11.x
-
-Download from [python.org](https://www.python.org/downloads/)
-
-During installation, make sure to check "Add Python to PATH".
-
-### 2. Install Phantom SDK (pyphantom)
-
-The Phantom SDK (pyphantom) is required to read .cine files. It's not publicly available - obtain from Vision Research or your institution.
-
-**Installation varies by SDK version.** Typically:
-1. Install the pyphantom wheel from your SDK's Python folder
-2. Add the SDK's DLL directory to your system PATH (Windows: `PhantomSDK\Bin\Win64`)
-3. Install Visual C++ Redistributable if needed (usually in SDK's Bin folder)
+Three equivalent launch commands:
 
 ```bash
-# Example installation (paths vary by SDK version)
-pip install "path/to/PhantomSDK/Python/pyphantom*.whl"
-
-# Verify
-python -c "import pyphantom; print('OK')"
+cropping-preprocess              # console script (pip install -e .)
+python -m Preprocessing          # module form
+python Preprocessing/gui.py      # F5-friendly direct launch
 ```
 
-**Windows PATH setup example:**
-```powershell
-[Environment]::SetEnvironmentVariable("Path", [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User) + ";C:\path\to\PhantomSDK\Bin\Win64", [EnvironmentVariableTarget]::User)
-```
+Minimal flow:
 
-After setup, restart your terminal/IDE.
+1. **Browse** to a CINE root (a folder containing `.cine` files OR a parent
+   folder containing subfolders of `.cine` files).
+2. **Continue** — the GUI scans, shows `N folders, ~M droplets`.
+3. Edit the **Run label** field if you want (auto-fills with the source
+   folder basename — e.g. `4mm-borosilicate`).
+4. **Start.** A timestamped run dir is created at
+   `Preprocessing/output/runs/<YYYY-MM-DD_HHMMSS>_<label>/` and crops start
+   appearing in the Recent Outputs row as workers finish.
+5. When the pipeline completes, point Training at this run's `Focus/`
+   directory — Training auto-discovers `sharp_crops.csv` from there.
 
-### 3. Set Up Environment
+Each Start creates its own run dir. Re-runs never overwrite earlier runs.
 
-```bash
-# Create virtual environment (recommended)
-python -m venv droplet_env
-droplet_env\Scripts\activate  # Windows
-# source droplet_env/bin/activate  # Linux/Mac
+## The pipeline
 
-# Install dependencies
-pip install -r requirements.txt
-```
-
-### 4. Run Pipeline
-
-```bash
-python gui.py
-```
-
-### 5. Configure in GUI
-
-1. **CINE Root**: either a parent folder containing subfolders with .cine files, or a single folder with .cine files directly
-2. **Output Folder**: defaults to `./OUTPUT`
-3. Click **Continue**, configure options, then **Run Pipeline**
-
-## Project Structure
+Default mode is **Global** (single calibrated crop size across all folders).
+Three phases plus a focus-classification pass at the end:
 
 ```
-droplet-preprocessing/
-├── gui.py                   # GUI interface (main entry point)
-├── config.py                # Default configuration
-├── setup_environment.py     # Environment verification
-├── requirements.txt         # Python dependencies
-├── README.md
-├── LICENSE
-│
-├── pipeline_global.py       # Global calibration pipeline
-├── pipeline_folder.py       # Per-folder pipeline
-│
-├── cine_io.py               # .cine file reading and SDK import
-├── darkness_analysis.py     # Best frame selection
-├── geom_analysis.py         # Droplet geometry
-├── crop_calibration.py      # Crop size calibration
-├── cropping.py              # Image cropping
-├── image_utils.py           # Image utilities
-│
-├── focus_metrics.py         # Focus quality metrics
-├── focus_classification.py  # Focus classification for pipeline
-├── focus_analysis.py        # Standalone focus analysis CLI
-│
-├── output_writer.py         # CSV/output generation
-├── plotting.py              # Visualisation
-├── parallel_utils.py        # Multiprocessing
-├── profiling.py             # Timing and profiling utilities
-├── workers.py               # Parallel worker functions
-│
-└── OUTPUT/                  # Generated outputs (default)
-    ├── {material}/
-    │   ├── {material}_summary.csv
-    │   ├── g/               # Green camera outputs
-    │   │   ├── crops/
-    │   │   └── visualizations/
-    │   ├── v/               # Violet camera outputs
-    │   └── m/               # Mono camera outputs (if present)
-    │
-    └── Focus/               # Focus classification results
-        ├── sharp_crops.csv
-        └── {material}/{camera}/  # Sharp images by material and camera
+Phase 1 — Analyse droplets         (parallel, all cores by default)
+   ↓ per-droplet droplet & sphere geometry
+   ↓ produces (y_top, y_bottom, y_sphere, cx) per camera
+
+Phase 2 — Calibrate crop size      (instant, single pass on Phase 1 output)
+   ↓ Nth percentile of allowed heights across all droplets (default 5th)
+   ↓ produces one cnn_size used for every output
+
+Phase 3 — Generate outputs         (parallel)
+   ↓ reload frame → crop → flatten via Calibration → save PNG
+   ↓ compute six legacy focus metrics → write per-folder summary CSV
+
+Focus classification               (single-process, runs after the pipeline)
+   ↓ measure ERF blur sigma on every saved crop
+   ↓ classify per folder + per camera at 25th/75th percentile
+   ↓ copy sharp crops into Focus/{material}/{cam}/
+   ↓ write Focus/sharp_crops.csv (the Training contract)
 ```
 
-## Pipeline Modes
+**Per-folder mode** runs the same three phases but calibrates a separate
+crop size for each folder. Use it when different folders were captured with
+different optical setups; the GUI greys out Global mode automatically when
+the input is a single folder.
 
-**Global mode** calibrates crop size across all folders, so every crop has the same dimensions. Only available when you select a parent folder with multiple subfolders.
+**Quick test mode** processes only the first droplet of each folder and
+generates the darkness curve + geometry overlay. Use it to confirm
+detection works before committing to a full run.
 
-**Per-folder mode** processes each folder independently. Crop sizes may vary between folders. Automatically selected when processing a single folder.
+## GUI fields
 
-## Focus Classification
+The main screen has five config groups, plus the Run label entry next to
+Start.
 
-Focus classification runs automatically after processing. It computes focus metrics for each crop, classifies them as sharp/medium/blurry, and copies the sharp ones to `OUTPUT/Focus/{material}/{camera}/`.
+### Execution mode
 
-### Per-Folder, Per-Camera Thresholds
+| Field | What it does |
+|---|---|
+| Quick test (1st droplet/folder) | Smoke-test detection; produces overlay + darkness PNGs only. Disables every other field except Safe mode. |
+| Full pipeline | Real run. All three phases. |
+| Parallel cores | Worker count for Phases 1 and 3. Defaults to all detected cores. |
+| Safe mode (single process) | Forces sequential processing for debugging. Ignored in Quick test mode. |
 
-Each camera within each folder is classified independently:
-- Each camera (g, v, m) contributes its sharpest ~25% to training
-- Different cameras have different optical properties (wavelength, depth of field)
-- Accounts for different lighting/focus between sessions and camera types
-- Ensures balanced training data from each camera type for multi-view CNN training
+### Sampling
 
-### Standalone Analysis
+`Every Nth droplet` — controls how aggressively to subsample. A folder of
+1500 droplets at step=10 yields 150. Use 1 for small datasets where you
+want everything; 5 or 10 for production runs.
 
-To rerun focus analysis on existing crops without reprocessing:
-```bash
-python focus_analysis.py path/to/OUTPUT
+### Calibration
+
+| Field | When to use |
+|---|---|
+| Per-folder crop | Each folder gets its own crop size. Required when input is a single folder (Global is greyed out). |
+| Global crop | One crop size across all folders. Cleaner training data when folders share an optical setup. Only enabled when the input has multiple subfolders. |
+
+### Outputs
+
+| Field | What it does |
+|---|---|
+| Crops only (fastest) | Skips overlay and darkness plots — just the crops + summary CSVs. |
+| All plots | Adds `*_overlay.png` (geometry annotation) and `*_darkness.png` (darkness curve with selected frame marked) per droplet. ~3× slower. |
+| Enable profiling | Writes `profiling.json` in the run dir with per-phase timings. |
+
+### Frame Selection
+
+| Field | What it does |
+|---|---|
+| Use darkness weighting (4× slower) | OFF by default. ON adds the dark-fraction curve to the best-frame scoring. The submitted dissertation reports the OFF (geometry-only) path; ~86% of best-frame picks agree between the two modes. |
+
+### Run label
+
+Auto-fills from the basename of your CINE root. Edit freely. Becomes the
+suffix of the run dir name; the timestamp is prepended automatically.
+
+## Outputs
+
+Every Start creates a fresh run dir:
+
+```
+Preprocessing/output/runs/2026-04-29_153022_4mm-borosilicate/
+├── run_metadata.yaml             # settings + outcomes for this run
+├── Focus/                        # what Training reads
+│   ├── sharp_crops.csv
+│   ├── focus_classified_all.csv
+│   ├── focus_folder_stats.csv
+│   ├── focus_classification_summary.png
+│   └── {material}/{cam}/*.png    # sharp crops, one folder per camera
+├── {material}/                   # full output, all crops (sharp+medium+blurry)
+│   ├── {material}_summary.csv
+│   ├── g/crops/sphere0843g_crop.png
+│   ├── v/crops/...
+│   └── m/crops/...
+├── flatten_failures.log          # only if any flatten attempts failed
+└── profiling.json                # only if profiling was on
 ```
 
-## Calibration and Crop Sizing
+**The legacy `Preprocessing/OUTPUT/` directory is untouched** by this layout.
+If you have historical runs there, they keep working as-is; new Starts go
+to `output/runs/`.
 
-### How It Works
+### `Focus/sharp_crops.csv` columns
 
-In Global mode, the pipeline computes a single crop size across all samples so the CNN receives uniform input dimensions. For each droplet:
+| Column | Source | Used by |
+|---|---|---|
+| `filename` | crop basename | Training (lookup key) |
+| `crop_path` | absolute path on disk | Training |
+| `camera` | `g` / `v` / `m` | Training (per-camera filtering) |
+| `droplet_id` | numeric ID parsed from `.cine` filename | reference |
+| `cine_file` | source `.cine` filename | reference |
+| `best_frame` | frame index chosen | reference |
+| `dark_fraction` | darkness at best frame (0 if geometry-only) | reference |
+| `y_top`, `y_bottom`, `y_sphere` | detected geometry, pixels | reference |
+| `crop_size_px` | crop dimension (square) | Training |
+| `laplacian_var`, `tenengrad`, `tenengrad_var`, `brenner`, `norm_laplacian`, `energy_gradient` | six legacy focus metrics, kept for reference only | none |
+| `erf_sigma` | ERF blur sigma — the actual classifier | reference |
+| `focus_class` | `sharp` / `medium` / `blurry` | filtered to `sharp` only in this CSV |
+| `diameter_px` | `y_bottom − y_top`, added by classifier | Training (synthetic-blur sizing) |
+| `native_blur_sigma` | same as `erf_sigma`, added under the name Training expects | Training |
 
-1. **Measure geometry**: diameter (droplet height), gap (space between droplet bottom and sphere top), top margin (space from image top to droplet top)
-2. **Compute allowed height**: `diameter + 2 × max(0, gap - safety_pixels)`
-3. **Take percentile**: Use the Nth percentile across all samples as the global crop size
+### `run_metadata.yaml` fields
 
-### Key Parameters
-
-| Parameter | Default | Effect |
-|-----------|---------|--------|
-| `calibration.percentile` | 5.0 | Which percentile of allowed heights to use. Lower = smaller crops, safer. |
-| `crop.safety_pixels` | 3 | Extra margin subtracted from the gap before computing allowed height. |
-
-### Tuning Guide
-
-**If crops include the sphere** (sphere visible at bottom of crop):
-- Lower `calibration.percentile` (e.g., 2.0 or 1.0)
-- Or increase `safety_pixels` (e.g., 5 or 10)
-
-**If crops are too small** (excessive padding around droplet):
-- Raise `calibration.percentile` (e.g., 10.0)
-- Or decrease `safety_pixels`
-
-**For guaranteed sphere exclusion** (recommended if geometry detection is reliable):
-- Set `calibration.percentile: 0` to use the minimum allowed height across all samples
-- This ensures no crop ever includes the sphere, but produces smaller crops
-- Only use if you're confident the detection has no outliers causing falsely small gaps
-
-### The Trade-off
-
-The percentile approach handles noisy/outlier data:
-- **5th percentile**: ~95% of crops guaranteed sphere-free, ~5% may clip the sphere slightly
-- **0th percentile (minimum)**: 100% sphere-free, but a single outlier with a tiny gap makes all crops small
-
-If your geometry detection is solid (consistent frame selection, no false detections), using `percentile: 0` is safe and guarantees clean crops.
-
-## Output Files
-
-### Directory Structure
-```
-OUTPUT/
-├── {material}/
-│   ├── {material}_summary.csv              # Metadata for all crops in this material
-│   ├── g/                                  # Green camera outputs
-│   │   ├── crops/
-│   │   │   └── sphere0843g_crop.png        # Grayscale droplet crop
-│   │   └── visualizations/
-│   │       ├── sphere0843g_darkness.png    # Darkness curve plot (full output mode)
-│   │       └── sphere0843g_overlay.png     # Geometric overlay (full output mode)
-│   ├── v/                                  # Violet camera outputs
-│   │   ├── crops/
-│   │   └── visualizations/
-│   └── m/                                  # Mono camera outputs (if present)
-│       ├── crops/
-│       └── visualizations/
-│
-├── Focus/                                  # Focus classification results
-│   ├── sharp_crops.csv                     # All sharp crops with metrics
-│   ├── focus_classified_all.csv            # All crops with classifications
-│   ├── focus_folder_stats.csv              # Per-folder+camera statistics
-│   ├── focus_classification_summary.png    # Distribution visualisation
-│   └── {material}/
-│       ├── g/                              # Sharp crops from green camera
-│       ├── v/                              # Sharp crops from violet camera
-│       └── m/                              # Sharp crops from mono camera
-│
-└── focus_metrics_computed.csv              # Combined metrics from all folders
-```
-
-### Crop Images
-
-Grayscale droplet crops, e.g. `sphere0843g_crop.png`. In Global mode, all crops are the same size (e.g. 388x388).
-
-### Visualisation Plots (Full Output Mode)
-
-Only generated when "All plots" is selected:
-- `*_darkness.png`: darkness curve with the selected frame marked
-- `*_overlay.png`: detected droplet/sphere boundaries
-
-### Summary CSV
-Each folder produces `{folder}_summary.csv`:
-
-| Column | Description |
-|--------|-------------|
-| droplet_id | Droplet identifier |
-| camera | g (green), v (violet), or m (mono/main) |
-| cine_file | Source .cine filename |
-| best_frame | Selected frame index |
-| dark_fraction | Darkness metric at best frame |
-| y_top, y_bottom, y_sphere | Detected geometry |
-| crop_size_px | Crop dimensions |
-| crop_path | Path to crop image |
-| laplacian_var | Focus metric (edge strength) |
-| tenengrad | Focus metric (gradient magnitude) |
-| tenengrad_var | Focus metric (gradient variance) |
-| brenner | Focus metric (local contrast) |
-| norm_laplacian | Focus metric (normalised Laplacian) |
-| energy_gradient | Focus metric (energy of gradient) |
+| Key | What it captures |
+|---|---|
+| `label` | the user-supplied or auto-filled run label |
+| `cine_root` | source `.cine` directory |
+| `run_dir` | absolute path of this run dir |
+| `started_at` / `finished_at` | ISO-8601 timestamps |
+| `elapsed_seconds` | wall-clock duration |
+| `mode` | `global` / `per-folder` / `quick-test` |
+| `sampling_step` | the `Every Nth` value used |
+| `use_darkness`, `full_output`, `safe_mode`, `profile` | all toggles as set on Start |
+| `n_cores` | parallel-worker count |
+| `n_folders`, `n_droplets_processed` | scope of the run (Global mode) |
+| `calibrated_crop_size_px` | the single Global crop size (Global mode only) |
+| `flatten_failures` | count of crops where sphere detection failed during flattening |
 
 ## Configuration
 
-All parameters are in `preprocessing_config.yaml`. GUI overrides path settings at runtime.
+All knobs live in [preprocessing_config.yaml](preprocessing_config.yaml).
+The GUI overrides `paths.cine_root` and `paths.output_root` at runtime;
+everything else needs a YAML edit.
 
-### Crop Sizing
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `crop.max_cnn_size` | 512 | Maximum crop size (pixels) |
-| `crop.min_cnn_size` | 64 | Minimum crop size (pixels) |
-| `crop.safety_pixels` | 3 | Margin subtracted from gap. Increase if sphere appears in crops. |
+| Section | Key | Default | What it controls |
+|---|---|---|---|
+| `paths` | `cine_root` | `./data` | Default `.cine` source dir (overridden by GUI Browse) |
+| `paths` | `output_root` | `./output` | Parent dir under which `runs/<timestamp>_<label>/` lives |
+| `crop` | `max_cnn_size` | 512 | Hard cap on crop dimension |
+| `crop` | `min_cnn_size` | 64 | Hard floor on crop dimension |
+| `crop` | `safety_pixels` | 3 | Vertical margin subtracted from the droplet→sphere gap before crop sizing. Raise if crops include the sphere. |
+| `sampling` | `cine_step` | 10 | Process every Nth droplet (overridden by GUI) |
+| `geometry` | `min_area` | 50 | Minimum connected-component area (px) to count as a candidate droplet/sphere |
+| `geometry` | `sphere_width_ratio` | 0.30 | Sphere candidate must span at least this fraction of frame width |
+| `geometry` | `sphere_center_tolerance` | 0.35 | Sphere centre must lie within this fraction of frame centre |
+| `best_frame` | `n_candidates` | 20 | Candidate frames considered per `.cine` (full-output / darkness mode) |
+| `best_frame` | `darkness_threshold_percentile` | 70.0 | Darkness percentile above which frames qualify as candidates |
+| `best_frame` | `darkness_weight` | 0.05 | Weight of darkness vs centring error in the best-frame score |
+| `calibration` | `percentile` | 5.0 | Percentile of allowed heights used as the global crop size. 0 = guaranteed sphere exclusion at the cost of small crops. |
+| `focus` | `enabled` | true | Compute the six legacy focus metrics (kept in CSV for reference) |
+| `focus` | `primary_metric` | `laplacian_var` | Legacy field; ignored by the active ERF classifier |
+| `focus` | `sharp_threshold`, `blur_threshold` | null | Legacy fields; ignored. ERF classifier always uses 25th/75th percentiles per folder+camera. |
 
-### Calibration
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `calibration.percentile` | 5.0 | Percentile of allowed heights. Set to 0 for guaranteed sphere exclusion. |
+## Caveats and gotchas
 
-### Sampling
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `sampling.cine_step` | 10 | Process every Nth droplet (1 = all) |
+- **Filename contract.** Droplet grouping uses regex `(\d+)([gmv])$` on
+  the `.cine` stem. Files matching `sphere0843g.cine`, `sphere0843v.cine`,
+  `sphere0843m.cine` get grouped as droplet `0843` with cameras `g`, `v`,
+  `m`. Anything else is silently skipped. The `t` suffix appears in
+  `scale_lookup.py` defaults but is not in the regex.
+- **Camera codes.** `g` green, `v` violet, `m` mono. Focus classification
+  is independent per camera — each contributes its own sharpest 25%
+  regardless of which camera saw the cleanest frames overall.
+- **Sphere flattening is mandatory.** Every saved crop is post-processed by
+  `Calibration.sphere_processing.flatten_sphere_crop`. When sphere detection
+  fails inside the crop the unflattened crop is returned and the failure
+  is logged to `flatten_failures.log`. A non-zero count is normal for the
+  `m` camera, where the sphere is sometimes only partially in frame.
+- **Focus classifier is ERF blur sigma.** Lower = sharper. The six
+  Laplacian/Tenengrad/etc columns in the summary CSV are kept for
+  reference only; the active classifier is `focus_classification.py`'s ERF
+  pass.
+- **Each Start = its own run dir.** Outputs within a run dir are
+  destructively rewritten if you re-run on the same label within the same
+  second (rare — the GUI retries after 1 second on collision). Prior runs
+  are never touched.
+- **Geometry-only is the default and faster.** "Use darkness weighting"
+  adds the darkness curve to the scoring; the geometry-only fast path
+  agrees with the darkness-weighted pick on ~86% of frames and runs ~4×
+  faster. The submitted dissertation reports the geometry-only path.
+- **Worker subprocesses on Windows.** The active run dir is threaded into
+  spawned workers via the `CROPPING_RUN_ROOT` environment variable, set by
+  the GUI on Start. Don't unset or override it mid-run.
+- **Flat-name imports.** Internal modules use bare imports (`import config`,
+  not `from . import config`). External callers (`Inference`) only safely
+  import leaf modules without transitive flat-import dependencies:
+  `cine_io`, `darkness_analysis`, `cropping`, `image_utils`,
+  `geom_analysis`. Importing higher-level modules requires `Preprocessing/`
+  on `sys.path` first (which `__main__.py` does).
+- **`focus_analysis.py` is legacy.** It is a separate Laplacian-variance
+  CLI that competes with the in-pipeline ERF classifier. Don't re-run it on
+  fresh outputs; it produces a different `Focus/` content. Use the GUI's
+  Start button.
+- **`scales.csv` doesn't ship.** `scale_lookup.py` exists for filename →
+  px/mm lookups but the CSV is not in the module directory. The default
+  flatten path uses no scale; only ad-hoc retrofit scripts use it.
 
-### Best Frame Selection
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `best_frame.n_candidates` | 20 | Candidate frames for geometry analysis (full output mode only) |
-| `best_frame.darkness_threshold_percentile` | 70.0 | Darkness percentile for candidate filtering |
-| `best_frame.darkness_weight` | 0.05 | Weight of darkness vs centring in scoring |
+## File map
 
-### Geometry Detection
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `geometry.min_area` | 50 | Minimum pixels for connected component detection |
-| `geometry.sphere_width_ratio` | 0.30 | Sphere must span this fraction of frame width |
-| `geometry.sphere_center_tolerance` | 0.35 | Sphere center tolerance from image center |
+```
+Pipeline core
+  pipeline_global.py          3-phase pipeline with shared crop calibration
+  pipeline_folder.py          same but per-folder calibration
+  workers.py                  multiprocessing worker functions
 
-### Focus Classification
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `focus.enabled` | true | Enable/disable focus metric computation |
-| `focus.primary_metric` | laplacian_var | Primary metric for sharp/blur classification |
-| `focus.sharp_threshold` | null | Custom threshold (null = 75th percentile per folder+camera) |
-| `focus.blur_threshold` | null | Custom threshold (null = 25th percentile per folder+camera) |
+Frame and droplet analysis
+  cine_io.py                  .cine load + droplet-grouping regex
+  darkness_analysis.py        best-frame selection (dark-weighted or geometry-only)
+  geom_analysis.py            Otsu + connected-components droplet/sphere detection
+  cropping.py                 sphere-guarded fixed-size crop
+  image_utils.py              frame loaders and Otsu mask helpers
+
+Crop sizing
+  crop_calibration.py         Nth-percentile crop size across all droplets
+
+Output writing
+  output_writer.py            saves crops + flattens via Calibration + writes summary CSVs
+  run_io.py                   timestamped run dirs + run_metadata.yaml
+
+Focus classification
+  crop_blur_measurement.py    ERF blur sigma per crop
+  focus_classification.py     per-folder/per-camera classifier (writes Focus/*)
+  focus_metrics.py            legacy Laplacian/Tenengrad metrics (reference only)
+  focus_analysis.py           legacy standalone CLI (don't use)
+
+Configuration
+  config.py                   loaded module-level constants
+  config_loader.py            YAML → typed dataclass
+  preprocessing_config.yaml   knob source of truth
+
+GUI and plumbing
+  gui.py                      Tk app, landing + main screen
+  __main__.py                 console-script entry, sys.path bootstrap
+  parallel_utils.py           run_parallel + GUI progress markers
+  phantom_utils.py            silent pyphantom import
+  phantom_silence.py          FD-level stdout/stderr suppression for the SDK banner
+
+Plotting and diagnostics
+  plotting.py                 darkness curves + geometry overlays
+  profiling.py                timers and per-phase aggregation
+  logging_config.py           logger setup
+
+Ad-hoc retrofit scripts (one-shot, not part of the pipeline)
+  flatten_existing_crops.py     re-flatten an old OUTPUT directory
+  add_diameter_to_sharp_crops.py    backfill diameter_px column into an old sharp_crops.csv
+  scale_lookup.py                   filename → px/mm lookups (needs scales.csv)
+```
 
 ## Troubleshooting
 
-### "pyphantom not found"
-Install the Phantom SDK from Vision Research. See installation instructions above.
+**Phantom SDK not installed.** `cropping-preprocess` shows "(SDK NOT FOUND!)"
+in the header and refuses to process `.cine` files. Install pyphantom — see
+the repo-root [INSTALL.md](../INSTALL.md). If you only need to feed an
+already-cropped dataset to the model, use Inference's `Precropped PNG` mode
+instead and skip Preprocessing entirely.
 
-### "DLL load failed" or "The specified module could not be found"
-1. Ensure the Phantom SDK DLLs are in your system PATH (see installation steps above)
-2. Install Visual C++ Redistributable (usually located in SDK's Bin folder)
-3. Restart your terminal/IDE after making PATH changes
+**`flatten_failures.log` is huge.** Flatten depends on
+`Calibration.sphere_processing.find_sphere_center`. If the sphere isn't
+detected inside your crop, the unflattened crop is saved and a failure is
+logged. Check sphere visibility in your `.cine` files. Common on the `m`
+camera where the sphere is partially out of frame.
 
-### "numpy.core.multiarray failed to import" or "_ARRAY_API not found"
-Check your SDK's NumPy compatibility. Some SDK versions require NumPy 1.x:
-```bash
-pip install "numpy<2"
-```
+**No `.cine` files found.** Filenames must match `sphereNNNN[g|v|m].cine`
+(case-insensitive). Anything else is silently dropped by the
+droplet-grouping regex. Rename your files or extend the regex in
+[cine_io.py](cine_io.py).
 
-### Wrong Python version
-Check your SDK's Python version requirements. Common requirement: Python 3.11.x
-```bash
-python --version
-```
+**Crops include the sphere.** Drop `calibration.percentile` toward 0 (1.0
+or 0.0) to use a smaller, safer crop size, or raise `crop.safety_pixels`
+to widen the gap budget. See the Configuration table.
 
-### "No .cine files found"
-Check your CINE Root path in the GUI points to folders containing .cine files.
+**GUI hangs / "not responding".** The pipeline runs in a background thread.
+If unresponsive for more than 30s, check the in-GUI log box for stack
+traces — SDK import errors don't always pop dialog boxes.
 
-### Out of memory
-Increase the Step value (processes every Nth droplet) or process fewer folders.
+## Where it sits in the pipeline
 
-### GUI not responding
-The pipeline runs in a background thread. Check the console for progress.
+**Upstream:** nothing. This is stage 1 — input is raw `.cine` files
+straight off the camera.
 
-## Dependencies
+**Imports from elsewhere in this repo:**
+- `Calibration.sphere_processing.flatten_sphere_crop` (mandatory, every
+  saved crop is flattened)
 
-**Note:** Python and NumPy version requirements depend on your Phantom SDK version.
-
-- Python 3.x (check your SDK requirements - commonly 3.11.x)
-- numpy (version depends on SDK - commonly requires <2.0)
-- pandas, scipy
-- opencv-python, Pillow
-- matplotlib
-- tqdm
-- PyYAML
-- tkinter (included with Python)
-- **pyphantom** (Phantom SDK, from Vision Research)
-
-See `requirements.txt` for core project dependencies.
-
-## License
-
-GPL-3.0. See [LICENSE](LICENSE).
-
-## Citation
-
-Based on:
-
-> Wang, Z. et al. (2022). "Three-dimensional measurement of the droplets out of focus in shadowgraphy systems via deep learning-based image-processing method." *Physics of Fluids*, 34(7), 073301.
-
-If you use this software in your research, please cite:
-
-```bibtex
-@article{wang2022three,
-  title={Three-dimensional measurement of the droplets out of focus in shadowgraphy systems via deep learning-based image-processing method},
-  author={Wang, Zhendong and others},
-  journal={Physics of Fluids},
-  volume={34},
-  number={7},
-  pages={073301},
-  year={2022},
-  publisher={AIP Publishing}
-}
-```
+**Downstream consumers:**
+- **Training** ([Training/training_gui.py](../Training/training_gui.py))
+  auto-discovers `sharp_crops.csv` by walking up parent directories from
+  any pointed-at folder and selecting the most recently modified match.
+  Point the Training GUI at any new run dir's `Focus/` and it picks up the
+  CSV.
+- **Inference** ([Inference/inference_engine.py](../Inference/inference_engine.py))
+  reuses `cine_io`, `darkness_analysis`, `cropping`, `geom_analysis`, and
+  `image_utils` as code modules at runtime — but does not read
+  Preprocessing's output files. Inference processes its own input data
+  (either `.cine` recordings or pre-cropped PNGs).
