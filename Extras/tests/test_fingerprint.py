@@ -37,7 +37,7 @@ class TestScaleChainRoundTrip:
         }
 
     def test_identity_passes_with_matched_native_size(self):
-        from tools.fingerprint_checker.scale_chain import round_trip_check
+        from Extras.experiments.fingerprint_checker.scale_chain import round_trip_check
         result = round_trip_check(self._base_config())
         assert result.overall_passed, (
             "Round-trip should pass exactly when synth crop_size == "
@@ -51,7 +51,7 @@ class TestScaleChainRoundTrip:
         """When inference's native size doesn't match synth's crop_size_px,
         recovered defocus is z * (inference_native / synth_native) — the
         dissertation's resolution-compression bug, exactly."""
-        from tools.fingerprint_checker.scale_chain import round_trip_check
+        from Extras.experiments.fingerprint_checker.scale_chain import round_trip_check
         config = self._base_config()
         synth_native = config['training']['crop_size_px']  # 299
         inf_native = 128
@@ -73,7 +73,7 @@ class TestScaleChainRoundTrip:
 
     def test_cross_camera_scale_inverted_detected(self):
         """If user passes wrong-direction scale_inference, drift appears."""
-        from tools.fingerprint_checker.scale_chain import round_trip_check
+        from Extras.experiments.fingerprint_checker.scale_chain import round_trip_check
         config = self._base_config()
         # Inference camera at half the calibration scale → drift
         result = round_trip_check(
@@ -92,7 +92,7 @@ class TestScaleChainRoundTrip:
         )
 
     def test_missing_rho_returns_clean_failure(self):
-        from tools.fingerprint_checker.scale_chain import round_trip_check
+        from Extras.experiments.fingerprint_checker.scale_chain import round_trip_check
         config = self._base_config()
         del config['training']['rho_direct']
         result = round_trip_check(config)
@@ -101,7 +101,7 @@ class TestScaleChainRoundTrip:
                result.config_summary.get('error', '').count('rho_direct') > 0
 
     def test_missing_blur_range_returns_clean_failure(self):
-        from tools.fingerprint_checker.scale_chain import round_trip_check
+        from Extras.experiments.fingerprint_checker.scale_chain import round_trip_check
         config = self._base_config()
         del config['data']['blur_range_px']
         result = round_trip_check(config)
@@ -112,7 +112,7 @@ class TestScaleChainRoundTrip:
     def test_round_trip_is_symmetric_in_z_sign(self):
         """Defocus +z and -z should both recover to the same |z|
         (the chain operates on |z| only — sign is handled outside)."""
-        from tools.fingerprint_checker.scale_chain import round_trip_check
+        from Extras.experiments.fingerprint_checker.scale_chain import round_trip_check
         result = round_trip_check(self._base_config(),
                                    test_defocuses_mm=(-3.0, 3.0))
         recovered = [p.defocus_recovered_mm for p in result.points]
@@ -120,7 +120,7 @@ class TestScaleChainRoundTrip:
 
     def test_text_report_renders_without_unicode_errors(self):
         """Output must be cp1252-safe so it can print on Windows console."""
-        from tools.fingerprint_checker.scale_chain import (
+        from Extras.experiments.fingerprint_checker.scale_chain import (
             round_trip_check, format_text_report)
         result = round_trip_check(self._base_config())
         text = format_text_report(result)
@@ -146,12 +146,12 @@ class TestFingerprintMetrics:
 
     def test_constant_image_zero_laplacian(self):
         import numpy as np
-        from tools.fingerprint_checker.fingerprint_metrics import metric_laplacian_variance
+        from Extras.experiments.fingerprint_checker.fingerprint_metrics import metric_laplacian_variance
         img = np.full((64, 64), 0.5, dtype=np.float32)
         assert metric_laplacian_variance(img) < 1e-10
 
     def test_blurred_image_has_lower_laplacian_than_sharp(self):
-        from tools.fingerprint_checker.fingerprint_metrics import metric_laplacian_variance
+        from Extras.experiments.fingerprint_checker.fingerprint_metrics import metric_laplacian_variance
         sharp = self._step_image(blur_sigma=0)
         blurred = self._step_image(blur_sigma=4.0)
         v_sharp = metric_laplacian_variance(sharp)
@@ -159,7 +159,7 @@ class TestFingerprintMetrics:
         assert v_blur < v_sharp, f"sharp={v_sharp}, blurred={v_blur}"
 
     def test_blurred_image_has_lower_tenengrad_than_sharp(self):
-        from tools.fingerprint_checker.fingerprint_metrics import metric_tenengrad
+        from Extras.experiments.fingerprint_checker.fingerprint_metrics import metric_tenengrad
         sharp = self._step_image(blur_sigma=0)
         blurred = self._step_image(blur_sigma=4.0)
         assert metric_tenengrad(blurred) < metric_tenengrad(sharp)
@@ -169,7 +169,7 @@ class TestFingerprintMetrics:
         intensity transition spans 2·σ·√2·erfinv(0.8) ≈ 2.563·σ.
         Verify the metric recovers this within pixel-discretisation tolerance.
         """
-        from tools.fingerprint_checker.fingerprint_metrics import (
+        from Extras.experiments.fingerprint_checker.fingerprint_metrics import (
             metric_edge_transition_width,
         )
         sigma = 3.0
@@ -180,7 +180,7 @@ class TestFingerprintMetrics:
             f"sigma={sigma}: expected ~{expected:.2f} px, got {width:.2f}")
 
     def test_polarity_detection(self):
-        from tools.fingerprint_checker.fingerprint_metrics import metric_polarity
+        from Extras.experiments.fingerprint_checker.fingerprint_metrics import metric_polarity
         dark = self._step_image(polarity='dark_on_light')
         light = self._step_image(polarity='light_on_dark')
         assert metric_polarity(dark) == 'dark_on_light'
@@ -188,12 +188,12 @@ class TestFingerprintMetrics:
 
     def test_polarity_ambiguous_on_constant(self):
         import numpy as np
-        from tools.fingerprint_checker.fingerprint_metrics import metric_polarity
+        from Extras.experiments.fingerprint_checker.fingerprint_metrics import metric_polarity
         flat = np.full((64, 64), 0.5, dtype=np.float32)
         assert metric_polarity(flat) == 'ambiguous'
 
     def test_object_diameter_matches_drawn_radius(self):
-        from tools.fingerprint_checker.fingerprint_metrics import metric_object_diameter_px
+        from Extras.experiments.fingerprint_checker.fingerprint_metrics import metric_object_diameter_px
         # circle of radius=size/4 → diameter = size/2 = 64
         img = self._step_image(size=128)
         d = metric_object_diameter_px(img)
@@ -201,14 +201,14 @@ class TestFingerprintMetrics:
         assert abs(d - 64) < 4, f"expected ~64 px diameter, got {d}"
 
     def test_centre_offset_zero_when_centred(self):
-        from tools.fingerprint_checker.fingerprint_metrics import metric_centre_offset_px
+        from Extras.experiments.fingerprint_checker.fingerprint_metrics import metric_centre_offset_px
         img = self._step_image()
         offset = metric_centre_offset_px(img)
         # Centred circle should have offset < 1 px
         assert offset < 1.5
 
     def test_crop_occupancy_matches_pi_quarter(self):
-        from tools.fingerprint_checker.fingerprint_metrics import metric_crop_occupancy
+        from Extras.experiments.fingerprint_checker.fingerprint_metrics import metric_crop_occupancy
         # circle of radius=size/4 in size×size crop
         # occupancy = pi*(size/4)^2 / size^2 = pi/16 ≈ 0.196
         img = self._step_image(size=128)
@@ -216,13 +216,13 @@ class TestFingerprintMetrics:
         assert abs(occ - 0.196) < 0.02
 
     def test_high_freq_energy_drops_with_blur(self):
-        from tools.fingerprint_checker.fingerprint_metrics import metric_high_freq_energy_ratio
+        from Extras.experiments.fingerprint_checker.fingerprint_metrics import metric_high_freq_energy_ratio
         sharp = self._step_image(blur_sigma=0)
         blurred = self._step_image(blur_sigma=8.0)
         assert metric_high_freq_energy_ratio(blurred) < metric_high_freq_energy_ratio(sharp)
 
     def test_compute_fingerprint_returns_all_fields(self):
-        from tools.fingerprint_checker.fingerprint_metrics import compute_fingerprint
+        from Extras.experiments.fingerprint_checker.fingerprint_metrics import compute_fingerprint
         img = self._step_image()
         rec = compute_fingerprint(img)
         # All numeric fields populated (some may be NaN but the keys exist)
@@ -235,7 +235,7 @@ class TestFingerprintMetrics:
         """When erf_sigma_precomputed is given, the function uses it
         instead of recomputing — important for reading metadata.csv's
         sigma_measured_erf column."""
-        from tools.fingerprint_checker.fingerprint_metrics import compute_fingerprint
+        from Extras.experiments.fingerprint_checker.fingerprint_metrics import compute_fingerprint
         img = self._step_image()
         rec = compute_fingerprint(
             img, erf_sigma_precomputed=4.2, erf_r_squared_precomputed=0.99)
@@ -243,7 +243,7 @@ class TestFingerprintMetrics:
         assert rec.erf_r_squared == 0.99
 
     def test_skip_erf_keeps_other_metrics(self):
-        from tools.fingerprint_checker.fingerprint_metrics import compute_fingerprint
+        from Extras.experiments.fingerprint_checker.fingerprint_metrics import compute_fingerprint
         import numpy as np
         img = self._step_image()
         rec = compute_fingerprint(img, skip_erf=True)
@@ -262,7 +262,7 @@ class TestFingerprintIO:
         full defocus range, not just one cluster."""
         import numpy as np
         import pandas as pd
-        from tools.fingerprint_checker.fingerprint_io import _stratified_sample
+        from Extras.experiments.fingerprint_checker.fingerprint_io import _stratified_sample
 
         rng = np.random.default_rng(0)
         df = pd.DataFrame({
@@ -279,7 +279,7 @@ class TestFingerprintIO:
     def test_full_dataset_when_n_samples_exceeds_total(self, tmp_path):
         """If user asks for more samples than exist, keep all of them."""
         import pandas as pd
-        from tools.fingerprint_checker.fingerprint_io import _stratified_sample
+        from Extras.experiments.fingerprint_checker.fingerprint_io import _stratified_sample
         df = pd.DataFrame({
             'index': range(50),
             'defocus_mm': [(i - 25) * 0.5 for i in range(50)],
@@ -295,7 +295,7 @@ class TestFingerprintIO:
         import cv2
         import numpy as np
         import pandas as pd
-        from tools.fingerprint_checker.fingerprint_io import load_synthetic_dataset
+        from Extras.experiments.fingerprint_checker.fingerprint_io import load_synthetic_dataset
 
         ds = tmp_path / "20260101_000000_test"
         (ds / "blur").mkdir(parents=True)
@@ -327,7 +327,7 @@ class TestFingerprintIO:
         """Without pyphantom we can't load the .cine bytes, but the
         metadata loading (file list, positions.csv) should work."""
         import pandas as pd
-        from tools.fingerprint_checker.fingerprint_io import load_calibration_stack
+        from Extras.experiments.fingerprint_checker.fingerprint_io import load_calibration_stack
         # Create empty .cine files + positions.csv
         for i in [1, 2, 3]:
             (tmp_path / f"sphere_{i}.cine").write_bytes(b"")
@@ -354,7 +354,7 @@ class TestAlignmentAndCoverage:
         be the K with |z| closest to 5."""
         import numpy as np
         import pandas as pd
-        from tools.fingerprint_checker.fingerprint_analyses import alignment_check_nn
+        from Extras.experiments.fingerprint_checker.fingerprint_analyses import alignment_check_nn
 
         anchor = pd.DataFrame({'defocus_mm': [5.0],
                                'erf_sigma_px': [3.0],
@@ -376,7 +376,7 @@ class TestAlignmentAndCoverage:
         """If anchor and other have identical fingerprints at matched defocuses,
         deltas should be zero across all features."""
         import pandas as pd
-        from tools.fingerprint_checker.fingerprint_analyses import alignment_check_nn
+        from Extras.experiments.fingerprint_checker.fingerprint_analyses import alignment_check_nn
         df = pd.DataFrame({
             'defocus_mm': [-5.0, -2.0, 0.0, 2.0, 5.0],
             'erf_sigma_px': [3.0, 1.5, 0.5, 1.5, 3.0],
@@ -392,7 +392,7 @@ class TestAlignmentAndCoverage:
         coverage should be 100%."""
         import numpy as np
         import pandas as pd
-        from tools.fingerprint_checker.fingerprint_analyses import coverage_check
+        from Extras.experiments.fingerprint_checker.fingerprint_analyses import coverage_check
         ref = pd.DataFrame({'edge_transition_width': np.linspace(0, 10, 100)})
         test = pd.DataFrame({'edge_transition_width': np.linspace(2, 8, 50)})
         result = coverage_check(ref, test)
@@ -403,7 +403,7 @@ class TestAlignmentAndCoverage:
         """Test distribution wider than reference → coverage drops."""
         import numpy as np
         import pandas as pd
-        from tools.fingerprint_checker.fingerprint_analyses import coverage_check
+        from Extras.experiments.fingerprint_checker.fingerprint_analyses import coverage_check
         ref = pd.DataFrame({'edge_transition_width': np.linspace(0, 10, 100)})
         test = pd.DataFrame({'edge_transition_width': np.linspace(0, 15, 100)})
         result = coverage_check(ref, test)
@@ -414,7 +414,7 @@ class TestAlignmentAndCoverage:
     def test_alignment_flags_classify_correctly(self):
         """Tiny delta → PASS, big delta → FAIL."""
         import pandas as pd
-        from tools.fingerprint_checker.fingerprint_analyses import (
+        from Extras.experiments.fingerprint_checker.fingerprint_analyses import (
             alignment_check_nn, flag_alignment)
         anchor = pd.DataFrame({'defocus_mm': [5.0],
                                'erf_sigma_px': [3.0]})
@@ -468,7 +468,7 @@ class TestOrchestratorAndReport:
         return ds, config
 
     def test_run_all_checks_no_calibration(self, tmp_path):
-        from tools.fingerprint_checker.fingerprint_orchestrator import run_all_checks
+        from Extras.experiments.fingerprint_checker.fingerprint_orchestrator import run_all_checks
         ds, cfg = self._build_tiny_dataset(tmp_path)
         result = run_all_checks(
             config_dict=cfg,
@@ -483,8 +483,8 @@ class TestOrchestratorAndReport:
         assert 'edge_gradient_max' in result.sigma_trend_correlations
 
     def test_write_full_report_creates_all_files(self, tmp_path):
-        from tools.fingerprint_checker.fingerprint_orchestrator import run_all_checks
-        from tools.fingerprint_checker.fingerprint_report import write_full_report
+        from Extras.experiments.fingerprint_checker.fingerprint_orchestrator import run_all_checks
+        from Extras.experiments.fingerprint_checker.fingerprint_report import write_full_report
         ds, cfg = self._build_tiny_dataset(tmp_path)
         out = tmp_path / "report"
         result = run_all_checks(config_dict=cfg, synthetic_dataset_path=ds)
@@ -498,8 +498,8 @@ class TestOrchestratorAndReport:
 
     def test_report_json_is_valid_json(self, tmp_path):
         import json
-        from tools.fingerprint_checker.fingerprint_orchestrator import run_all_checks
-        from tools.fingerprint_checker.fingerprint_report import write_json_report
+        from Extras.experiments.fingerprint_checker.fingerprint_orchestrator import run_all_checks
+        from Extras.experiments.fingerprint_checker.fingerprint_report import write_json_report
         ds, cfg = self._build_tiny_dataset(tmp_path)
         result = run_all_checks(config_dict=cfg, synthetic_dataset_path=ds)
         p = write_json_report(result, tmp_path / 'rep')
@@ -533,7 +533,7 @@ class TestPhase2:
         return folder
 
     def test_load_crop_folder_parses_defocus_from_filename(self, tmp_path):
-        from tools.fingerprint_checker.fingerprint_io import load_crop_folder
+        from Extras.experiments.fingerprint_checker.fingerprint_io import load_crop_folder
         folder = self._build_real_crops(tmp_path)
         loaded = load_crop_folder(folder, label='real')
         assert loaded.sample_count_total == 5
@@ -543,7 +543,7 @@ class TestPhase2:
         assert zs == [-3.0, -1.0, 0.0, 1.0, 3.0]
 
     def test_load_crop_folder_subsample(self, tmp_path):
-        from tools.fingerprint_checker.fingerprint_io import load_crop_folder
+        from Extras.experiments.fingerprint_checker.fingerprint_io import load_crop_folder
         folder = self._build_real_crops(tmp_path)
         loaded = load_crop_folder(folder, label='real', n_samples=3)
         assert loaded.sample_count_total == 5
@@ -552,7 +552,7 @@ class TestPhase2:
     def test_load_crop_folder_handles_no_defocus_in_name(self, tmp_path):
         import cv2
         import numpy as np
-        from tools.fingerprint_checker.fingerprint_io import load_crop_folder
+        from Extras.experiments.fingerprint_checker.fingerprint_io import load_crop_folder
         folder = tmp_path / "no_z_crops"
         folder.mkdir()
         for i in range(3):
@@ -566,7 +566,7 @@ class TestPhase2:
         """An identical sample should match itself with distance ~0."""
         import numpy as np
         import pandas as pd
-        from tools.fingerprint_checker.fingerprint_analyses import find_nearest_match
+        from Extras.experiments.fingerprint_checker.fingerprint_analyses import find_nearest_match
         target = pd.DataFrame({
             'erf_sigma_px': [1.0, 2.0, 3.0, 4.0, 5.0],
             'edge_transition_width': [2.0, 3.0, 4.0, 5.0, 6.0],
@@ -586,7 +586,7 @@ class TestPhase2:
         """NaN values in source are skipped, not propagated."""
         import numpy as np
         import pandas as pd
-        from tools.fingerprint_checker.fingerprint_analyses import find_nearest_match
+        from Extras.experiments.fingerprint_checker.fingerprint_analyses import find_nearest_match
         target = pd.DataFrame({
             'erf_sigma_px': [1.0, 2.0, 3.0],
             'laplacian_variance': [50.0, 30.0, 20.0],
@@ -601,7 +601,7 @@ class TestPhase2:
 
     def test_find_nearest_match_returns_none_on_empty_target(self):
         import pandas as pd
-        from tools.fingerprint_checker.fingerprint_analyses import find_nearest_match
+        from Extras.experiments.fingerprint_checker.fingerprint_analyses import find_nearest_match
         idx, dist = find_nearest_match(
             pd.Series({'erf_sigma_px': 1.0}), pd.DataFrame())
         assert idx is None and dist is None
@@ -611,7 +611,7 @@ class TestPhase2:
         import cv2
         import numpy as np
         import pandas as pd
-        from tools.fingerprint_checker.fingerprint_io import load_sample_image_by_row
+        from Extras.experiments.fingerprint_checker.fingerprint_io import load_sample_image_by_row
         png_path = tmp_path / "sample.png"
         cv2.imwrite(str(png_path),
                     (np.full((32, 32), 100, dtype=np.uint8)))
@@ -628,7 +628,7 @@ class TestPhase2:
 # ===========================================================================
 class TestFingerprintCache:
     def test_cache_filename_is_deterministic(self, tmp_path):
-        from tools.fingerprint_checker.fingerprint_cache import cache_filename
+        from Extras.experiments.fingerprint_checker.fingerprint_cache import cache_filename
         a = cache_filename('synthetic', tmp_path / 'src', n_samples=200)
         b = cache_filename('synthetic', tmp_path / 'src', n_samples=200)
         assert a == b
@@ -641,7 +641,7 @@ class TestFingerprintCache:
 
     def test_save_load_roundtrip(self, tmp_path):
         import pandas as pd
-        from tools.fingerprint_checker.fingerprint_cache import (
+        from Extras.experiments.fingerprint_checker.fingerprint_cache import (
             cache_path_for, load_cache, save_cache,
         )
         df = pd.DataFrame({'a': [1, 2, 3], 'b': [4.5, 5.5, 6.5]})
@@ -657,7 +657,7 @@ class TestFingerprintCache:
     def test_cache_invalidates_when_source_newer(self, tmp_path):
         import time
         import pandas as pd
-        from tools.fingerprint_checker.fingerprint_cache import (
+        from Extras.experiments.fingerprint_checker.fingerprint_cache import (
             cache_path_for, is_cache_valid, save_cache,
         )
         src = tmp_path / 'src'
@@ -674,7 +674,7 @@ class TestFingerprintCache:
 
     def test_clear_cache_returns_count(self, tmp_path):
         import pandas as pd
-        from tools.fingerprint_checker.fingerprint_cache import (
+        from Extras.experiments.fingerprint_checker.fingerprint_cache import (
             cache_path_for, clear_cache, save_cache,
         )
         src = tmp_path / 'src'
@@ -703,7 +703,7 @@ class TestJointCoverage:
         })
 
     def test_full_overlap_high_coverage(self):
-        from tools.fingerprint_checker.fingerprint_analyses import joint_coverage
+        from Extras.experiments.fingerprint_checker.fingerprint_analyses import joint_coverage
         ref = self._df(200, mean=0.0, scale=1.0, seed=1)
         # Test drawn from the same distribution → most samples should be "covered"
         test = self._df(50, mean=0.0, scale=1.0, seed=2)
@@ -714,7 +714,7 @@ class TestJointCoverage:
         assert out['n_features_used'] == 3
 
     def test_disjoint_low_coverage(self):
-        from tools.fingerprint_checker.fingerprint_analyses import joint_coverage
+        from Extras.experiments.fingerprint_checker.fingerprint_analyses import joint_coverage
         ref = self._df(200, mean=0.0, scale=1.0, seed=1)
         # Test pulled WAY off the reference cloud
         test = self._df(50, mean=20.0, scale=1.0, seed=2)
@@ -725,7 +725,7 @@ class TestJointCoverage:
 
     def test_handles_no_common_features(self):
         import pandas as pd
-        from tools.fingerprint_checker.fingerprint_analyses import joint_coverage
+        from Extras.experiments.fingerprint_checker.fingerprint_analyses import joint_coverage
         ref = pd.DataFrame({'foo': [1, 2, 3]})
         test = pd.DataFrame({'bar': [4, 5, 6]})
         out = joint_coverage(ref, test, k=2)
@@ -736,7 +736,7 @@ class TestJointCoverage:
     def test_handles_nan_rows(self):
         import numpy as np
         import pandas as pd
-        from tools.fingerprint_checker.fingerprint_analyses import joint_coverage
+        from Extras.experiments.fingerprint_checker.fingerprint_analyses import joint_coverage
         rng = np.random.default_rng(0)
         ref = pd.DataFrame({
             'erf_sigma_px': rng.normal(0, 1, 100),
@@ -755,13 +755,13 @@ class TestJointCoverageWiring:
     """Confirm joint coverage is exposed on AllChecksResult and serialises."""
 
     def test_result_has_joint_coverage_field(self):
-        from tools.fingerprint_checker.fingerprint_orchestrator import AllChecksResult
+        from Extras.experiments.fingerprint_checker.fingerprint_orchestrator import AllChecksResult
         r = AllChecksResult(config_summary={})
         # Default empty dict (not None) so report writers can use `if result.joint_…:`
         assert r.joint_coverage_inference == {}
 
     def test_to_dict_includes_joint_coverage(self):
-        from tools.fingerprint_checker.fingerprint_orchestrator import AllChecksResult
+        from Extras.experiments.fingerprint_checker.fingerprint_orchestrator import AllChecksResult
         r = AllChecksResult(config_summary={})
         r.joint_coverage_inference = {
             'joint_coverage_pct': 73.4, 'n_features_used': 12}
