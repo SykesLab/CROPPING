@@ -29,13 +29,26 @@ cropping-train               # Training GUI
 cropping-infer               # Inference GUI
 ```
 
-## Requirements
+## Requirements — read this carefully
 
-| Requirement | Version | Notes |
+This pipeline requires **Python 3.11 specifically.** Not 3.10. Not 3.12, 3.13, or 3.14.
+Both `install.py` and `pyproject.toml` enforce this. Other deps cascade from
+this constraint.
+
+| Requirement | Version | Why this constraint exists |
 |---|---|---|
-| Python | 3.10–3.13 | 3.11.x required if you also need the Phantom SDK (.cine reading) |
-| NumPy | < 2.0 | Pinned for Phantom SDK compatibility |
-| PyTorch | 1.9.0+ | CUDA strongly recommended for training (see below) |
+| Python | **== 3.11.x** | The `pyphantom` wheel is built `py311-none-any` and will not install on any other Python version. `install.py` uses `py -3.11` on Windows to find it; if 3.11 isn't present the installer aborts with instructions. `pyproject.toml`'s `requires-python = ">=3.11,<3.12"` enforces the same constraint at `pip install` time. |
+| NumPy | **< 2.0** | NumPy 2.x breaks the `pyphantom` binary ABI. Pinning numpy `<2.0` cascades through `pip`'s resolver to compatible scipy/opencv/pandas versions automatically. |
+| PyTorch | 1.9.0+ | Installed by `install.py` from the CUDA-specific index URL, not from PyPI. CUDA strongly recommended for training (10–100× speedup); CPU is fine for inference. |
+| Other deps | see `pyproject.toml` | Lower bounds only. Pip's resolver picks compatible upper bounds via the numpy `<2.0` cascade. |
+
+If you have multiple Python versions installed, **the installer will find 3.11
+automatically via `py -3.11` (Windows) or `python3.11` (Linux/Mac).** You don't
+need to remove other Python versions or change PATH.
+
+If 3.11 isn't on the system, get it from
+<https://www.python.org/downloads/release/python-3119/>. The default install
+options are fine.
 
 ## Three install paths
 
@@ -119,22 +132,57 @@ specific hardware.
 
 ### Phantom SDK (`pyphantom`) — required for .cine reading
 
-Used by Preprocessing and the Inference `.cine input` mode. Not on PyPI;
-obtain the wheel from Vision Research / your institution.
+Used by Preprocessing and the Inference `.cine input` mode. Not on PyPI; obtain
+the wheel from your institution's Phantom SDK distribution. The wheel filename
+looks like `pyphantom-3.11.11.806-py311-none-any.whl` (Phantom SDK 11) — **the
+`py311` suffix is the Python-version constraint**: this wheel only installs on
+Python 3.11. Newer SDK releases may carry wheels for newer Python versions; if
+your wheel filename has a different `pyXXX` suffix, the rest of the pipeline
+will need to be installed against that version.
+
+#### Step 1 — Install the wheel
+
+If you put `pyphantom-*.whl` next to `install.py` (or in `./wheels/`),
+`install.py` will pick it up and install it automatically. Otherwise:
 
 ```bash
 pip install "path/to/pyphantom-3.11.11.806-py311-none-any.whl"
 ```
 
-You may also need to add the SDK's DLL directory to PATH (Windows:
-`...\PhantomSDK\Bin\Win64`) and install the bundled Visual C++
-Redistributable. **Python 3.11.x is required** by the wheel above.
+#### Step 2 — Add the SDK's DLL directory to PATH (Windows)
 
-Verify:
+The wheel installs the Python bindings, but `pyphantom` also needs the SDK's
+native DLLs at runtime. They live in your SDK install at e.g.
+`C:\Users\<you>\OneDrive\My Documents\Phantom\PhSDK11\Bin\Win64` (path varies
+by where you unpacked the SDK).
+
+In a regular `cmd` (not Powershell), run:
+
+```cmd
+setx PATH "%PATH%;C:\Users\justi\OneDrive\My Documents\Phantom\PhSDK11\Bin\Win64"
+```
+
+Replace the path with your actual SDK location. **Then close and reopen any
+terminal/IDE** — `setx` only takes effect in new processes.
+
+User PATH is fine; you do NOT need admin / system PATH for this. To check the
+update worked, open a fresh terminal and run `echo %PATH%` — you should see
+the SDK Bin directory at the end.
+
+#### Step 3 — Install the Visual C++ Redistributable
+
+The Phantom SDK depends on the Microsoft VC++ runtime. If the SDK package you
+received includes a `vcredist_x64.exe`, run it. If not, install the latest
+from <https://aka.ms/vs/17/release/vc_redist.x64.exe> (Microsoft's permalink).
+
+#### Step 4 — Verify
 
 ```bash
 python -c "import pyphantom; print('OK')"
 ```
+
+You should see `OK`. If you see `ImportError: DLL load failed`, the PATH
+update from Step 2 hasn't reached this terminal — close and reopen.
 
 If you only ever feed the Inference GUI pre-cropped PNGs, you can skip
 pyphantom entirely.
@@ -175,20 +223,33 @@ python -m pytest Extras/tests/ -v
 
 ## Troubleshooting
 
+- **`install.py` aborts with "Python 3.11 not found".** You need Python 3.11
+  installed on the system. Get it from
+  <https://www.python.org/downloads/release/python-3119/>. The default install
+  options are fine — leave PATH alone and don't uncheck the `py` launcher.
+  After installing, re-run `install.py`; it'll find 3.11 via the launcher.
+- **`pip install -e .` errors with `Requires Python ==3.11.*`.** Your active
+  interpreter isn't 3.11. Either run `py -3.11 -m pip install -e .` or use
+  `install.py` which builds a fresh 3.11 venv automatically.
 - **`pip install -e .` errors with a torch / wheel-builder failure.**
-  Install torch first (`python install.py --cuda 12.1` or the manual
-  steps above), then re-run the editable install.
-- **`ModuleNotFoundError: pyphantom`.** You're running Preprocessing or
-  the Inference `.cine` mode without the Phantom SDK. Install pyphantom
-  (above) or use the Inference GUI's `Precropped PNG` mode instead.
-- **`pyfirmata` errors with `inspect.getargspec`.** Known issue on
-  Python 3.11+; the lab_capture scripts patch this automatically — no
-  manual fix needed. If you see it elsewhere, you've imported pyfirmata
-  outside one of the patched scripts.
+  Install torch first (`python install.py --cuda 12.1` or the manual steps
+  above), then re-run the editable install.
+- **`ModuleNotFoundError: pyphantom`.** You're running Preprocessing or the
+  Inference `.cine` mode without the Phantom SDK. Drop `pyphantom-*.whl` next
+  to `install.py` and re-run; or install manually per the Phantom SDK section
+  above; or use Inference's `Precropped PNG` mode and skip pyphantom entirely.
+- **`pyphantom` imports but `ImportError: DLL load failed` at runtime.** The
+  Phantom SDK's native DLLs aren't on PATH. See "Phantom SDK Step 2" above —
+  add the SDK's `Bin\Win64` directory with `setx`, then close and reopen the
+  terminal.
+- **`pyfirmata` errors with `inspect.getargspec`.** Known issue on Python
+  3.11+; the lab_capture scripts patch this automatically — no manual fix
+  needed. If you see it elsewhere, you've imported pyfirmata outside one of
+  the patched scripts.
 - **`cropping-infer` (or the other console scripts) not found.** You ran
   `pip install -r requirements.txt` instead of an editable install. Run
-  `pip install -e .` from the repo root, or use
-  `python -m Inference` instead.
+  `pip install -e .` from the repo root, or use `python -m Inference.inference_gui`
+  instead.
 
 ## Layout summary
 

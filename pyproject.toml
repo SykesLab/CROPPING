@@ -7,12 +7,23 @@ name = "cropping"
 version = "0.1.0"
 description = "Depth-from-defocus measurement pipeline for high-speed shadowgraphy"
 readme = "README.md"
-requires-python = ">=3.10"
+# Python 3.11 only. The pyphantom wheel (Phantom SDK) is built `py311-none-any`
+# and won't install on any other version. Pip will refuse to install this
+# project on 3.10/3.12/3.13/3.14, which is the intended behaviour.
+requires-python = ">=3.11,<3.12"
 license = {text = "GPL-3.0-or-later"}
 authors = [
     {name = "Justice Ward"},
 ]
 
+# Version pins — read these BEFORE bumping anything:
+#   numpy<2.0    — required by Phantom SDK (numpy 2.x breaks pyphantom binary
+#                  ABI). Cascading effect: forces compatible scipy / opencv /
+#                  pandas versions. Pip's resolver handles the cascade as long
+#                  as numpy is pinned <2.0.
+#   torch        — installed via `install.py` from the CUDA-specific index URL,
+#                  not via this declaration. See [project.optional-dependencies]
+#                  for the inert PyPI fallback.
 dependencies = [
     "numpy>=1.21.0,<2.0",
     "scipy>=1.7.0",
