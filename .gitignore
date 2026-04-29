@@ -30,6 +30,7 @@ training_output/
 test_results/
 synthetic_data/
 inference_results/
+Inference/output/
 
 # Preprocessing outputs
 OUTPUTNEW*/
