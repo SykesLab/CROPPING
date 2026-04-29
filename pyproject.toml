@@ -17,33 +17,51 @@ authors = [
 ]
 
 # Version pins — read these BEFORE bumping anything:
-#   numpy<2.0    — required by Phantom SDK (numpy 2.x breaks pyphantom binary
-#                  ABI). Cascading effect: forces compatible scipy / opencv /
-#                  pandas versions. Pip's resolver handles the cascade as long
-#                  as numpy is pinned <2.0.
-#   torch        — installed via `install.py` from the CUDA-specific index URL,
-#                  not via this declaration. See [project.optional-dependencies]
-#                  for the inert PyPI fallback.
+#
+#   numpy<2.0           — REQUIRED by Phantom SDK (numpy 2.x breaks pyphantom
+#                         binary ABI). The cascading constraint is what forces
+#                         scipy, opencv, pandas to compatible numpy-1.x lines.
+#   scipy<1.13          — scipy 1.13+ requires numpy>=2.0. Without this cap,
+#                         pip's resolver gets confused; with it, the conflict
+#                         is explicit.
+#   opencv-python<5     — opencv 5 (whenever it lands) is expected to drop
+#                         numpy 1.x support and may change cv2 API.
+#   Pillow<11           — Pillow 10 removed Image.ANTIALIAS; Pillow 11 removed
+#                         more. Codebase doesn't use removed APIs but the cap
+#                         is defensive.
+#   matplotlib<4        — matplotlib 4 (future) may break Tk backend usage.
+#   pandas<3            — pandas 3 (future) may drop legacy column access we
+#                         use. Defensive cap.
+#   PyYAML<7, tqdm<5    — defensive caps; both libraries are stable but the
+#                         caps protect against unrelated breaking changes.
+#   torch<3, torchvision<1, tensorboard<3
+#                       — torch 2.x + torchvision 0.x + tensorboard 2.x is
+#                         the supported generation. Major-version caps prevent
+#                         silent breakage when torch 3 lands.
+#
+# install.py installs torch + torchvision from the CUDA-specific index URL
+# (NOT from PyPI). The [training] extra below carries the same pins so plain
+# `pip install -e ".[training]"` still produces a working (CPU) install.
 dependencies = [
     "numpy>=1.21.0,<2.0",
-    "scipy>=1.7.0",
-    "opencv-python>=4.5.0",
-    "Pillow>=8.0.0",
-    "PyYAML>=5.4.0",
-    "matplotlib>=3.4.0",
-    "pandas>=1.3.0",
-    "tqdm>=4.60.0",
+    "scipy>=1.7.0,<1.13",
+    "opencv-python>=4.5.0,<5",
+    "Pillow>=8.0.0,<11",
+    "PyYAML>=5.4.0,<7",
+    "matplotlib>=3.4.0,<4",
+    "pandas>=1.3.0,<3",
+    "tqdm>=4.60.0,<5",
 ]
 
 [project.optional-dependencies]
 training = [
-    "torch>=1.9.0",
-    "torchvision>=0.10.0",
-    "tensorboard>=2.5.0",
+    "torch>=2.0.0,<3",
+    "torchvision>=0.15.0,<1",
+    "tensorboard>=2.10.0,<3",
 ]
 dev = [
-    "pytest>=7.0.0",
-    "pytest-timeout>=2.0.0",
+    "pytest>=7.0.0,<9",
+    "pytest-timeout>=2.0.0,<3",
 ]
 all = [
     "cropping[training]",

@@ -11,25 +11,30 @@
 # Hardware-only deps (Phantom SDK / ThorLabs / Arduino) are NOT in this file;
 # see Calibration/lab_capture/requirements.txt and INSTALL.md.
 
+# Pin rationale lives in pyproject.toml. Keep this file in sync with it.
+# Critical: numpy<2.0 (Phantom SDK), scipy<1.13 (numpy 2 dep), torch<3, etc.
+
 # Core
 numpy>=1.21.0,<2.0
-scipy>=1.7.0
-opencv-python>=4.5.0
-Pillow>=8.0.0
-PyYAML>=5.4.0
-matplotlib>=3.4.0
-pandas>=1.3.0
-tqdm>=4.60.0
+scipy>=1.7.0,<1.13
+opencv-python>=4.5.0,<5
+Pillow>=8.0.0,<11
+PyYAML>=5.4.0,<7
+matplotlib>=3.4.0,<4
+pandas>=1.3.0,<3
+tqdm>=4.60.0,<5
 
 # ML (Training + Inference)
-torch>=1.9.0
-torchvision>=0.10.0
-tensorboard>=2.5.0
+torch>=2.0.0,<3
+torchvision>=0.15.0,<1
+tensorboard>=2.10.0,<3
 
 # Testing
-pytest>=7.0.0
-pytest-timeout>=2.0.0
+pytest>=7.0.0,<9
+pytest-timeout>=2.0.0,<3
 
 # Note: pyphantom (Phantom SDK) is required for .cine support but is NOT on
-# PyPI. Obtain from Vision Research, then:
-#   pip install path/to/pyphantom-*.whl
+# PyPI. Obtain from your institution's Phantom SDK distribution, then:
+#   pip install path/to/pyphantom-3.11.11.806-py311-none-any.whl
+# Or drop the wheel next to install.py and run `python install.py` —
+# it will detect and install automatically.

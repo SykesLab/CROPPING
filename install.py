@@ -30,28 +30,29 @@ VENV_DIR = REPO_ROOT / VENV_NAME
 REQUIRED_PYTHON = (3, 11)
 
 # All packages the pipeline needs, mapped to their import name.
-# torch + torchvision are installed separately in Step 3 from the
-# CUDA-specific index URL — DO NOT add them here, or step 4's PyPI install
-# will overwrite the CUDA build with the CPU build.
+# Pin rationale lives in pyproject.toml — keep this list in sync with it.
+# torch + torchvision are installed separately in Step 3 from the CUDA-specific
+# index URL — DO NOT add them here, or step 4's PyPI install will overwrite
+# the CUDA build with the CPU build.
 CORE_PACKAGES: Dict[str, str] = {
     "numpy>=1.21.0,<2.0": "numpy",
-    "scipy>=1.7.0": "scipy",
-    "opencv-python>=4.5.0": "cv2",
-    "Pillow>=8.0.0": "PIL",
-    "PyYAML>=5.4.0": "yaml",
-    "matplotlib>=3.4.0": "matplotlib",
-    "pandas>=1.3.0": "pandas",
-    "tqdm>=4.60.0": "tqdm",
+    "scipy>=1.7.0,<1.13": "scipy",
+    "opencv-python>=4.5.0,<5": "cv2",
+    "Pillow>=8.0.0,<11": "PIL",
+    "PyYAML>=5.4.0,<7": "yaml",
+    "matplotlib>=3.4.0,<4": "matplotlib",
+    "pandas>=1.3.0,<3": "pandas",
+    "tqdm>=4.60.0,<5": "tqdm",
 }
 
 ML_PACKAGES: Dict[str, str] = {
-    "tensorboard>=2.5.0": "tensorboard",
+    "tensorboard>=2.10.0,<3": "tensorboard",
     # torch + torchvision intentionally absent — installed in Step 3 from CUDA index.
 }
 
 DEV_PACKAGES: Dict[str, str] = {
-    "pytest>=7.0.0": "pytest",
-    "pytest-timeout>=2.0.0": "pytest_timeout",
+    "pytest>=7.0.0,<9": "pytest",
+    "pytest-timeout>=2.0.0,<3": "pytest_timeout",
 }
 
 OPTIONAL_PACKAGES: Dict[str, str] = {
@@ -408,12 +409,13 @@ def full_setup(cuda_version: str = "cpu"):
 
     pip = get_python()
 
-    # Step 3: PyTorch
+    # Step 3: PyTorch (pinned to the supported torch 2.x generation)
     print_step(
         3, total_steps,
         f"Installing PyTorch ({'CUDA ' + cuda_version if cuda_version != 'cpu' else 'CPU'})")
     torch_url = CUDA_TORCH_URLS.get(cuda_version, CUDA_TORCH_URLS["cpu"])
-    if not run([pip, "-m", "pip", "install", "torch", "torchvision",
+    if not run([pip, "-m", "pip", "install",
+                "torch>=2.0.0,<3", "torchvision>=0.15.0,<1",
                 "--index-url", torch_url],
                desc=f"torch from {torch_url}"):
         print("  WARNING: PyTorch install failed. Try manually.")
