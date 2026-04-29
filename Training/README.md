@@ -1,426 +1,607 @@
-# Training — DefocusNet Neural Network Pipeline
+# Training
 
-This module trains DefocusNet, generates the synthetic training dataset, evaluates model performance, and runs inference on real images. It is the central computational stage of the pipeline.
+Trains DefocusNet — a scalar-head CNN that maps a blurred crop to a
+normalised blur value σ — on synthetic data generated from a fitted
+`CalibrationModel`. The CalibrationModel is **baked into every
+checkpoint** so Inference is self-contained.
 
-**Based on:** Wang, Z. et al. (2022). "Three-dimensional measurement of the droplets out of focus in shadowgraphy systems via deep learning-based image-processing method." *Physics of Fluids*, 34(7), 073301.
+Two operating modes:
 
----
+- **Direct calibration** — synthesis uses the `CalibrationModel` from
+  `Calibration/runs/<latest>/calibration_results.yaml` (linear,
+  quadrature, or hybrid).
+- **Optical formula** — synthesis uses the Wang CoC formula from
+  focal length / f-number / focus distance / pixel size.
 
-## Position in Pipeline
+Both modes use the same scalar architecture and the same log-space MSE
+loss; only the synthesis function and the inference inversion differ.
 
-```
-Sharp Sphere Crops           Calibration Results
-(from Preprocessing)    +   (Direct Mode only)
-          │                        │
-          └──────────┬─────────────┘
-                     ↓
-          [ Data Generation ]
-                     ↓
-         Synthetic Training Dataset
-         (blur / sharp / CoC map)
-                     ↓
-          [ Model Training ]
-                     ↓
-         Model Checkpoint (.pth)
-                     ↓
-            [ Inference ]
-                     ↓
-        defocus_mm per image
-```
+## Quick start
 
----
-
-## Architecture
-
-DefocusNet consists of two sequential subnetworks that are trained in separate stages.
-
-```
-Blurred Image ──► DME-subnet ──► CoC Map ──┬──► DD-subnet ──► Deblurred Image
-                                            │
-                                            └──► Defocus Distance (mm)
-```
-
-### DME-subnet — Defocus Map Estimator
-
-A U-Net encoder-decoder network that receives a blurred sphere image and outputs a per-pixel map of the Circle of Confusion (CoC). The CoC value at each pixel indicates the local blur radius in pixels.
-
-- **Input:** single-channel blurred image
-- **Output:** normalised CoC map in the range [−1, 1]
-- **Architecture:** encoder-decoder with residual blocks and LeakyReLU(0.2) activation
-
-### DD-subnet — Defocus Deblurring
-
-A deblurring network that takes the blurred image concatenated with the CoC map produced by the DME-subnet, and reconstructs a sharp image. The CoC map guides the deblurring — regions with high CoC receive more aggressive correction.
-
-- **Input:** blurred image + CoC map (2 channels combined)
-- **Output:** reconstructed sharp image
-- **Constraint:** DME weights are frozen during DD training
-
-### Two-Stage Training Principle
-
-**Stage 1 — DME training:** The DME-subnet is trained alone to minimise CoC prediction error.
-
-**Stage 2 — DD training:** The DME weights are frozen. The DD-subnet is then trained to produce sharp output conditioned on the frozen DME's predictions.
-
-This sequencing is essential: the DD-subnet learns to deblur using the specific CoC predictions the DME produces. If the DME is changed after DD training, the deblurring quality degrades because DD was never trained to handle the new DME's prediction style.
-
-**Practical implication:** Train DME to convergence before starting DD. A well-trained DME is the single most important factor for good end-to-end performance.
-
----
-
-## Dual-Mode Architecture
-
-The training mode determines how synthetic blur is generated and how inference converts model output to depth.
-
-### Optical Formula Mode
-
-Synthetic blur is computed from the thin-lens equation using known camera parameters (focal length, f-number, focus distance, pixel size). At inference, the inverse formula converts predicted CoC (pixels) to defocus depth (mm).
-
-**Use when:** Optical parameters are accurately known and trusted.
-
-### Direct Calibration Mode
-
-Synthetic blur is computed from the empirical linear model fitted in the Calibration module:
-
-```
-σ (px) = ρ_direct × |z| + σ₀
-```
-
-The calibration parameters `ρ_direct` and `σ₀` are loaded from `calibration_results.yaml`. At inference, the inverse relationship converts predicted blur (pixels) to defocus depth (mm).
-
-**Use when:** Optical parameters are uncertain, or when maximum accuracy for a specific camera is required.
-
-The mode is selected in Tab 1 of the GUI, stored in every checkpoint, and detected automatically at inference time. Checkpoints from different modes are not interchangeable.
-
----
-
-## Inputs
-
-| Input | Location | Required For |
-|-------|----------|-------------|
-| Sharp sphere crops | `Preprocessing/CROPPING/Preprocessing/OUTPUT*/` | Both modes |
-| `optical_config.yaml` | `training_output/` | Both modes (written by Tab 1) |
-| `calibration_results.yaml` | `calibration/calibration_output/` | Direct Mode only |
-
----
-
-## Outputs
-
-| Output | Location | Description |
-|--------|----------|-------------|
-| Synthetic dataset | `training_output/synthetic_data/` | Blur/sharp/CoC map triples for training |
-| Model checkpoints | `training_output/checkpoints/` | Saved model weights (`.pth` files) |
-| TensorBoard logs | `training_output/checkpoints/logs/` | Training metrics for monitoring |
-| Inference results | `training_output/inference_results/` | Per-image defocus estimates and visualisations |
-| Test results | `training_output/test_results/` | Validation metrics and plots |
-
-### Synthetic Dataset Structure
-
-```
-training_output/synthetic_data/
-├── blur/           ← Synthetically blurred sphere images
-├── sharp/          ← Original sharp sphere images (reference)
-├── coc_map/        ← Ground truth CoC maps (normalised 0–1)
-└── metadata.csv    ← Per-sample: filename, CoC (px), defocus (mm)
-```
-
-### Checkpoint Contents
-
-Each checkpoint file stores:
-- Model weights (DME alone, or DME + DD for full pipeline)
-- Optimiser state and current learning rate
-- Training epoch and best validation loss
-- Full training configuration
-- `training_mode` — `"optical"` or `"direct"`, used to route inference correctly
-- `max_coc` — maximum CoC value used for output normalisation
-
----
-
-## How to Run
-
-### GUI (Recommended)
+Three equivalent launch commands:
 
 ```bash
-cd training/Training
-python training_gui.py
+cropping-train                                    # console script
+python -m Training                                # module form
+python Training/training_gui.py                   # F5-friendly direct
 ```
 
-Work through the five tabs in order. Tabs 1–3 are for training; Tabs 4–5 are for evaluation and inference.
-
-### CLI — Inference Only
+CLI training is also supported:
 
 ```bash
-# Optical mode
-python training/Training/predict.py \
-    --checkpoint training_output/checkpoints/best_checkpoint.pth \
-    --image path/to/image.png
-
-# Direct mode
-python training/Training/predict.py \
-    --checkpoint training_output/checkpoints/best_checkpoint.pth \
-    --image path/to/image.png \
-    --calibration calibration/calibration_output/calibration_results.yaml
+python Training/train.py --config <yaml> --data-dir <dataset_dir> --output-dir <run_dir> [--resume <checkpoint>]
 ```
 
-### CLI — Training Only
+Minimal flow through the 5-tab GUI:
 
-```bash
-python training/Training/train.py --config training_output/optical_config.yaml
+1. **Scan & Configure** — Browse to a sharp-crops directory (output of
+   Preprocessing). Click **Load from CSVs** to scan + auto-load
+   `sharp_crops.csv`. Click **Load from Calibration** to auto-fill ρ,
+   σ₀, scale, and defocus range from the latest `calibration_results.yaml`.
+2. **Generate** — Set num samples, blur range, image size; click
+   **Generate Dataset**. Output lands at
+   `Training/training_output/datasets/<YYYYMMDD_HHMMSS>_<name>/`.
+3. **Train** — Pick the dataset (auto-fills with latest), set epochs +
+   batch size + learning rate, click **Start Training**. Output lands
+   at `Training/training_output/models/<YYYYMMDD_HHMMSS>_<name>/`.
+4. **Validation** — Optional: run the trained model on a synthetic test
+   set to get scatter plots, error histograms, and worst-case visualisations.
+5. **Inference** — Run on real preprocessed crops; per-image predictions
+   with `BoundsFlag` and LOO-derived uncertainty bars.
+
+Two best checkpoints are saved per run: `dme_best.pth` (best by
+weighted MAE on the synthetic validation set) and `dme_calib_best.pth`
+(best by mean absolute gap on the real calibration stack). Inference
+defaults to `dme_best.pth`.
+
+## The model: DefocusNet
+
+A small Conv backbone with two residual blocks, a 4×4 adaptive average
+pool, and a single fully-connected layer to a sigmoid output:
+
+```
+Input: blurred crop  (B, 1, H, W)              default H=W=256
+   ↓
+Conv 7×7, 32 filters, padding=3
+   ↓
+LeakyReLU(α=0.2)
+   ↓
+ResBlock × 2          (Conv → LReLU → Conv + skip, 3×3 kernels)
+   ↓
+AdaptiveAvgPool(4×4)                            preserves spatial gradient
+   ↓
+Flatten → Linear(32 × 4 × 4 → 1)
+   ↓
+Sigmoid                                          output ∈ [0, 1]
 ```
 
----
+~39,105 trainable parameters. The output is a normalised blur scalar;
+multiplying by `max_blur` (stored in the checkpoint) recovers σ in
+pixels.
 
-## GUI Reference
+**Loss** is a single log-space MSE in pixel space:
 
-### Tab 1 — Scan and Configure
+```
+L = MSE( log(σ_pred + ε),  log(σ_target + ε) )
 
-Load the preprocessing output and set the training configuration.
+  σ_pred   = pred_norm   × max_blur
+  σ_target = target_norm × max_blur
+  ε        = log_eps     (default 0.01)
+```
 
-**Step 1: Load crops**
+Operating in log space penalises **relative** error: a 50% error at
+σ=1 px and a 50% error at σ=12 px produce the same loss. Without log
+space, the loss would be dominated by the highest-σ samples and the
+model would learn poorly at low blur.
 
-Click **Browse** and navigate to the folder containing preprocessed sphere crops (the `OUTPUT*/` directory from preprocessing). The GUI counts the images found and reports the scan result.
+`max_blur` is the single source of truth, computed once from the
+dataset's `metadata.csv` and persisted into the checkpoint. Never
+recomputed downstream.
 
-**Step 2: Select mode**
+## Two training modes
 
-Choose between **Optical Mode** and **Direct Calibration Mode** using the radio buttons.
+| | Direct calibration | Optical formula |
+|---|---|---|
+| Synthesis source | `CalibrationModel.forward(z)` | Wang CoC formula from optical params |
+| Inputs needed | `calibration_results.yaml` from Calibration | focal length, f-number, focus distance, pixel size |
+| Inversion at inference | `CalibrationModel.inverse_at()` | inverse Wang formula |
+| Calibration baked into checkpoint? | Yes (full `CalibrationModel` block) | No (uses optical params from training_config) |
+| Recalibrate without retraining? | Yes — swap the embedded `calibration_model` block | No — retrain with new optical params |
+| Supports linear / quadrature / hybrid? | All three | n/a (analytic) |
 
-- *Optical Mode:* Enter camera parameters manually in the fields that appear.
-- *Direct Calibration Mode:* Click **Browse** to load `calibration_results.yaml`. The fields `ρ_direct`, `σ₀`, and R² are populated automatically and are read-only.
+Direct mode is the path most users will use, and the only one that
+supports the Calibration module's quadrature and hybrid fits. Optical
+mode is supported as an analytic fallback when calibration data isn't
+available.
 
-**Optical parameters (Optical Mode):**
+## Synthetic data generation
 
-| Parameter | Description |
-|-----------|-------------|
-| Focal Length (mm) | Camera lens focal length |
-| F-number | Aperture f-stop (e.g. 4.0 for f/4) |
-| Focus Distance (mm) | Distance to the in-focus reference plane |
-| Pixel Size (mm) | Physical size of one sensor pixel |
-| Defocus Min/Max (mm) | Range of defocus to simulate during data generation |
-| Rho (ρ) | Gaussian blur scaling constant (typically 1.0) |
+`synthetic_blur.py` is the generator. Given a `CalibrationModel` (or
+optical params), it produces a dataset of blurred sphere crops with
+ground-truth σ labels.
 
-**Step 3: Save configuration**
+### Sphere appearance sampling
 
-Click **Save Config** to write `optical_config.yaml` to the crops directory. This file is required before proceeding to Tab 2.
+Generated samples don't render against an arbitrary background — they
+match the real data they'll be deployed on. `SphereAppearanceStats`
+samples the user's real sharp crops to learn the distributions of:
 
----
+- sphere diameter
+- contrast (sphere vs background intensities)
+- edge profile shape
+- background texture
+
+Each generated sample then draws a sphere matching one of those
+distributions before blur is applied.
+
+### Blur synthesis
+
+Gaussian convolution at the synthesis-target σ:
+
+- **Direct mode:** `σ = CalibrationModel.forward(|z|)` for each sampled
+  defocus `z`. The full `CalibrationModel` (linear/quadrature/hybrid)
+  is used — for hybrid, this includes the residual LUT.
+- **Optical mode:** `σ` from the Wang CoC formula at the sampled
+  defocus.
+
+Kernel radius factor configurable (default 4× σ). The result is a
+blurred crop at the target σ ready to feed the model.
+
+### Diameter binning (stratified)
+
+Samples are split into three diameter tertiles (small / medium /
+large), with bin boundaries derived from the real-crop diameters. The
+training validation split is stratified across these bins so the model
+sees balanced training across droplet sizes. Without stratification the
+model overfits the dominant size and fails on the others.
+
+### Two-source mixing
+
+The dataset can blend pure-synthetic crops with a fraction of real
+preprocessed crops at matching diameters. Configurable in the
+**Synthetic Data Config** dialog on Tab 2. Sharpens the sim-to-real
+bridge for users whose synthesis doesn't perfectly match their lens.
+
+### Tertiary real-calibration pool
+
+A small pool (default ~50) of real calibration sphere images with
+ERF-derived σ labels, drawn from `Calibration/runs/<latest>/processed_images/`.
+Used both as a third sample source in the dataset and as the pool the
+**calibration loss anchor** evaluates against during training (next
+section).
+
+### Per-sample ERF validation
+
+When enabled (`generation.erf_validation: true`), every generated
+sample is auto-validated by re-measuring σ via ERF and checking it
+matches the synthesis target within tolerance. Catches bugs in the
+synthesis path. Failed samples are logged and excluded.
+
+### Per-camera scale correction
+
+When mixing crops from cameras with different `s_calib_px_per_mm`,
+σ values are scaled to a common pixel space. Without this, mixing
+crops from a high-resolution camera with crops from a lower-resolution
+one would make the model see inconsistent σ for the same defocus.
+
+### Outputs
+
+```
+datasets/<ts>_<name>/
+├── blur/                      PNG crops the model sees during training
+├── sharp/                     original sharp crops (reference, not used by training)
+├── blur_map/                  per-pixel blur maps (reference, not used by training)
+├── metadata.csv               filename, sigma_px, defocus_mm, diameter_px, source, camera
+├── generation_config.yaml     resolved config used for generation
+├── dataset_summary.json       counts per source + bin distribution
+└── calibration_model.yaml     the CalibrationModel that drove synthesis (direct mode)
+```
+
+`metadata.csv` is the contract the dataloader reads. The `source`
+column distinguishes `synthetic` / `real_mix` / `real_calibration`
+samples; the `camera` column is set for mix samples.
+
+## The training loop
+
+`train.py` runs `Trainer.train()`. End-to-end:
+
+### Data loading
+
+`DMEDataset` reads `metadata.csv`, returns `(blur_img, blur_norm, blur_px)`
+per item. Optional in-memory cache (`blur_cache.npy`) for small datasets.
+On Windows the DataLoader defaults to `num_workers=0` for stability;
+override via the `TRAIN_NUM_WORKERS` environment variable.
+
+### Validation split
+
+Stratified across the three diameter bins by default. Falls back to a
+uniform split when `min_blur_px < 0.5` (the bins lose meaning at very
+low blur).
+
+### Optimiser and scheduler
+
+| Setting | Options | Default |
+|---|---|---|
+| Optimiser | `adam`, `adamw`, `sgd` | `adam` |
+| Adam β₁/β₂ | configurable | 0.9 / 0.999 |
+| Weight decay | configurable | 0.0 |
+| LR schedule | `cosine`, `exponential`, `step` | `step` |
+| LR decay start epoch | configurable | run-specific |
+| Gradient clipping | configurable | off (0.0) |
+
+### Bin-weighted MAE
+
+The validation MAE is computed per blur-bin (4 equal-width bins by σ)
+and weighted by Beta-distribution sampling weights (configurable α, β).
+"Best" is tracked against this weighted MAE rather than overall MAE so
+the model isn't dominated by the lowest-σ bin.
+
+### Calibration evaluation per epoch
+
+If `Calibration/runs/` contains a bundle, the trainer auto-discovers
+the latest, runs the model on every frame in `processed_images/`, and
+computes the mean absolute gap (px) between model predictions and
+ERF-derived ground truth from `measurements.csv`. The frames are cached
+on first call to avoid repeated disk reads.
+
+The empirical maximum σ the model produces on this stack is recorded as
+`sigma_max_model_observed_px`. This becomes the model's plateau
+ceiling — the SECOND trust bound used by the SATURATED flag at
+inference, alongside the calibration's `sigma_max_trusted_calib_px`.
+
+### Calibration loss anchor (optional)
+
+When enabled (`calibration_anchor_enabled: true`), an additional term
+is added to every training step:
+
+```
+L_total = L_main + α × MSE( model(real_calibration_pool), ERF_labels )
+```
+
+Pulls the model toward physical truth on real data while still training
+mostly on synthetic. Default `α = 0.5` works well; higher values
+increase the pull but also the variance in training curves.
+
+### Two best checkpoints
+
+| File | Selection criterion |
+|---|---|
+| `dme_best.pth` | Best weighted MAE on the synthetic validation set |
+| `dme_calib_best.pth` | Best mean absolute calibration gap on real ERF-truth frames |
+
+These are often different. Use `dme_best.pth` as the default for
+inference; switch to `dme_calib_best.pth` if calibration-stack
+performance matters more than synthetic-val metrics for your use case.
+
+Per-epoch recovery checkpoints (`dme_epoch_<N>.pth`) are saved unless
+`save_only_best: true`.
+
+### Resuming
+
+`--resume <path>` loads weights + optimizer state. If the checkpoint's
+`training_mode` differs from the current config, the loader logs a
+warning and proceeds with the checkpoint's mode.
+
+## Calibration baking and the inference handoff
+
+The checkpoint is self-contained — Inference reads everything it needs
+from the `.pth` file alone. The chain:
+
+1. **Calibration module** fits a `CalibrationModel`, exports
+   `calibration_results.yaml` to `Calibration/runs/<ts>_camera-<id>/`.
+2. **Dataset generation** reads the YAML and writes a copy as
+   `calibration_model.yaml` next to `metadata.csv` in the dataset dir.
+3. **Trainer** auto-loads the dataset's `calibration_model.yaml` (or
+   builds a linear `CalibrationModel` from `rho_direct` + `sigma_0` for
+   datasets that predate the Phase-5 emit).
+4. **Trainer** runs calibration eval per epoch → records
+   `sigma_max_model_observed_px`.
+5. **At every checkpoint save** (`train.py:1115`), the Trainer mutates
+   a copy of `config['training']` to include:
+
+   ```yaml
+   training:
+     # ... existing fields
+     inversion_method: hybrid                    # or linear / quadrature
+     calibration_model:
+       method: hybrid
+       rho_px_per_mm: 1.0478
+       sigma_floor_calib_px: 0.9274
+       residual_lut_mm_px: [[0.6, 0.038], …]
+       sigma_min_trusted_calib_px: 1.131
+       sigma_max_trusted_calib_px: 6.431
+       # … all other CalibrationModel fields
+       loo_cv:
+         rho_std: 0.0056
+         aux_param_name: sigma_floor
+         aux_param_std: 0.021
+         loo_mae: 0.089
+         num_folds: 56
+     calibration_source_sha256: <12-hex prefix>
+     sigma_max_model_observed_px: <empirical plateau>
+   ```
+
+6. **Inference** ([Inference/inference_engine.py](../Inference/inference_engine.py))
+   reads the checkpoint, finds `config['training']['calibration_model']`,
+   instantiates `physics.CalibrationModel.from_dict()`, and uses
+   `inverse_at()` for σ → mm + `BoundsFlag` for trust.
+
+The SHA256 prefix lets you verify the checkpoint's calibration matches
+the source `calibration_results.yaml` you intended (the checkpoint logs
+the prefix at save time).
+
+## GUI tabs
+
+### Tab 1 — Scan & Configure
+
+| Field | Purpose |
+|---|---|
+| Sharp Crops path | Browse to a Preprocessing run's `Focus/` directory (or any folder containing crops + `sharp_crops.csv`) |
+| Camera filter | `all` / `g` / `m` / `v` — restricts the scan to one camera type |
+| Load from CSVs | Auto-discovers `sharp_crops.csv` (walks up 3 parent dirs, mtime sort) and populates the folder list with focus stats, scale, native blur σ, diameter ranges per folder |
+| Folder list | Per-folder `OpticalConfig` overrides — useful when different folders were captured with different optics |
+| Load from Calibration | Auto-fills `rho_direct`, `sigma_0`, `scale_calib_px_per_mm`, `defocus_range_mm` from the latest `Calibration/runs/<ts>_camera-<id>/calibration_results.yaml`. Disabled if no calibration runs exist. |
 
 ### Tab 2 — Generate
 
-Create the synthetic training dataset from the loaded sharp crops.
-
-The generation process applies a range of synthetic blur levels to each sharp reference image, producing blur/sharp/CoC map triples with precisely known ground truth. This is necessary because it is impossible to obtain perfectly labelled blur data from real images.
-
-**Parameters:**
-
-| Parameter | Description |
-|-----------|-------------|
-| Output directory | Where to write the synthetic dataset |
-| Samples per image | Number of blurred variants to generate per reference crop. Recommended: 20–50. |
-| Distribution | `Uniform` (equal sampling) or `Weighted` (Beta distribution) |
-| Beta α and β | Shape parameters for the Beta distribution (see table below) |
-| Min CoC filter | Skip samples below this CoC threshold. Set to 0 to include all. |
-
-**Beta distribution guide — choosing α and β:**
-
-| Goal | α | β | Effect |
-|------|---|---|--------|
-| General purpose | 2.0 | 2.0 | Bell curve centred at mid-range |
-| Real data is mostly sharp | 2.0 | 5.0 | More samples near focus |
-| Real data is mostly blurred | 5.0 | 2.0 | More samples at high defocus |
-| Emphasise extremes | 0.5 | 0.5 | U-shape: sharp and very blurred |
-| Uniform (equivalent) | 1.0 | 1.0 | Equal across full range |
-
-The GUI provides forward and reverse Beta calculators to help choose parameters before generating.
-
-Click **Generate** and wait for the progress bar to complete.
-
----
+| Field | Purpose |
+|---|---|
+| Training mode | `direct` (uses CalibrationModel) or `optical` (uses Wang formula) |
+| Num samples | Total samples to generate (typical: 50k–200k) |
+| Blur range / image size | Defines the σ range and crop dimension (256×256 default) |
+| Droplet diameter range | Min/max diameter (px) for synthesised spheres |
+| Synthetic Data Config dialog | Two-source mixing percentages, tertiary real-calibration pool size, ERF validation toggle |
+| Output dir | Auto-fills with `datasets/<ts>_<name>/`. Editable. |
+| Generate Dataset | Writes the dataset; progress + sample preview shown live |
 
 ### Tab 3 — Train
 
-Train the neural networks on the generated dataset.
+| Field | Purpose |
+|---|---|
+| Dataset path | Auto-fills with the latest dataset. Browse to override. |
+| Epochs / batch size / learning rate | Standard knobs |
+| Optimiser / LR schedule | Combo dropdowns — see Training Loop section above |
+| Advanced settings dialog | Adam β₁/β₂, weight decay, gradient clipping, log_eps, calibration anchor (enable + α), seed, save_only_best toggle |
+| Output dir | Auto-fills with `models/<ts>_<name>/`. Editable. |
+| Resume from checkpoint | Optional path to a prior `.pth` |
+| Start Training | Runs in a background thread; live log + TensorBoard launch button |
 
-**Training pipeline options:**
+### Tab 4 — Validation
 
-| Mode | Description | When to Use |
-|------|-------------|-------------|
-| Full Pipeline | Train DME, then freeze it and train DD | Starting from scratch — standard workflow |
-| DME Only | Train only the CoC prediction network | Improving defocus estimation without retraining DD |
-| DD Only | Train deblurring with a frozen pre-trained DME | Improving deblurring quality without repeating DME training |
+Pick a model checkpoint, optionally pick a separate test dataset (or
+use the original training dataset's val split). Outputs:
 
-**Key training parameters:**
+- predicted-vs-true scatter
+- error histograms (overall + per blur bin)
+- worst-case visualisations (the N samples with largest absolute error)
+- summary stats (MAE, RMSE, R², per-bin breakdown)
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| Batch Size | 8 | Samples per training step. Reduce if GPU runs out of memory. |
-| DME Epochs | 100 | Training epochs for the DME stage |
-| DD Epochs | 100 | Training epochs for the DD stage |
-| Learning Rate | 0.0001 | Initial learning rate (Adam optimiser) |
-| Validation Split | 0.2 | Fraction of data held out for validation |
+Lands in `models/<run>/tests/synthetic/test_<ts>/`.
 
-**Checkpoint management:**
+### Tab 5 — Inference
 
-- **Auto-detect:** Scans the data directory for the most recent checkpoint and loads it automatically. Use this to resume an interrupted training run.
-- **Browse:** Select a specific checkpoint file manually.
-- **Clear:** Start fresh with no pre-loaded weights.
+| Field | Purpose |
+|---|---|
+| Model checkpoint | Path to a `.pth` (auto-fills with the run's `dme_best.pth`) |
+| Real crops folder | Folder of preprocessed PNGs (e.g. a Preprocessing run's `Focus/<material>/<cam>/`) |
+| Pre-pipeline | Optional sphere processing via `Calibration.sphere_processing.process_sphere_stack` (consensus detect → mirror → blacken → flatten → crop → resize) |
+| Run Inference | Per-image predictions with σ_px, defocus_mm, BoundsFlag, LOO-derived ±mm uncertainty |
+| Calibration Editor | Opens the post-hoc editor (next section) |
 
-When loading a checkpoint, you can optionally set a new learning rate (Learning Rate Override). Use this for fine-tuning at a lower learning rate after initial convergence.
+Outputs: `models/<run>/tests/real_crop/test_<ts>/` containing per-image
+results, comparison plots, and a CSV manifest.
 
-**Validation split strategy:**
+## The calibration editor
 
-| Strategy | Description |
-|----------|-------------|
-| Random | Random 80/20 split. Set a seed for reproducibility. |
-| Stratified | Split balanced across CoC bins. Ensures all blur levels are represented in validation. |
+Edits the `(ρ, σ₀)` baked into a trained checkpoint without retraining.
+**Linear-only** — quadrature/hybrid checkpoints can't be edited
+post-hoc because the LUT and σ_floor depend on the fit data, not just a
+slope/intercept.
 
-**Monitoring training:**
+Why this exists: in direct mode, the calibration parameters live in
+the checkpoint's *config*, not in the *weights*. If you recalibrate
+(lens swap, focus shift, lab move), you can patch the checkpoint
+without regenerating the synthetic dataset and retraining.
 
-```bash
-tensorboard --logdir training/Training/training_output/checkpoints/logs
-```
+| Mode | What it does |
+|---|---|
+| Manual values | Type new `(ρ, σ₀)` directly |
+| Fit from points | Provide new (z, σ) pairs; the editor fits a linear model and applies it |
+| Apply linear correction | Subtract a known slope/intercept correction from the existing values |
 
-Open [http://localhost:6006](http://localhost:6006) in a browser to view loss curves and metrics in real time.
+The editor writes a **new** checkpoint at
+`models/<m>/edits/<edit_name>/dme_best.pth`. It never overwrites the
+source — `save_corrected_checkpoint` enforces this. The new checkpoint
+records a `calibration_history` entry (timestamp, before/after values,
+optional notes) so you can trace the lineage.
 
----
+To "undo" an edit, delete the edit dir.
 
-### Tab 4 — Validation and Testing
-
-Evaluate the trained model on held-out data with detailed metrics.
-
-**Test modes:**
-
-| Mode | Metrics Produced |
-|------|-----------------|
-| DME Only | CoC MAE (px), CoC RMSE, error by CoC bin |
-| Full Pipeline | PSNR, SSIM, diameter error (px), defocus error (%) |
-
-**Output files:**
-
-```
-test_results/
-├── test_summary.txt           ← Overall metrics and run configuration
-├── test_metrics.csv           ← Per-sample metrics
-├── worst_cases/               ← Visualisations of worst-performing samples
-├── coc_scatter.png            ← Predicted vs ground truth CoC scatter plot
-├── error_histogram.png        ← Distribution of prediction errors
-└── binned_metrics.png         ← Metrics grouped by CoC range
-```
-
----
-
-### Tab 5 — Inference and Analysis
-
-Run the trained model on real (non-synthetic) sphere images, organised by material.
-
-**Input structure:**
+## Outputs
 
 ```
-input_directory/
-├── 8mm-borosilicate/
-│   ├── sphere0001v_crop.png
-│   └── ...
-└── 6mm-steel/
-    └── ...
+Training/training_output/
+├── datasets/
+│   └── <YYYYMMDD_HHMMSS>_<name>/
+│       ├── blur/                   PNG crops the model sees
+│       ├── sharp/                  original sharp crops (reference)
+│       ├── blur_map/               per-pixel blur maps (reference)
+│       ├── metadata.csv            filename, sigma_px, defocus_mm, diameter_px, source, camera
+│       ├── generation_config.yaml  resolved config used for generation
+│       ├── dataset_summary.json    counts per source + bin distribution
+│       └── calibration_model.yaml  the CalibrationModel that drove synthesis (direct mode)
+└── models/
+    └── <YYYYMMDD_HHMMSS>_<name>/
+        ├── training_config.yaml    resolved config (incl. embedded calibration block)
+        ├── checkpoints/
+        │   ├── dme_best.pth                     best by weighted MAE on synthetic val
+        │   ├── dme_calib_best.pth               best by mean abs gap on calibration stack
+        │   ├── dme_best_session_<ts>.pth        best within the current invocation
+        │   └── dme_epoch_<N>.pth                per-epoch (skipped when save_only_best)
+        ├── logs/
+        │   ├── events.out.tfevents.*            TensorBoard event files
+        │   ├── run_metadata.json                status / timing / env / dataset summary / best metrics
+        │   ├── training_history.yaml            per-epoch loss + MAE + LR
+        │   └── training_curves.png              loss + MAE plots
+        ├── tests/
+        │   ├── synthetic/<test_<ts>>/
+        │   └── real_crop/<test_<ts>>/
+        └── edits/
+            └── <edit_name>/
+                ├── dme_best.pth                 edited copy with patched (ρ, σ₀)
+                └── tests/
+                    ├── synthetic/<test_<ts>>/
+                    └── real_crop/<test_<ts>>/
 ```
 
-**Output structure:**
+### `training_config.yaml` schema
+
+Fields, organised by section:
+
+| Section | Key fields |
+|---|---|
+| `blur` | `kernel_radius_factor`, `rho` (legacy) |
+| `calibration` | `reference_resolution` |
+| `data` | `blur_distribution`, `defocus_range_mm`, `diameter_bins` (with tertile boundaries), `droplet_diameter_range_px`, `image_size_px`, `min_blur_px`, `num_samples`, `blur_range_px` |
+| `generation` | `erf_validation`, `save_blur_trace_metadata` |
+| `optics` | `focal_length_mm`, `f_number`, `focus_distance_mm`, `pixel_size_mm`, `sensor_height_px`, `sensor_width_px` (used by optical mode) |
+| `training` | `batch_size`, `crop_size_px`, `epochs_dme`, `lr`, `rho_direct`, `scale_calib_px_per_mm`, `sigma_0`, `training_mode`, `optimizer`, `lr_schedule`, `weight_decay`, `grad_clip_norm`, `log_eps`, `seed`, `calibration_anchor_enabled`, `calibration_anchor_alpha`, `save_only_best` |
+
+When the trainer saves a checkpoint, it adds these to `training`:
+
+| Key | Meaning |
+|---|---|
+| `inversion_method` | `linear` / `quadrature` / `hybrid` — what to use for σ → mm at inference |
+| `calibration_model` | Full `CalibrationModel.to_dict()` block |
+| `calibration_source_sha256` | 12-hex prefix of the CalibrationModel for verification |
+| `sigma_max_model_observed_px` | Empirical plateau — the model's max σ output on the calibration stack |
+
+### Checkpoint dict keys
+
+| Key | Type | Purpose |
+|---|---|---|
+| `epoch` | int | Last completed epoch |
+| `global_step` | int | Total optimiser steps |
+| `config` | dict | Full resolved config (with embedded calibration block) |
+| `max_blur` | float | Single source of truth for σ normalisation |
+| `max_coc` | float | Back-compat alias for `max_blur` |
+| `log_eps` | float | ε used in the log-space loss |
+| `training_mode` | str | `direct` or `optical` |
+| `dme_state_dict` | dict | Network weights |
+| `optimizer_state_dict` | dict | Optimiser state (for resume) |
+| `val_loss`, `val_mae_px` | float | Validation metrics at this checkpoint |
+| `calibration_history` | list | Audit trail of any post-hoc edits (only on edited checkpoints) |
+
+## Caveats and gotchas
+
+- **`physics.CalibrationModel` lives at the repo root**, not under
+  `Training/`. The trainer imports it via `from physics import
+  CalibrationModel` after the `__main__.py` sys.path injection
+  (root + Training + Preprocessing + Calibration).
+- **Calibration is baked into every direct-mode checkpoint.** Inference
+  doesn't read `calibration_results.yaml` — it reads from the
+  checkpoint's `config.training.calibration_model` block. The SHA256
+  prefix verifies provenance.
+- **Two best checkpoints exist for a reason.** `dme_best.pth` minimises
+  synthetic-val weighted MAE; `dme_calib_best.pth` minimises real
+  calibration-stack gap. They're usually different runs of "best".
+  Inference defaults to `dme_best.pth`; point it at `dme_calib_best.pth`
+  if calibration-stack performance matters more for your use case.
+- **`max_blur` is the single source of truth.** Computed once from
+  `metadata.csv` at training start, stored in the checkpoint, never
+  recomputed downstream. The `max_coc` key in the checkpoint is just a
+  back-compat alias for the same value.
+- **`TRAIN_NUM_WORKERS` env var.** On Windows the DataLoader's
+  multi-process mode is fragile; default workers is 0. Set
+  `TRAIN_NUM_WORKERS=4` (or whatever) before launching to override.
+- **Calibration loss anchor changes the loss surface.** When on, the
+  trainer is jointly minimising synthetic log-MSE + α·MSE on real ERF
+  labels. Higher α pulls harder toward real data but adds variance to
+  the training curves. `α = 0.5` is the working default.
+- **Edits never overwrite the source checkpoint.**
+  `calibration_editor.save_corrected_checkpoint` enforces this — edits
+  always write to a new path under `edits/<edit_name>/`. To revert, delete the
+  edit dir.
+- **Calibration editor is linear-only.** Quadrature/hybrid checkpoints
+  can't be patched post-hoc because the LUT and σ_floor depend on the
+  fit data, not just a slope/intercept. Workaround: re-fit calibration
+  with the new sphere data and retrain.
+- **Mode mismatch on resume warns and proceeds.** If you resume an
+  optical-mode checkpoint with a direct-mode config (or vice versa),
+  the loader logs a warning and uses the checkpoint's mode. Start a
+  fresh run if that isn't what you want.
+- **CLI inference lives in `inference_real_crops.py`**, not a separate
+  `predict.py`. Use the GUI's Tab 5 or
+  `python Training/inference_real_crops.py` for headless runs.
+- **Auto-discovery uses mtime.** "Latest dataset" / "latest model" /
+  "latest calibration bundle" all sort by directory mtime. If you
+  manipulate folders externally and want a specific one to be picked up,
+  `touch` it.
+
+## File map
 
 ```
-inference_results/inference_YYYYMMDD_HHMMSS/
-├── <material>/
-│   ├── blur_results.csv            ← Per-crop results
-│   ├── crops_deblurred/            ← Deblurred reconstructions
-│   └── visualizations/             ← 3-panel comparison images
-├── summary_all_materials.csv
-└── summary_analysis.png            ← 4-panel analysis plot
+Module entry
+  __main__.py                  console-script entry, sys.path bootstrap
+                                (Training, repo root, Preprocessing, Calibration)
+  training_gui.py              5-tab Tk app — Scan/Configure / Generate / Train / Validation / Inference
+
+Model + loss
+  model.py                     DefocusNet scalar-head architecture
+                                (DMESubnet, ResBlock, count_parameters, model_summary)
+  losses.py                    DMELoss (log-space MSE in pixel space), compute_psnr, compute_ssim
+
+Training
+  train.py                     Trainer class — train()/train_dme()/train_dme_only(),
+                                checkpoint baking, calibration eval + anchor, CLI main()
+  dataset.py                   DMEDataset (returns blur_img, blur_norm, blur_px),
+                                max/min-blur from metadata, stratified split, in-memory cache
+  utils.py                     calculate_bin_weights_from_beta()
+
+Synthetic data
+  synthetic_blur.py            BlurParams, BlurCalculator, SphereAppearanceStats,
+                                SyntheticBlurGenerator (two-source mixing, tertiary real pool,
+                                ERF validation, per-camera scale correction)
+
+Real-data inference + testing
+  inference_real_crops.py      DiameterMeasurer, RealCropInference, per-material grouping,
+                                comparison plots, calibration-aware inversion. Also CLI main().
+  test_model.py                TestDataset, ModelTester — synthetic-data evaluation,
+                                predicted-vs-true scatter, error histograms, worst-case visualisations
+
+Calibration editor
+  calibration_editor.py        apply_linear_correction, read/write_calibration,
+                                save_corrected_checkpoint, CalibrationSnapshot,
+                                next_edit_dirname, audit-trail history
+  calibration_editor_dialog.py CalibrationEditorDialog (Tk modal wrapping the editor)
+
+Path utilities
+  run_paths.py                 Timestamped dataset/model/test dir helpers,
+                                parse_true_z_from_filename, detect_model_name, detect_variant
 ```
 
-**CSV columns:**
+## Where it sits in the pipeline
 
-| Column | Description |
-|--------|-------------|
-| `filename` | Input crop filename |
-| `coc_px` | Predicted Circle of Confusion (pixels) |
-| `defocus_mm` | Corresponding defocus distance (mm) |
-| `focus_status` | `in_focus` or `out_of_focus` |
-| `diameter_original_px` | Measured diameter from original image |
-| `diameter_deblurred_px` | Measured diameter from deblurred image |
-| `material` | Material folder name |
+**Upstream:**
 
----
+- **Preprocessing** —
+  `Preprocessing/output/runs/<latest>/Focus/sharp_crops.csv` provides
+  the real sharp crops that seed `SphereAppearanceStats`, drive the
+  optional two-source mix, and supply per-camera scale + diameter info.
+  Auto-discovered by Tab 1's "Load from CSVs".
+- **Calibration** — `Calibration/runs/<latest>/calibration_results.yaml`
+  provides the `CalibrationModel`. Auto-discovered by Tab 1's
+  "Load from Calibration" and by the trainer's
+  `_find_latest_calibration_bundle()` (used for per-epoch calibration
+  eval and the optional loss anchor).
 
-## Configuration Reference
+**Downstream:**
 
-### optical_config.yaml (Optical Mode)
+- **Inference** ([Inference/inference_engine.py](../Inference/inference_engine.py))
+  consumes the checkpoint `.pth` only. Does not read `metadata.csv`,
+  `training_config.yaml`, or any other Training output. Imports
+  `Training.model.DefocusNet` (the class) and reads everything else
+  from the checkpoint dict — including the embedded `CalibrationModel`,
+  `max_blur`, `log_eps`, and `sigma_max_model_observed_px`.
 
-```yaml
-# Optical system parameters
-focal_length_mm: 200.0       # Lens focal length (mm)
-f_number: 4.0                # Aperture f-stop
-focus_distance_mm: 400.0     # Distance to in-focus reference plane (mm)
-pixel_size_mm: 0.020         # Sensor pixel size (mm)
-
-# Defocus range for synthetic data generation
-defocus_min_mm: -12.0        # Negative: closer to camera than focal plane
-defocus_max_mm: 12.0         # Positive: farther from camera than focal plane
-
-# Blur scaling constant
-rho: 1.0                     # Gaussian blur scaling factor (typically 1.0)
-```
-
-### optical_config.yaml (Direct Mode additions)
-
-```yaml
-training_mode: direct
-rho_direct: 0.699            # From calibration: pixels of blur per mm of defocus
-sigma_0: 0.28                # From calibration: residual blur at focal plane (pixels)
-```
-
-### CoC Formula (Optical Mode)
-
-```
-CoC (px) = ρ × A × |d_i − d_o'| / d_o'
-```
-
-Where:
-- `ρ` = rho scaling constant
-- `A` = aperture diameter = `focal_length / f_number`
-- `d_i` = imaging distance (from thin-lens equation)
-- `d_o'` = object distance at defocus plane = `focus_distance + defocus`
-
----
-
-## Troubleshooting
-
-| Symptom | Likely Cause | Resolution |
-|---------|-------------|------------|
-| Poor CoC prediction | Optical config does not match the actual camera | Verify all parameters; consider switching to Direct Calibration Mode |
-| Blurry deblurred output | DME predictions are inaccurate | Improve DME first; DD quality is bounded by DME quality |
-| CUDA out-of-memory | Batch size too large for available GPU memory | Reduce batch size in Tab 3 |
-| Mode mismatch warning on checkpoint load | Checkpoint was trained in a different mode | Confirm `training_mode` field in the checkpoint matches the current config |
-| Direct Mode blocked at training start | Calibration YAML not loaded | Return to Tab 1 and use Browse to load `calibration_results.yaml` |
-| Training not improving after many epochs | Learning rate too high or data distribution issue | Try loading the checkpoint with a lower LR override; check validation loss is not flat |
-
----
-
-## Project Files
-
-| File | Description |
-|------|-------------|
-| `training_gui.py` | Main 5-tab GUI application |
-| `train.py` | Training engine (Trainer class; used by GUI and CLI) |
-| `model.py` | DefocusNet architecture (DMESubnet, DDSubnet, ResBlock) |
-| `synthetic_blur.py` | Blur synthesis engine with dual-mode support (OpticalParams, CoCCalculator, SyntheticBlurGenerator) |
-| `dataset.py` | PyTorch Dataset classes and DataLoader construction |
-| `losses.py` | Loss functions (DMELoss, DDLoss) |
-| `predict.py` | CLI inference entry point (DefocusEstimator class) |
-| `inference_real_crops.py` | GUI inference engine (RealCropInference class) |
-| `test_model.py` | Model evaluation utilities |
-| `test_cuda.py` | CUDA availability and device diagnostics |
-
----
-
-## Reference
-
-Wang, Z. et al. (2022). "Three-dimensional measurement of the droplets out of focus in shadowgraphy systems via deep learning-based image-processing method." *Physics of Fluids*, 34(7), 073301.
-https://doi.org/10.1063/5.0090714
+No other modules in this repo import from Training.
