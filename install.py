@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-CROPPING Pipeline — Environment Setup
+CROPPING Pipeline — Environment Installer
 
-Cross-platform setup script. Creates a virtual environment, installs all
+Cross-platform installer. Creates a virtual environment, installs all
 dependencies, verifies imports, and prints launch instructions.
 
 Usage:
-    python setup.py                  # Full setup with CPU PyTorch
-    python setup.py --cuda 12.1      # Full setup with CUDA 12.1 PyTorch
-    python setup.py --check          # Check existing environment only
-    python setup.py --install        # Install missing packages only
+    python install.py                # Full setup with CPU PyTorch
+    python install.py --cuda 12.1    # Full setup with CUDA 12.1 PyTorch
+    python install.py --check        # Check existing environment only
+    python install.py --install      # Install missing packages into current env
 """
 
 import os
@@ -187,7 +187,7 @@ def check_only():
         return True
     else:
         print(f"  NOT READY — missing: {', '.join(m.split('>=')[0] for m in missing)}")
-        print(f"  Run: python setup.py")
+        print(f"  Run: python install.py")
         return False
 
 
@@ -277,17 +277,23 @@ def full_setup(cuda_version: str = "cpu"):
   Activate the environment:
     {activate}
 
-  Launch the pipeline:
+  Launch the pipeline (module form):
     python -m Preprocessing        # Preprocessing GUI
     python -m Calibration          # Calibration GUI
     python -m Training             # Training GUI
     python -m Inference            # Inference GUI
 
-  Run diagnostics:
-    python Extras/tests/test_gui.py
+  Or via console scripts (after editable install above):
+    cropping-preprocess
+    cropping-calibrate
+    cropping-train
+    cropping-infer
 
   Run automated tests:
-    python -m pytest Extras/tests/test_pipeline.py -v
+    python -m pytest Extras/tests/ -v
+
+  Lab-capture hardware deps (only needed for Step 0 — calibration capture):
+    pip install -r Calibration/lab_capture/requirements.txt
 """)
 
 
@@ -297,14 +303,14 @@ def main():
     import argparse
 
     parser = argparse.ArgumentParser(
-        description="CROPPING Pipeline — Environment Setup",
+        description="CROPPING Pipeline — Environment Installer",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  python setup.py                 Full setup with CPU PyTorch
-  python setup.py --cuda 12.1     Full setup with CUDA 12.1
-  python setup.py --check         Check existing environment
-  python setup.py --install       Install missing packages only
+  python install.py                 Full setup with CPU PyTorch
+  python install.py --cuda 12.1     Full setup with CUDA 12.1
+  python install.py --check         Check existing environment
+  python install.py --install       Install missing packages only
         """,
     )
     parser.add_argument("--check", action="store_true",

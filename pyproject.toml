@@ -55,7 +55,7 @@ include = [
 cropping-preprocess = "Preprocessing.__main__:run_gui"
 cropping-calibrate = "Calibration.__main__:_run"
 cropping-train = "Training.__main__:_run"
-cropping-infer = "Inference.__main__:_run"
+cropping-infer = "Inference.inference_gui:main"
 
 [project.urls]
 Repository = "https://github.com/SykesLab/CROPPING"
