@@ -35,12 +35,25 @@ This pipeline requires **Python 3.11 specifically.** Not 3.10. Not 3.12, 3.13, o
 Both `install.py` and `pyproject.toml` enforce this. Other deps cascade from
 this constraint.
 
-| Requirement | Version | Why this constraint exists |
+| Requirement | Pin | Why this constraint exists |
 |---|---|---|
-| Python | **== 3.11.x** | The `pyphantom` wheel is built `py311-none-any` and will not install on any other Python version. `install.py` uses `py -3.11` on Windows to find it; if 3.11 isn't present the installer aborts with instructions. `pyproject.toml`'s `requires-python = ">=3.11,<3.12"` enforces the same constraint at `pip install` time. |
-| NumPy | **< 2.0** | NumPy 2.x breaks the `pyphantom` binary ABI. Pinning numpy `<2.0` cascades through `pip`'s resolver to compatible scipy/opencv/pandas versions automatically. |
-| PyTorch | 1.9.0+ | Installed by `install.py` from the CUDA-specific index URL, not from PyPI. CUDA strongly recommended for training (10–100× speedup); CPU is fine for inference. |
-| Other deps | see `pyproject.toml` | Lower bounds only. Pip's resolver picks compatible upper bounds via the numpy `<2.0` cascade. |
+| Python | **`==3.11.x`** | The `pyphantom` wheel is built `py311-none-any` and will not install on any other Python version. `install.py` uses `py -3.11` on Windows to find it; if 3.11 isn't present the installer aborts with instructions. `pyproject.toml`'s `requires-python = ">=3.11,<3.12"` enforces the same constraint at `pip install` time. |
+| numpy | **`>=1.21,<2.0`** | NumPy 2.x breaks the `pyphantom` binary ABI. The cascading constraint forces compatible scipy/opencv/pandas versions automatically. |
+| scipy | **`>=1.7,<1.13`** | scipy 1.13+ requires numpy ≥2.0 — would conflict with the numpy pin. Without an explicit cap, pip's resolver gets confused. |
+| opencv-python | **`>=4.5,<5`** | opencv 5 (whenever it lands) is expected to drop numpy 1.x and may break cv2 API. |
+| Pillow | **`>=8,<11`** | Pillow 10 removed `Image.ANTIALIAS`; Pillow 11 removed more. Defensive cap. |
+| matplotlib | **`>=3.4,<4`** | matplotlib 4 (future) may break Tk backend usage. |
+| pandas | **`>=1.3,<3`** | pandas 3 may drop legacy column access. |
+| PyYAML | **`>=5.4,<7`** | Defensive cap. |
+| tqdm | **`>=4.60,<5`** | Defensive cap. |
+| torch | **`>=2.0,<3`** | torch 2.x is the supported generation. Major-version cap prevents silent breakage when torch 3 lands. Installed by `install.py` from the CUDA-specific index URL (NOT from PyPI). |
+| torchvision | **`>=0.15,<1`** | Must pair with torch 2.x. Same install path as torch. |
+| tensorboard | **`>=2.10,<3`** | Required by Training (`torch.utils.tensorboard.SummaryWriter`). Aligned with torch 2.x. |
+| pytest, pytest-timeout | bounded | Test suite only. |
+
+**You don't need to memorise these** — `install.py` and `pyproject.toml` enforce
+them. The list is documented here so you can audit them or refresh the cap when
+torch 3 / numpy 3 land.
 
 If you have multiple Python versions installed, **the installer will find 3.11
 automatically via `py -3.11` (Windows) or `python3.11` (Linux/Mac).** You don't
