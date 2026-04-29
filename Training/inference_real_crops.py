@@ -587,11 +587,12 @@ class RealCropInference:
                     )
                     bounds_flag_value = str(flag_cm.value)
                     inversion_method_value = cm_eval.method
+                    # inverse_at always returns a finite best-guess z,
+                    # even when SATURATED — flag tells callers what to
+                    # do with it.
                     import math as _math
                     if not _math.isnan(z_cm):
                         defocus_mm = float(z_cm)
-                    else:
-                        defocus_mm = float('nan')
                 except Exception as e:
                     logger.warning(
                         f"CalibrationModel.inverse_at failed for {img_path.name} "
@@ -1010,9 +1011,9 @@ class RealCropInference:
                 except Exception as e:
                     logger.warning(f"Calibration viz failed for {crop_path.name}: {e}")
 
-        # Drop the internal helper column before returning
-        if '_crop_path' in df.columns:
-            df = df.drop(columns=['_crop_path'])
+        # Keep `_crop_path` on the DataFrame — _create_sample_strip
+        # downstream uses it to load the actual file the model processed,
+        # and including it in the CSV gives provenance for each row.
 
         if len(df) > 0:
             csv_path = output_dir / 'blur_results.csv'
