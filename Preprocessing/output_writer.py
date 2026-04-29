@@ -14,8 +14,9 @@ from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import cv2
 import numpy as np
 
+import config
 from cine_io import get_camera_model_from_path, group_cines_by_droplet, safe_load_cine
-from config import CROP_SAFETY_PIXELS, FOCUS_METRICS_ENABLED, OUTPUT_ROOT
+from config import CROP_SAFETY_PIXELS, FOCUS_METRICS_ENABLED
 from cropping import crop_droplet_with_sphere_guard
 from focus_metrics import compute_all_focus_metrics
 from image_utils import load_frame_gray, otsu_mask
@@ -257,7 +258,7 @@ def generate_folder_outputs(
     groups = group_cines_by_droplet(sub)
     selected = list(range(0, len(groups), step))
 
-    out_sub = OUTPUT_ROOT / sub.name
+    out_sub = config.RUN_ROOT / sub.name
     out_sub.mkdir(parents=True, exist_ok=True)
 
     # Camera subfolder paths (created on-demand when needed)

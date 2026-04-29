@@ -17,7 +17,7 @@ import pandas as pd
 
 import config
 from cine_io import get_cine_folders, group_cines_by_droplet, iter_subfolders, safe_load_cine
-from config import CINE_ROOT, CROP_SAFETY_PIXELS, OUTPUT_ROOT
+from config import CINE_ROOT, CROP_SAFETY_PIXELS
 from crop_calibration import compute_crop_size, maybe_add_calibration_sample
 from darkness_analysis import (
     analyze_cine_darkness,
@@ -175,7 +175,7 @@ def _generate_droplet_output_global(
 
     folder_name, droplet_id, cam_data, cnn_size, full_output = args
 
-    out_sub = OUTPUT_ROOT / folder_name
+    out_sub = config.RUN_ROOT / folder_name
     out_sub.mkdir(parents=True, exist_ok=True)
 
     # Camera subfolder paths (created on-demand when needed)
@@ -484,7 +484,26 @@ def process_global(
     run_focus_classification()
 
     # Print pipeline summary with any issues
-    _print_pipeline_summary(OUTPUT_ROOT)
+    _print_pipeline_summary(config.RUN_ROOT)
+
+    # Persist any sphere-flattening failures to disk (consumed by README troubleshooting)
+    from output_writer import get_flatten_stats, write_flatten_failure_log
+    write_flatten_failure_log(config.RUN_ROOT)
+
+    # Append run outcomes to run_metadata.yaml (started_at + settings already
+    # written by the GUI; here we add the things only the pipeline knows).
+    try:
+        from run_io import update_run_metadata
+        flatten_fails, _ = get_flatten_stats()
+        update_run_metadata(
+            config.RUN_ROOT,
+            n_folders=n_folders,
+            n_droplets_processed=total_droplets,
+            calibrated_crop_size_px=int(cnn_size),
+            flatten_failures=flatten_fails,
+        )
+    except Exception as e:
+        logger.warning(f"Could not update run_metadata.yaml: {e}")
 
     total_sec = global_timer.seconds
     logger.info(f"Global pipeline complete in {format_time(total_sec)}")
@@ -503,7 +522,7 @@ def process_global(
 
     if profile:
         save_profile_json(
-            OUTPUT_ROOT,
+            config.RUN_ROOT,
             "profiling_global.json",
             {
                 "mode": "global",
@@ -535,7 +554,7 @@ def _write_global_csvs(
     from image_utils import load_frame_gray
 
     for folder_name, droplets in folder_analyses.items():
-        out_sub = OUTPUT_ROOT / folder_name
+        out_sub = config.RUN_ROOT / folder_name
         out_sub.mkdir(parents=True, exist_ok=True)
         csv_path = out_sub / f"{folder_name}_summary.csv"
 
@@ -679,7 +698,7 @@ def _quick_test_global(
             continue
 
         droplet_id, cams = groups[0]
-        out_sub = OUTPUT_ROOT / sub.name
+        out_sub = config.RUN_ROOT / sub.name
         out_sub.mkdir(parents=True, exist_ok=True)
 
         csv_path = out_sub / f"{sub.name}_quicktest.csv"
@@ -817,7 +836,7 @@ def _quick_test_global(
 
     if profile:
         save_profile_json(
-            OUTPUT_ROOT,
+            config.RUN_ROOT,
             "profiling_global_quicktest.json",
             {
                 "mode": "global-quicktest",

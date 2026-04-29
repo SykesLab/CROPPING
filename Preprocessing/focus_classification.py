@@ -20,7 +20,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from config import OUTPUT_ROOT
+import config
 from crop_blur_measurement import measure_erf_blur
 from focus_metrics import compute_all_focus_metrics
 
@@ -86,11 +86,11 @@ def run_focus_classification() -> None:
     erf_fail_count = 0
 
     # Create Focus output directory
-    focus_dir = OUTPUT_ROOT / "Focus"
+    focus_dir = config.RUN_ROOT / "Focus"
     focus_dir.mkdir(parents=True, exist_ok=True)
 
     # Process each folder's CSV
-    for csv_path in sorted(OUTPUT_ROOT.rglob("*_summary.csv")):
+    for csv_path in sorted(config.RUN_ROOT.rglob("*_summary.csv")):
         # Skip CSVs inside the Focus directory
         if "Focus" in csv_path.parts:
             continue

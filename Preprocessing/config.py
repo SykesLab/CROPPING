@@ -2,9 +2,21 @@
 Pipeline configuration loaded from preprocessing_config.yaml.
 
 Module-level variables are exposed for backward compatibility.
-CINE_ROOT and OUTPUT_ROOT can be changed at runtime via the GUI.
+
+Path semantics:
+- OUTPUT_ROOT: parent directory under which timestamped runs live
+  (default: Preprocessing/output). Every Start creates a fresh run dir
+  under OUTPUT_ROOT/runs/.
+- RUN_ROOT: the active run's directory. Set by the GUI immediately
+  before spawning workers. Defaults to OUTPUT_ROOT for legacy callers
+  that don't go through run_io.
+
+Both are env-var-overridable (CROPPING_OUTPUT_ROOT, CROPPING_RUN_ROOT)
+so worker subprocesses on Windows (which re-import config from scratch
+under spawn semantics) inherit whatever the parent process set.
 """
 
+import os
 from pathlib import Path
 from typing import Optional
 
@@ -14,9 +26,21 @@ _config = load_config()
 
 # --- Paths ---
 PROJECT_ROOT: Path = Path(__file__).parent
+
 CINE_ROOT: Path = PROJECT_ROOT / _config.paths.cine_root
-OUTPUT_ROOT: Path = PROJECT_ROOT / _config.paths.output_root
-OUTPUT_ROOT.mkdir(parents=True, exist_ok=True)
+
+# OUTPUT_ROOT is the parent dir for runs. Lowercase 'output/' by default
+# unless the YAML says otherwise (legacy default in the YAML is './OUTPUT').
+_env_output = os.environ.get("CROPPING_OUTPUT_ROOT")
+OUTPUT_ROOT: Path = (
+    Path(_env_output) if _env_output else PROJECT_ROOT / _config.paths.output_root
+)
+
+# RUN_ROOT is the current run's dir. Set by the GUI on Start. Defaults
+# to OUTPUT_ROOT so any legacy callers (focus_analysis CLI, ad-hoc
+# scripts) keep writing to the flat layout they expect.
+_env_run = os.environ.get("CROPPING_RUN_ROOT")
+RUN_ROOT: Path = Path(_env_run) if _env_run else OUTPUT_ROOT
 
 # --- Crop size bounds (pixels) ---
 MAX_CNN_SIZE: int = _config.crop.max_cnn_size

@@ -15,7 +15,7 @@ import pandas as pd
 
 import config
 from cine_io import get_cine_folders, group_cines_by_droplet, safe_load_cine
-from config import CINE_ROOT, CROP_SAFETY_PIXELS, OUTPUT_ROOT
+from config import CINE_ROOT, CROP_SAFETY_PIXELS
 from crop_calibration import compute_crop_size
 from darkness_analysis import (
     analyze_cine_darkness,
@@ -217,12 +217,27 @@ def process_per_folder(
     run_focus_classification()
 
     # Print pipeline summary with any issues
-    _print_pipeline_summary(OUTPUT_ROOT)
+    _print_pipeline_summary(config.RUN_ROOT)
+
+    # Persist any sphere-flattening failures to disk
+    from output_writer import get_flatten_stats, write_flatten_failure_log
+    write_flatten_failure_log(config.RUN_ROOT)
+
+    # Append run outcomes to run_metadata.yaml
+    try:
+        from run_io import update_run_metadata
+        flatten_fails, _ = get_flatten_stats()
+        update_run_metadata(
+            config.RUN_ROOT,
+            flatten_failures=flatten_fails,
+        )
+    except Exception as e:
+        logger.warning(f"Could not update run_metadata.yaml: {e}")
 
     logger.info(f"Per-folder pipeline complete in {format_time(total_sec)}")
 
     if profile:
-        save_profile_json(OUTPUT_ROOT, "profiling_perfolder.json", {
+        save_profile_json(config.RUN_ROOT, "profiling_perfolder.json", {
             "mode": "per-folder", "safe_mode": safe_mode, "full_output": full_output,
             "step": config.CINE_STEP, "total_seconds": total_sec,
             "global_analysis_timing": global_analysis_timing,
@@ -295,7 +310,7 @@ def _process_single_folder(
     p3_timer = Timer()
     logger.debug(f"[{sub.name}] Starting Phase 3: Outputs")
 
-    out_sub = OUTPUT_ROOT / sub.name
+    out_sub = config.RUN_ROOT / sub.name
     out_sub.mkdir(parents=True, exist_ok=True)
 
     output_args = [(droplet_id, folder_analyses[droplet_id], cnn_size, str(out_sub), full_output)
@@ -361,7 +376,7 @@ def _quick_test_per_folder(safe_mode: bool = False, profile: bool = False,
     _print_quick_test_summary(global_timing, total_sec)
 
     if profile:
-        save_profile_json(OUTPUT_ROOT, "profiling_perfolder_quicktest.json", {
+        save_profile_json(config.RUN_ROOT, "profiling_perfolder_quicktest.json", {
             "mode": "per-folder-quicktest", "safe_mode": safe_mode, "full_output": full_output,
             "total_seconds": total_sec, "global_timing": global_timing, "folders": folder_profiles,
         })
@@ -383,7 +398,7 @@ def _quick_test_single_folder(sub: Path, f_idx: int, total_folders: int,
         return None
 
     droplet_id, cams = groups[0]
-    out_sub = OUTPUT_ROOT / sub.name
+    out_sub = config.RUN_ROOT / sub.name
     out_sub.mkdir(parents=True, exist_ok=True)
 
     # Camera visualization paths (created on-demand when needed)

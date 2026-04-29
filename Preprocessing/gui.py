@@ -82,6 +82,7 @@ class PipelineGUI:
         # State
         self.processing: bool = False
         self.worker_thread: Optional[threading.Thread] = None
+        self.active_run_dir: Optional[Path] = None
         self.thumbnails: List[ttk.Label] = []
         self.thumbnail_paths: List[str] = []
         self.thumbnail_images: List[Optional[ImageTk.PhotoImage]] = []  # Keep references
@@ -483,6 +484,15 @@ class PipelineGUI:
         self.landing_cine_info.configure(text=text)
         self.count_label.configure(text=text)
 
+        # Auto-fill the run label from the cine folder basename (only if the
+        # user hasn't typed something custom — preserves a manually-set label).
+        try:
+            from run_io import default_label
+            if not self.run_label_var.get().strip():
+                self.run_label_var.set(default_label(root))
+        except Exception:
+            pass
+
         # Update config state (may need to disable global mode)
         self._update_config_state()
 
@@ -834,13 +844,27 @@ class PipelineGUI:
     def _build_controls(self, parent: ttk.Frame) -> None:
         frame = ttk.Frame(parent, padding=10)
         frame.grid(row=3, column=0, padx=10, pady=(5, 10), sticky="ew")
-        frame.grid_columnconfigure(1, weight=1)
+        frame.grid_columnconfigure(2, weight=1)
+
+        # Run label (auto-fills from cine folder basename, editable)
+        ttk.Label(frame, text="Run label:").grid(
+            row=0, column=0, padx=(0, 5), pady=5, sticky="w")
+        self.run_label_var = tk.StringVar()
+        self.run_label_entry = ttk.Entry(frame, textvariable=self.run_label_var, width=30)
+        self.run_label_entry.grid(row=0, column=1, columnspan=2, padx=5, pady=5, sticky="ew")
+        self.run_label_hint = ttk.Label(
+            frame, text="(timestamp prepended automatically)", foreground="gray")
+        self.run_label_hint.grid(row=0, column=3, padx=(5, 0), pady=5, sticky="w")
+
+        # Active run dir display (filled in on Start)
+        self.active_run_label = ttk.Label(frame, text="", foreground="gray")
+        self.active_run_label.grid(row=1, column=0, columnspan=4, padx=0, pady=(0, 5), sticky="w")
 
         # Run / Cancel on left
         self.run_button = ttk.Button(
             frame, text="Start", command=self._on_run
         )
-        self.run_button.grid(row=0, column=0, padx=(0, 5), pady=5, sticky="w")
+        self.run_button.grid(row=2, column=0, padx=(0, 5), pady=5, sticky="w")
 
         self.cancel_button = ttk.Button(
             frame,
@@ -848,7 +872,7 @@ class PipelineGUI:
             command=self._on_cancel,
             state="disabled",
         )
-        self.cancel_button.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        self.cancel_button.grid(row=2, column=1, padx=5, pady=5, sticky="w")
 
         # Open output folder button on right
         self.open_output_button = ttk.Button(
@@ -856,11 +880,12 @@ class PipelineGUI:
             text="Open Output Folder",
             command=self._open_output_folder,
         )
-        self.open_output_button.grid(row=0, column=2, padx=(5, 0), pady=5, sticky="e")
+        self.open_output_button.grid(row=2, column=3, padx=(5, 0), pady=5, sticky="e")
 
     def _open_output_folder(self) -> None:
-        """Open output folder in system file explorer."""
-        root = config.OUTPUT_ROOT
+        """Open the active run folder (if any) or the output root in the file explorer."""
+        # Prefer the active run dir if one is set; otherwise fall back to OUTPUT_ROOT
+        root = config.RUN_ROOT if config.RUN_ROOT != config.OUTPUT_ROOT else config.OUTPUT_ROOT
         try:
             if platform.system() == "Windows":
                 subprocess.Popen(["explorer", str(root)])
@@ -873,13 +898,14 @@ class PipelineGUI:
 
     # --- Output folder polling ---
     def _start_output_polling(self) -> None:
-        """Start polling output folder for new images."""
+        """Start polling the active run dir for new images."""
         self.known_images = set()
-        # Scan existing images so we don't show old ones
+        # The run dir is freshly created on Start, so seeding from existing
+        # images is a no-op but kept for safety.
         try:
-            for img_path in config.OUTPUT_ROOT.rglob("*_crop.png"):
+            for img_path in config.RUN_ROOT.rglob("*_crop.png"):
                 self.known_images.add(str(img_path))
-            for img_path in config.OUTPUT_ROOT.rglob("*_overlay.png"):
+            for img_path in config.RUN_ROOT.rglob("*_overlay.png"):
                 self.known_images.add(str(img_path))
         except Exception:
             pass
@@ -918,14 +944,14 @@ class PipelineGUI:
         try:
             # Check for new crop images
             new_images = []
-            for img_path in config.OUTPUT_ROOT.rglob("*_crop.png"):
+            for img_path in config.RUN_ROOT.rglob("*_crop.png"):
                 path_str = str(img_path)
                 if path_str not in self.known_images:
                     self.known_images.add(path_str)
                     new_images.append((img_path.stat().st_mtime, path_str))
 
             # Also check overlay images
-            for img_path in config.OUTPUT_ROOT.rglob("*_overlay.png"):
+            for img_path in config.RUN_ROOT.rglob("*_overlay.png"):
                 path_str = str(img_path)
                 if path_str not in self.known_images:
                     self.known_images.add(path_str)
@@ -1106,6 +1132,30 @@ class PipelineGUI:
             self._show_landing()
             return
 
+        # Create a fresh timestamped run dir BEFORE workers can spawn — the
+        # path must be on the env var so worker subprocesses pick it up.
+        from run_io import make_run_dir, set_env_run_root, default_label, write_run_metadata
+        label = self.run_label_var.get().strip() or default_label(self.selected_root)
+        try:
+            run_dir = make_run_dir(config.OUTPUT_ROOT, self.selected_root, label)
+        except FileExistsError:
+            # Same-second timestamp collision — retry once after a beat.
+            time.sleep(1.1)
+            try:
+                run_dir = make_run_dir(config.OUTPUT_ROOT, self.selected_root, label)
+            except Exception as e:
+                messagebox.showerror("Run dir error", f"Could not create run dir:\n{e}")
+                return
+        except Exception as e:
+            messagebox.showerror("Run dir error", f"Could not create run dir:\n{e}")
+            return
+
+        set_env_run_root(run_dir)
+        config.RUN_ROOT = run_dir
+        self.active_run_label.configure(text=f"Run: {run_dir}")
+        self.active_run_dir = run_dir
+        self._log(f"Run dir: {run_dir}")
+
         self.processing = True
         self.run_button.configure(state="disabled")
         self.cancel_button.configure(state="normal")
@@ -1123,6 +1173,27 @@ class PipelineGUI:
         # Get config
         config = self._get_config()
         self._log(f"Starting with config: {config}")
+
+        # Persist initial run metadata (before workers spawn). Pipelines append
+        # finished_at + outcomes (n_droplets, calibrated_crop_size, etc.) at end.
+        try:
+            write_run_metadata(
+                run_dir,
+                label=label,
+                cine_root=str(self.selected_root),
+                run_dir=str(run_dir),
+                started_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+                mode=("quick-test" if config["quick_test"] else
+                      ("global" if config["global_mode"] else "per-folder")),
+                sampling_step=config["step"],
+                use_darkness=config["use_darkness"],
+                full_output=config["full_output"],
+                safe_mode=config["safe_mode"],
+                n_cores=config["n_cores"],
+                profile=config["profile"],
+            )
+        except Exception as e:
+            self._log(f"Warning: could not write run_metadata.yaml: {e}")
 
         # Reset timers + progress
         self.start_time = time.time()
@@ -1224,7 +1295,7 @@ class PipelineGUI:
 
             best_idx, geo = choose_best_frame_with_geo(cine_obj, curve)
 
-            out_sub = config.OUTPUT_ROOT / sub.name
+            out_sub = config.RUN_ROOT / sub.name
             out_sub.mkdir(parents=True, exist_ok=True)
 
             save_darkness_plot(
@@ -1337,6 +1408,20 @@ class PipelineGUI:
         self.cancel_button.configure(state="disabled")
         self.progress_label.configure(text="Complete!")
         self.progress_var.set(100)
+
+        # Stamp finished_at + elapsed into the run metadata
+        run_dir = getattr(self, "active_run_dir", None)
+        if run_dir is not None:
+            try:
+                from run_io import update_run_metadata
+                elapsed = time.time() - self.start_time if self.start_time else None
+                update_run_metadata(
+                    run_dir,
+                    finished_at=time.strftime("%Y-%m-%dT%H:%M:%S"),
+                    elapsed_seconds=int(elapsed) if elapsed is not None else None,
+                )
+            except Exception as e:
+                self._log(f"Warning: could not update run_metadata.yaml: {e}")
 
     # --- Queue polling ---
     def _open_image(self, path: str) -> None:
