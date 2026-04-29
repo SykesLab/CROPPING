@@ -150,19 +150,18 @@ This tab is optional. Single-camera calibrations don't need it.
 Three forward models are supported. All produce a unified
 `CalibrationModel` instance with the same trust-bounds + LOO machinery.
 
-### Linear (submitted-dissertation method)
+### Linear
 
 ```
 σ = ρ × |z| + σ₀
 ```
 
-- Two parameters; simplest; what the dissertation reports.
+- Two parameters; simplest curve shape.
 - `ρ` = blur rate (px/mm), `σ₀` = floor at the focal plane.
-- Submitted values: ρ = 1.548 px/mm, σ₀ = 0.125 px, R² = 0.997, n = 50.
-- YAML keys (legacy): `direct: {rho_px_per_mm, sigma_0, r_squared}`.
+- YAML keys (back-compat block): `direct: {rho_px_per_mm, sigma_0, r_squared}`.
 - YAML keys (unified): `calibration_model: {method: linear, rho_px_per_mm, sigma_0_calib_px, …}`.
 
-### Quadrature (post-submission)
+### Quadrature
 
 ```
 σ = √((ρ × |z|)² + σ_floor²)
@@ -173,7 +172,7 @@ Three forward models are supported. All produce a unified
 - Same number of parameters as linear, different curve shape.
 - YAML keys: `calibration_model: {method: quadrature, rho_px_per_mm, sigma_floor_calib_px, …}`.
 
-### Hybrid (post-submission, default for the user's current model)
+### Hybrid
 
 ```
 σ = √((ρ × |z|)² + σ_floor²)  +  Δσ(|z|)
@@ -186,9 +185,10 @@ See "The hybrid residual LUT" below for how it's built and used.
   non-linearity. More complex.
 - YAML keys: `calibration_model: {method: hybrid, rho_px_per_mm, sigma_floor_calib_px, residual_lut_mm_px: [[0.6, 0.038], [0.8, 0.024], …], …}`.
 
-The submitted dissertation reports linear only. Quadrature and hybrid
-were added post-submission and live alongside, never replacing linear —
-defend either path in the viva.
+All three methods produce the same `CalibrationModel` interface and go
+through the same trust-bounds + LOO machinery. Pick whichever fits your
+data best — `R²` and `loo_mae` reported in the GUI Results panel let you
+compare directly.
 
 ## Trust bounds, the residual LUT, and LOO uncertainty propagation
 
@@ -252,7 +252,7 @@ quadrature fit. Built in two passes
    collide cleanly). Average the residuals within each `|z|` bin. Sort
    by `|z|`. Store as `[(|z|, Δσ), …]` in YAML.
 
-A real LUT from the user's current hybrid calibration:
+An example LUT from a real hybrid calibration:
 
 ```yaml
 residual_lut_mm_px:
@@ -325,7 +325,7 @@ the Inference GUI's result panel.
 the user just has to trust the number. With LOO, every prediction comes
 with a defensible error bar derived from the actual fit's stability.
 
-Concrete numbers from the user's current hybrid calibration:
+Example LOO output for a hybrid fit:
 
 ```yaml
 loo_cv:
@@ -391,7 +391,7 @@ compatibility. Top-level fields:
 | `camera` | Camera label (`g` / `m` / `v` / custom) |
 | `aperture_setting` | User-supplied; `unknown` if not entered |
 | `calibration_mode` | `direct` or `optical` |
-| `direct: {rho_px_per_mm, sigma_0, r_squared, num_points, scale_calib_px_per_mm, loo_cv}` | **Legacy block** — what older Training/Inference code reads. Always written. |
+| `direct: {rho_px_per_mm, sigma_0, r_squared, num_points, scale_calib_px_per_mm, loo_cv}` | **Back-compat block** — read by older Training/Inference code paths. Always written. |
 | `optical_params: {focal_length_mm, f_number, focus_distance_mm, pixel_size_mm}` | Only present in optical mode |
 | `formula_rho` | Optical-formula ρ, when computed |
 | `focal_plane_offset_mm` | Distance from stage zero to the focal plane |
@@ -441,22 +441,18 @@ the source z-stack.
   z-stack is unusually fine-grained or your ERF measurements are
   unusually clean, consider lowering this — but the default is
   conservative for good reason.
-- **The submitted dissertation reports linear only** (ρ = 1.548 px/mm,
-  σ₀ = 0.125 px, R² = 0.997, n = 50). Quadrature and hybrid live
-  alongside, never replacing it. Defend either.
 - **Three pixel spaces matter for cross-camera work.** If you skip the
   Sphere diameter input, `s_calib` defaults to nothing and cross-camera
   scaling falls back to `s_inf = s_calib`. Fine if you never change
   cameras; broken if you do.
-- **`validation.py` is dead code.** Defined but never called. Slated
-  for removal in a cleanup pass.
+- **`validation.py` is unused.** Defined but never called from anywhere
+  in the repo.
 - **No multiprocessing here** — the calibration GUI is single-process.
   53 frames, not 1500 droplets; doesn't need it.
-- **Legacy fit functions still exist.** `calibrate_approach_a`,
-  `calibrate_approach_b`, `calibrate_hybrid` predate the unified
-  `calibrate_to_model` dispatcher. They're kept for backward
-  compatibility with the older YAML schema; new code should use
-  `calibrate_to_model`.
+- **Multiple fit entry points.** `calibrate_to_model` is the active
+  dispatcher; `calibrate_approach_a`, `calibrate_approach_b`, and
+  `calibrate_hybrid` are kept for back-compat with older YAML schemas.
+  New code should call `calibrate_to_model`.
 
 ## Where `physics.py` lives — the import path
 
@@ -507,8 +503,8 @@ I/O
 Hardware capture (separate sub-module)
   lab_capture/                 Phantom + ThorLabs + Arduino driving (own README)
 
-Legacy
-  validation.py                defined but unused; slated for removal
+Unused
+  validation.py                defined but never called from anywhere in the repo
 ```
 
 ## Where it sits in the pipeline

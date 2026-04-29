@@ -11,7 +11,7 @@ Three things in order, per droplet:
    keep the sphere out.
 3. Flatten the residual sphere-illumination gradient via
    `Calibration.sphere_processing.flatten_sphere_crop`. Every saved crop is
-   post-flattened — this is undocumented in older versions but load-bearing.
+   post-flattened — this is mandatory and load-bearing.
 
 Output is a `Focus/sharp_crops.csv` manifest plus the matching crops sorted
 by camera. Training discovers it automatically.
@@ -117,7 +117,7 @@ want everything; 5 or 10 for production runs.
 
 | Field | What it does |
 |---|---|
-| Use darkness weighting (4× slower) | OFF by default. ON adds the dark-fraction curve to the best-frame scoring. The submitted dissertation reports the OFF (geometry-only) path; ~86% of best-frame picks agree between the two modes. |
+| Use darkness weighting (4× slower) | OFF by default. ON adds the dark-fraction curve to the best-frame scoring. ~86% of best-frame picks agree between the two modes; geometry-only is the default because it's faster and the agreement is high. |
 
 ### Run label
 
@@ -145,10 +145,6 @@ Preprocessing/output/runs/2026-04-29_153022_4mm-borosilicate/
 ├── flatten_failures.log          # only if any flatten attempts failed
 └── profiling.json                # only if profiling was on
 ```
-
-**The legacy `Preprocessing/OUTPUT/` directory is untouched** by this layout.
-If you have historical runs there, they keep working as-is; new Starts go
-to `output/runs/`.
 
 ### `Focus/sharp_crops.csv` columns
 
@@ -237,7 +233,7 @@ everything else needs a YAML edit.
 - **Geometry-only is the default and faster.** "Use darkness weighting"
   adds the darkness curve to the scoring; the geometry-only fast path
   agrees with the darkness-weighted pick on ~86% of frames and runs ~4×
-  faster. The submitted dissertation reports the geometry-only path.
+  faster.
 - **Worker subprocesses on Windows.** The active run dir is threaded into
   spawned workers via the `CROPPING_RUN_ROOT` environment variable, set by
   the GUI on Start. Don't unset or override it mid-run.
