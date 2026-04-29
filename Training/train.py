@@ -10,6 +10,7 @@ Usage:
 
 import argparse
 import logging
+import os
 import platform
 import sys
 from datetime import datetime
@@ -37,8 +38,14 @@ if _repo_root not in sys.path:
     sys.path.insert(0, _repo_root)
 from physics import validate_training_config, ConfigError
 
-# Windows + tkinter GUI causes multiprocessing issues
-_NUM_WORKERS = 0 if platform.system() == "Windows" else 4
+# Windows + tkinter GUI causes multiprocessing issues, so default to 0 on Windows.
+# To enable workers when launching from CLI (no Tk in process), set the
+# TRAIN_NUM_WORKERS env var, e.g. `set TRAIN_NUM_WORKERS=4` (cmd) or
+# `$env:TRAIN_NUM_WORKERS=4` (PowerShell).
+_NUM_WORKERS = int(os.environ.get(
+    'TRAIN_NUM_WORKERS',
+    '0' if platform.system() == "Windows" else '4',
+))
 
 logger = logging.getLogger(__name__)
 
@@ -190,6 +197,35 @@ class Trainer:
         self.best_current_run_mae = float('inf')
         self.train_split = train_cfg.get('train_split', 0.8)
         self.seed = train_cfg.get('seed', 42)
+
+        # Calibration-aware best-model tracking. If a calibration bundle is
+        # configured (auto-detected from Calibration/runs/), evaluate model
+        # on it each epoch and save dme_calib_best.pth when calibration
+        # performance improves. Score is mean abs gap (px) between model
+        # predictions and ERF-truth sigma across the calibration stack.
+        self.calib_bundle_path = self._find_latest_calibration_bundle()
+        self.best_calib_gap_px = float('inf')
+        self._calib_eval_cache = None  # cache (frames, true_sigmas) once
+
+        # Phase 6: load the dataset's calibration_model.yaml (Phase 5 emit)
+        # so the chosen calibration method propagates into the checkpoint
+        # config. Falls back to building a linear model from
+        # rho_direct/sigma_0 in training_config when the file is missing
+        # (back-compat with pre-Phase-5 datasets).
+        self.calibration_model = self._load_calibration_model_for_dataset()
+        # Empirical bound updated each epoch by _evaluate_calibration:
+        # the max σ the trained model produces on the calibration stack.
+        # Used at inference for the SATURATED flag — `min(trust, observed)`.
+        self.sigma_max_model_observed_px: Optional[float] = None
+
+        # Calibration loss anchor — adds α·MSE(model on calib pool, ERF
+        # labels) to total loss each training step. Forces gradient signal
+        # toward calibration accuracy regardless of synthetic loss.
+        self.calib_anchor_enabled = bool(
+            train_cfg.get('calibration_anchor_enabled', False))
+        self.calib_anchor_alpha = float(
+            train_cfg.get('calibration_anchor_alpha', 0.5))
+        self._calib_anchor_pool = None  # (B,1,H,W) tensor + (B,) sigma tensor
 
         # Stop flag for graceful shutdown
         self.stop_flag = stop_flag or (lambda: False)
@@ -548,6 +584,13 @@ class Trainer:
                     pred_norm = self.model(blur_img)
                     loss = self.dme_loss_fn(pred_norm, blur_norm)
 
+                    # Calibration loss anchor — adds gradient signal from
+                    # real calibration data so the model can't optimise
+                    # synthetic at calibration's expense. No-op if disabled.
+                    anchor_loss = self._calibration_anchor_loss()
+                    if anchor_loss is not None:
+                        loss = loss + anchor_loss
+
                     # Backward
                     loss.backward()
                     if self.grad_clip_norm > 0:
@@ -661,6 +704,23 @@ class Trainer:
                     session_checkpoint_name, epoch, optimizer=optimizer, val_loss=val_loss,
                     val_mae_px=val_weighted_mae)
                 logger.info(f"  → New session best (weighted MAE): {val_weighted_mae:.4f} px")
+
+            # Calibration-aware best — evaluates the model on the
+            # configured calibration bundle each epoch and saves
+            # dme_calib_best.pth when calibration MAE improves. Disabled
+            # automatically if no bundle is found.
+            calib_gap = self._evaluate_calibration()
+            if calib_gap is not None:
+                self.writer.add_scalar('DME/calib_gap_px', calib_gap, epoch)
+                logger.info(f"  Calibration mean abs gap: {calib_gap:.4f} px")
+                if calib_gap < self.best_calib_gap_px:
+                    self.best_calib_gap_px = calib_gap
+                    self._save_checkpoint(
+                        'dme_calib_best.pth', epoch, optimizer=optimizer,
+                        val_loss=val_loss, val_mae_px=val_weighted_mae)
+                    logger.info(
+                        f"  → New calibration best (mean abs gap): "
+                        f"{calib_gap:.4f} px")
 
             self._save_training_history()
             self._save_training_curves(epoch, bins)
@@ -825,6 +885,233 @@ class Trainer:
         plt.close(fig)
         logger.info(f"  → Saved training curves: {out_path}")
 
+    def _load_calibration_anchor_pool(self):
+        """Load all calibration PNGs + ERF labels as preprocessed tensors,
+        ready for fast per-step forward passes. Cached."""
+        if self._calib_anchor_pool is not None:
+            return self._calib_anchor_pool
+        if self.calib_bundle_path is None:
+            return None
+        try:
+            import cv2
+            import pandas as pd
+            csv = self.calib_bundle_path / "measurements.csv"
+            if not csv.is_file():
+                return None
+            df = pd.read_csv(csv)
+            if "filename" not in df.columns or "sigma_px" not in df.columns:
+                return None
+            model_size = self.config.get('data', {}).get('image_size_px', 256)
+            imgs, sigmas_norm = [], []
+            for _, r in df.iterrows():
+                p = self.calib_bundle_path / "processed_images" / r["filename"]
+                if not p.is_file() or pd.isna(r["sigma_px"]):
+                    continue
+                img = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
+                if img is None:
+                    continue
+                source_size = max(img.shape[:2])
+                if source_size != model_size:
+                    interp = cv2.INTER_AREA if source_size > model_size else cv2.INTER_CUBIC
+                    img = cv2.resize(img, (model_size, model_size),
+                                       interpolation=interp)
+                # Normalise to [-1, 1] (matches RealCropInference convention)
+                norm = (img.astype(np.float32) / 255.0) * 2.0 - 1.0
+                imgs.append(norm)
+                # Convert ERF sigma (source-px) to model-px, then to label
+                # space [0, 1] via /max_blur (matches synthetic dataset labels)
+                sigma_model = float(r["sigma_px"]) * (model_size / source_size)
+                sigmas_norm.append(min(sigma_model / self.max_blur, 1.0))
+            if not imgs:
+                return None
+            imgs_t = torch.from_numpy(np.stack(imgs)).unsqueeze(1).to(self.device)
+            sigmas_t = torch.tensor(sigmas_norm, dtype=torch.float32,
+                                     device=self.device).unsqueeze(1)
+            self._calib_anchor_pool = (imgs_t, sigmas_t)
+            logger.info(
+                f"  Calibration anchor pool: {imgs_t.shape[0]} samples loaded "
+                f"from {self.calib_bundle_path.name} (α={self.calib_anchor_alpha})")
+            return self._calib_anchor_pool
+        except Exception as e:
+            logger.warning(f"Failed to load calibration anchor pool: {e}")
+            return None
+
+    def _calibration_anchor_loss(self):
+        """Compute α·MSE(model output, ERF labels) on the anchor pool.
+
+        Returns 0.0 (CPU scalar) if anchor not configured. Otherwise
+        returns a torch scalar tensor on self.device, ready to add to
+        the main loss before .backward().
+        """
+        if not self.calib_anchor_enabled:
+            return None
+        pool = self._load_calibration_anchor_pool()
+        if pool is None:
+            return None
+        imgs, labels = pool
+        # Model is in train mode (we're inside the training loop).
+        # We want gradient flow, so don't use no_grad.
+        pred = self.model(imgs)  # (N, 1) in [0, 1]
+        loss = ((pred - labels) ** 2).mean()
+        return self.calib_anchor_alpha * loss
+
+    def _find_latest_calibration_bundle(self) -> Optional[Path]:
+        """Locate the most recent calibration bundle (Calibration/runs/<>/).
+
+        Returns None if no bundle is available — calibration evaluation
+        is then disabled and behavior is identical to before.
+        """
+        try:
+            repo_root = Path(__file__).resolve().parents[1]
+            runs_dir = repo_root / "Calibration" / "runs"
+            if not runs_dir.is_dir():
+                return None
+            candidates = sorted(
+                [p for p in runs_dir.iterdir()
+                 if p.is_dir()
+                 and (p / "processed_images").is_dir()
+                 and (p / "measurements.csv").is_file()],
+                reverse=True,
+            )
+            return candidates[0] if candidates else None
+        except Exception:
+            return None
+
+    def _evaluate_calibration(self) -> Optional[float]:
+        """Run model on the calibration stack, return mean absolute gap
+        (in px) between model predictions and ERF-truth sigma.
+
+        Lower is better. Returns None if calibration bundle isn't
+        configured or evaluation fails. Caches the calibration frames
+        on first call to avoid repeated disk reads.
+        """
+        if self.calib_bundle_path is None:
+            return None
+        try:
+            import cv2
+            import pandas as pd
+            if self._calib_eval_cache is None:
+                m = pd.read_csv(self.calib_bundle_path / "measurements.csv")
+                frames = []
+                truths = []
+                for _, r in m.iterrows():
+                    p = self.calib_bundle_path / "processed_images" / r["filename"]
+                    if not p.is_file():
+                        continue
+                    img = cv2.imread(str(p), cv2.IMREAD_GRAYSCALE)
+                    if img is None:
+                        continue
+                    frames.append(img)
+                    truths.append(float(r["sigma_px"]))
+                if not frames:
+                    return None
+                self._calib_eval_cache = (frames, np.asarray(truths, dtype=float))
+                logger.info(
+                    f"  Calibration eval: cached {len(frames)} frames from "
+                    f"{self.calib_bundle_path.name}")
+
+            frames, truths = self._calib_eval_cache
+
+            # Run model in eval mode
+            self.model.eval()
+            preds = []
+            with torch.no_grad():
+                for img in frames:
+                    h, w = img.shape[:2]
+                    # Match RealCropInference's normalisation: resize to
+                    # model_size, /255 *2 -1
+                    model_size = self.config.get('data', {}).get('image_size_px', 256)
+                    if h != model_size or w != model_size:
+                        interp = cv2.INTER_AREA if max(h, w) > model_size else cv2.INTER_CUBIC
+                        img_resized = cv2.resize(img, (model_size, model_size),
+                                                   interpolation=interp)
+                    else:
+                        img_resized = img
+                    norm = (img_resized.astype(np.float32) / 255.0) * 2.0 - 1.0
+                    tensor = torch.from_numpy(norm).unsqueeze(0).unsqueeze(0).to(self.device)
+                    pred_norm = self.model(tensor)
+                    blur_model = float(pred_norm.squeeze().item())
+                    # Denormalise (sigmoid output [0,1] → [0, max_blur])
+                    blur_px_model = blur_model * self.max_blur
+                    # Scale up to source resolution to match ERF's px units
+                    scale = max(h, w) / model_size
+                    preds.append(blur_px_model * scale)
+            self.model.train()
+
+            preds = np.asarray(preds, dtype=float)
+            gap = np.abs(preds - truths)
+            # Phase 6: record the model's empirical max σ on the calibration
+            # stack. This is the SECOND trust bound (alongside the
+            # calibration-derived one) used by the SATURATED flag at
+            # inference. Without it, SATURATED never fires for users whose
+            # model plateau is below the calibration's trust ceiling.
+            self.sigma_max_model_observed_px = float(np.max(preds))
+            return float(gap.mean())
+        except Exception as e:
+            logger.warning(f"Calibration eval failed: {e}")
+            try:
+                self.model.train()
+            except Exception:
+                pass
+            return None
+
+    def _load_calibration_model_for_dataset(self):
+        """Phase 6: load the dataset's `calibration_model.yaml` (Phase 5
+        emit) and build a ``physics.CalibrationModel``. Falls back to
+        building a linear model from ``training.rho_direct`` /
+        ``sigma_0`` for pre-Phase-5 datasets.
+
+        Returns ``None`` if neither route can construct a model (e.g.
+        optical-mode runs that don't use direct calibration).
+        """
+        try:
+            from physics import CalibrationModel
+        except ImportError:
+            logger.warning("Could not import physics.CalibrationModel; "
+                            "skipping calibration-model wiring.")
+            return None
+
+        cm_path = self.data_dir / 'calibration_model.yaml'
+        if cm_path.is_file():
+            try:
+                import yaml
+                with open(cm_path) as f:
+                    doc = yaml.safe_load(f)
+                model = CalibrationModel.from_dict(doc.get('calibration_model', {}))
+                logger.info(
+                    f"Loaded calibration_model.yaml from dataset "
+                    f"(method={model.method}, sha256={model.sha256()[:12]}...)")
+                return model
+            except Exception as e:
+                logger.warning(
+                    f"Failed to load calibration_model.yaml ({e}); "
+                    f"falling back to linear from training_config.")
+
+        # Fallback: build linear from rho_direct/sigma_0 (back-compat)
+        train_cfg = self.config.get('training', {})
+        rho = train_cfg.get('rho_direct')
+        sigma_0 = train_cfg.get('sigma_0')
+        s_calib = train_cfg.get('scale_calib_px_per_mm')
+        if rho is not None and sigma_0 is not None:
+            try:
+                model = CalibrationModel.from_legacy_scaling(
+                    rho=float(rho),
+                    sigma_0=float(sigma_0),
+                    s_calib_px_per_mm=(float(s_calib)
+                                        if s_calib is not None else None),
+                )
+                logger.info(
+                    f"Built fallback linear CalibrationModel from "
+                    f"training_config (rho={rho}, sigma_0={sigma_0})")
+                return model
+            except Exception as e:
+                logger.warning(f"Could not build fallback CalibrationModel: {e}")
+
+        logger.info(
+            "No calibration_model available — checkpoint won't carry "
+            "the unified calibration block.")
+        return None
+
     def _save_checkpoint(
         self,
         filename: str,
@@ -837,10 +1124,34 @@ class Trainer:
         train_cfg = self.config.get('training', {})
         training_mode = train_cfg.get('training_mode', 'optical')
 
+        # Phase 6: bake the unified CalibrationModel + the empirical
+        # model-observed σ ceiling into the checkpoint config so
+        # inference can use them. Mutates a copy of self.config to keep
+        # the in-memory config clean.
+        config_to_save = dict(self.config)
+        if getattr(self, 'calibration_model', None) is not None:
+            cm = self.calibration_model
+            # Optionally bake in the empirical bound 2 (model-observed max σ)
+            if getattr(self, 'sigma_max_model_observed_px', None) is not None:
+                cm_dict = cm.to_dict()
+                cm_dict['sigma_max_model_observed_px'] = float(
+                    self.sigma_max_model_observed_px)
+            else:
+                cm_dict = cm.to_dict()
+            # Place under config['training'] alongside legacy fields
+            updated_training = dict(config_to_save.get('training', {}))
+            updated_training['inversion_method'] = cm.method
+            updated_training['calibration_model'] = cm_dict
+            updated_training['calibration_source_sha256'] = cm.sha256()
+            if self.sigma_max_model_observed_px is not None:
+                updated_training['sigma_max_model_observed_px'] = float(
+                    self.sigma_max_model_observed_px)
+            config_to_save['training'] = updated_training
+
         checkpoint = {
             'epoch': epoch,
             'global_step': self.global_step,
-            'config': self.config,
+            'config': config_to_save,
             'max_blur': self.max_blur,
             'max_coc': self.max_blur,  # Backward compat — old code reads this key
             'log_eps': self.log_eps,
